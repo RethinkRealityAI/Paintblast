@@ -28,8 +28,13 @@ import {
   FollowBehavior,
   XRAnchor,
   DepthOccludable,
+  IBLTexture,
+  NoToneMapping,
+  NeutralToneMapping,
+  ACESFilmicToneMapping,
+  AgXToneMapping,
 } from '@iwsdk/core';
-import type { BufferGeometry } from '@iwsdk/core';
+import type { BufferGeometry, ToneMapping } from '@iwsdk/core';
 import { signal } from '@preact/signals-core';
 
 import {
@@ -68,8 +73,10 @@ import {
 } from './systems/WristPaletteSystem';
 import { Easel, EaselSystem, EASEL_ASSET_KEY } from './systems/EaselSystem';
 import { SceneScanSystem } from './systems/SceneScanSystem';
+import { VfxSystem } from './systems/VfxSystem';
 import { initLanding } from './landing/landing';
-import { AUDIO, GAME, HUD, PALETTE, TARGETS, WEB } from './config';
+import { AUDIO, GAME, HUD, PALETTE, RENDER, TARGETS, WEB } from './config';
+import type { ToneMappingName } from './config';
 import {
   BallKind,
   BallStyle,
@@ -578,6 +585,50 @@ function seedHud(world: World) {
   }
 }
 
+/** RENDER.toneMapping spellings → three's renderer constants. */
+const TONE_MAPPINGS: Record<ToneMappingName, ToneMapping> = {
+  none: NoToneMapping,
+  neutral: NeutralToneMapping,
+  aces: ACESFilmicToneMapping,
+  agx: AgXToneMapping,
+};
+
+/**
+ * Round 7: the scene's lighting and tone curve.
+ *
+ * IWSDK's `defaultLighting` (left on in World.create below) attaches a
+ * DomeGradient + IBLGradient pair to the level root. The dome is a background
+ * that EnvironmentSystem already hides in passthrough AR; the gradient IBL is
+ * nearly uniform, which is why every PBR material used to read as flat pastel
+ * plastic — a uniform environment has no structure to shade or reflect.
+ *
+ * Adding an IBLTexture to the same root replaces only the *lighting*:
+ * EnvironmentSystem prefers IBLTexture over IBLGradient, and IBLTexture writes
+ * `scene.environment` and nothing else — no background, no dome, nothing drawn
+ * over the real room. 'room' is three's RoomEnvironment, PMREM'd once by IWSDK
+ * itself (a few ms at boot, no download); its world-locked rotation is kept
+ * stable across headset recentres by EnvironmentSystem.
+ *
+ * Per-frame cost: none beyond what the gradient already cost — the shaders
+ * sample one PMREM either way. Tone mapping is a handful of ALU per fragment.
+ *
+ * Must run after World.create resolves: that is when LevelSystem has made the
+ * real level root (the one carrying LevelRoot, which EnvironmentSystem queries).
+ */
+function setupEnvironment(world: World) {
+  const renderer = world.renderer;
+  renderer.toneMapping = TONE_MAPPINGS[RENDER.toneMapping] ?? NoToneMapping;
+  renderer.toneMappingExposure = RENDER.exposure;
+
+  // Empty source = keep IWSDK's gradient, i.e. the pre-round-7 lighting.
+  if (!RENDER.iblSource) return;
+  world.activeLevel.value.addComponent(IBLTexture, {
+    src: RENDER.iblSource,
+    intensity: RENDER.iblIntensity,
+    rotation: [0, RENDER.iblRotationYDeg * DEG_TO_RAD, 0],
+  });
+}
+
 // The landing overlay renders immediately — World.create takes seconds to
 // boot Havok and stream critical assets, and the page should never look dead.
 const landing = initLanding();
@@ -736,6 +787,10 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
   // those inits bind the globals below.
   seedGlobals(world);
 
+  // Lighting + tone curve. EnvironmentSystem picks the IBLTexture up on its
+  // next update and PMREMs it once.
+  setupEnvironment(world);
+
   // Register custom systems with explicit priorities so they run in a
   // predictable order after IWSDK's built-in simulation/input systems:
   // read real-world geometry, lay the backstop floor, notice an unscanned room,
@@ -763,6 +818,9 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
     .registerSystem(GameStateSystem, { priority: 30 })
     .registerSystem(HudSystem, { priority: 35 })
     .registerSystem(FeedbackSystem, { priority: 36 })
+    // Round 7 particle juice: another read-only event consumer, so it sits in
+    // the same consumer band, after the sound it decorates and before the flush.
+    .registerSystem(VfxSystem, { priority: 37 })
     .registerSystem(EventFlushSystem, { priority: 90 });
 
   seedWristPalette(world);

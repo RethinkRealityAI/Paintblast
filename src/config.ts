@@ -1193,3 +1193,313 @@ export const HAPTICS = {
   tetherPopIntensity: 0.9,
   tetherPopMs: 120,
 } as const;
+
+// ---------------------------------------------------------------------------
+// Round 7: rendering fidelity + VFX. Appended as two self-contained sections so
+// the tuning surface above stays exactly as it was.
+// ---------------------------------------------------------------------------
+
+/** Renderer tone-mapping curves main.ts knows how to apply. */
+export type ToneMappingName = 'none' | 'neutral' | 'aces' | 'agx';
+
+/**
+ * Renderer-wide look: image-based lighting, tone mapping, and the material
+ * polish that leans on them. Applied once at startup (main.ts, BallSpawnSystem's
+ * material cache, TargetSystem's robot pool) — none of it costs anything per
+ * frame beyond the shader work it buys.
+ *
+ * Why this exists: IWSDK's `defaultLighting` lights the scene with a nearly
+ * uniform grey-blue gradient and no direct lights, so every PBR surface read as
+ * flat pastel plastic — a white sphere measured 215-221/255 from top to bottom,
+ * i.e. no shading at all, and no specular highlight anywhere because a uniform
+ * environment has nothing in it to reflect. Swapping the IBL source for three's
+ * RoomEnvironment (a PMREM of a lit room, built once at boot) gives every
+ * material shape, a top-lit falloff and real reflections, at zero extra cost
+ * per frame: it samples the same kind of PMREM texture the gradient did.
+ *
+ * Nothing here draws a background. IBLTexture only writes `scene.environment`;
+ * the passthrough room is never covered.
+ */
+export const RENDER = {
+  /**
+   * What the scene is lit by. 'room' is three's RoomEnvironment, generated in
+   * a few milliseconds at boot with no download. Any other value is a URL to an
+   * equirect (.hdr/.exr/.png/.jpg) under public/, PMREM'd by IWSDK's
+   * EnvironmentSystem — e.g. a capture of a real living room to match the
+   * passthrough. Empty string keeps IWSDK's flat gradient (the old look).
+   */
+  iblSource: 'room' as string,
+  /**
+   * Strength of that lighting (scene.environmentIntensity). It is the ONLY
+   * light in the scene, so this is the master brightness of every lit object —
+   * balls, robots, palette, easel. 1.0 with 'neutral' tone mapping keeps paint
+   * vivid without blowing out; under 'none', drop it to ~0.7 or white surfaces
+   * start clipping flat white.
+   */
+  iblIntensity: 1.0,
+  /**
+   * Spins the lighting around the vertical axis, degrees. Moves where the room
+   * environment's bright "ceiling panels" sit, i.e. which side of every ball
+   * carries the highlight. Cosmetic.
+   */
+  iblRotationYDeg: 0,
+  /**
+   * Tone-mapping curve for every three.js material that has not opted out
+   * (uikit's HUD panels and text opt out, so the HUD is untouched by this).
+   *
+   * 'neutral' (Khronos PBR Neutral) is the choice for passthrough: it is the
+   * identity for everything below ~0.76 linear, so authored paint colours land
+   * on screen as authored, and it only rolls off the highlights the new IBL
+   * produces — no hue-skewed clipping on the clearcoat glints. Its small black
+   * offset even nudges the pastel splats a touch more saturated; the cost is
+   * that a pure-white unlit surface tops out around 94% sRGB instead of 100%.
+   * 'aces' and 'agx' were measured too: both visibly desaturate the paint and
+   * wash it out against the passthrough feed — avoid. 'none' is the pre-round-7
+   * renderer (pair it with iblIntensity ~0.7).
+   */
+  toneMapping: 'neutral' as ToneMappingName,
+  /** Multiplier applied before the tone curve. >1 brightens everything lit. */
+  exposure: 1.0,
+
+  // ---- Paint balls (BallSpawnSystem material cache) -----------------------
+  /**
+   * Base roughness of a paint ball, 0 = mirror, 1 = chalk. Low reads as wet;
+   * the clearcoat below adds the crisp glint on top, so the base can stay a
+   * little soft and keep its colour saturated.
+   */
+  ballRoughness: 0.25,
+  /**
+   * Clearcoat layer strength, 0..1 — the "wet paint" glaze. Above 0 the balls
+   * use MeshPhysicalMaterial (one extra shader program, compiled the first time
+   * a ball is drawn — a one-off hitch on the very first shot). 0 falls back to
+   * MeshStandardMaterial, which shares the palette dabs' already-compiled
+   * program: no glaze, no first-shot compile.
+   */
+  ballClearcoat: 1.0,
+  /** Roughness of that glaze. Lower = a tighter, brighter highlight. */
+  ballClearcoatRoughness: 0.06,
+  /**
+   * Web balls' base colour, linear RGB. A hair cooler than pure white so the
+   * ball reads as pearly webbing rather than a paint colour.
+   */
+  webBallColor: [0.94, 0.94, 0.97] as readonly [number, number, number],
+  /**
+   * Web balls' base roughness. Higher than paint: a satin pearl under the
+   * clearcoat glint, not a wet bead.
+   */
+  webBallRoughness: 0.42,
+  /** Web balls' glaze roughness — slightly softer than paint's. */
+  webBallClearcoatRoughness: 0.1,
+  /**
+   * Faint self-light on web balls, linear RGB. Keeps them reading white in a
+   * dim room instead of going grey on their shadow side. Free (a uniform).
+   */
+  webBallEmissive: [0.05, 0.05, 0.07] as readonly [number, number, number],
+
+  // ---- Robots (TargetSystem.ensurePool, patched once on the shared materials)
+  /**
+   * Multiplier on how much environment light the robots catch, diffuse and
+   * reflection together. Their metal panels are what benefit: >1 makes them
+   * pop against passthrough. 1 = physically plain.
+   */
+  robotEnvBoost: 1.25,
+  /**
+   * Rim-glow colour, linear RGB — a soft holo edge on the robot's silhouette
+   * that separates it from a busy real room. Cool cyan by default because
+   * indoor passthrough is mostly warm.
+   */
+  robotRimColor: [0.45, 0.8, 1.0] as readonly [number, number, number],
+  /**
+   * Rim-glow strength. 0 switches the rim off. 0.3 is barely there, 0.5 reads
+   * as a deliberate holo edge; past ~0.6 it turns into a halo.
+   */
+  robotRimStrength: 0.4,
+  /**
+   * Rim falloff exponent. Higher = a thinner rim hugging the outline; lower =
+   * a glow creeping over the whole body.
+   */
+  robotRimPower: 2.5,
+} as const;
+
+/** Particle silhouette for one VFX burst. @see VfxBurstConfig.shape */
+export type VfxShape = 'blob' | 'flake' | 'streak';
+
+/** One burst type in {@link VFX}. Every field is per-particle unless noted. */
+export interface VfxBurstConfig {
+  /** Particles per burst. 0 disables the effect entirely. */
+  readonly count: number;
+  /** Slowest launch speed, m/s. */
+  readonly speedMin: number;
+  /** Fastest launch speed, m/s. */
+  readonly speedMax: number;
+  /** Shortest lifetime, seconds. Shorter = snappier. */
+  readonly lifeMin: number;
+  /** Longest lifetime, seconds. */
+  readonly lifeMax: number;
+  /** Size as a multiple of {@link VFX.particleRadius}. +-30% jitter on top. */
+  readonly size: number;
+  /**
+   * Cone half-angle around the burst's axis, degrees. 180 = a full sphere,
+   * 90 = a hemisphere off the surface, small = a jet.
+   */
+  readonly spreadDeg: number;
+  /**
+   * Added to the axis's Y before normalising: >0 tilts every burst upward so
+   * particles arc up and fall, which reads as "splash" rather than "spray".
+   */
+  readonly upBias: number;
+  /** Fraction of real gravity the particles feel. Confetti floats (<0.5). */
+  readonly gravityScale: number;
+  /** Air drag, 1/s. Higher = particles stall quickly and hang. */
+  readonly drag: number;
+  /** Metres from the event point along each particle's direction at spawn. */
+  readonly startOffset: number;
+  /**
+   * 'blob' = round droplet, 'flake' = flat tumbling confetti chip, 'streak' =
+   * a spark stretched along its velocity.
+   */
+  readonly shape: VfxShape;
+}
+
+/**
+ * Particle juice: confetti, paint droplets and sparks, all from ONE pooled
+ * InstancedMesh (VfxSystem) — a single draw call however many effects are
+ * running, zero allocation per frame, and no transparency (particles shrink
+ * away instead of fading, so there is no sorting and no overdraw).
+ *
+ * Driven entirely by the existing game-event mailbox, so no gameplay system
+ * knows the particles exist.
+ */
+export const VFX = {
+  /** Master switch. false = VfxSystem builds nothing and draws nothing. */
+  enabled: true,
+  /**
+   * Live-particle ceiling. A burst that finds the pool full is truncated, not
+   * queued. 256 is ~3x the worst realistic load (two pops + rapid fire).
+   */
+  poolSize: 256,
+  /** Base particle radius, metres. Every burst's `size` multiplies this. */
+  particleRadius: 0.007,
+  /** Gravity, m/s^2, before each burst's gravityScale. */
+  gravity: 9.81,
+  /**
+   * Largest simulation step, seconds. A frame hitch longer than this slows the
+   * particles down instead of teleporting them through the floor.
+   */
+  maxStepSec: 0.05,
+  /** Fraction of life spent popping in from 40% size. Snappier when smaller. */
+  growEnd: 0.08,
+  /** Fraction of life after which a particle shrinks away to nothing. */
+  shrinkStart: 0.55,
+  /** A flake's thickness relative to its width. Lower = flatter confetti. */
+  flakeThickness: 0.22,
+  /** A streak's length relative to its width. Higher = longer spark trails. */
+  streakStretch: 4.0,
+  /** Slowest flake tumble, radians per second. */
+  spinMin: 8,
+  /** Fastest flake tumble, radians per second. */
+  spinMax: 20,
+  /**
+   * Particle surface roughness. They are lit by the same IBL as everything
+   * else and flat-shaded, so tumbling confetti glints as its faces turn.
+   */
+  roughness: 0.35,
+  /**
+   * Frames the (empty) particle mesh is drawn after the headset session
+   * becomes visible, purely so its shader compiles at session start instead of
+   * hitching the first robot pop. After that the mesh hides itself whenever no
+   * particle is alive — zero draw calls when idle.
+   */
+  warmupFrames: 3,
+
+  /**
+   * Robot popped: paint confetti in the palette colours (plus white), thrown
+   * up and out of the robot's body, floating down on heavy drag.
+   */
+  pop: {
+    count: 20,
+    speedMin: 1.0,
+    speedMax: 2.4,
+    lifeMin: 0.55,
+    lifeMax: 0.95,
+    size: 2.0,
+    spreadDeg: 180,
+    upBias: 0.9,
+    gravityScale: 0.45,
+    drag: 2.4,
+    startOffset: 0.06,
+    shape: 'flake',
+  } satisfies VfxBurstConfig,
+  /**
+   * A ball landed: a few droplets of its own colour kicked off the surface.
+   * The impact event carries no contact normal, so the axis is the direction
+   * back toward the player's head (plus upBias) — right for walls and floors,
+   * and the wide cone hides the error on grazing hits.
+   */
+  impact: {
+    count: 6,
+    speedMin: 0.6,
+    speedMax: 1.6,
+    lifeMin: 0.25,
+    lifeMax: 0.45,
+    size: 1.2,
+    spreadDeg: 70,
+    upBias: 0.6,
+    gravityScale: 1.0,
+    drag: 0.6,
+    startOffset: 0.01,
+    shape: 'blob',
+  } satisfies VfxBurstConfig,
+  /**
+   * A ball connected with a robot without killing it: a short spray of the
+   * loaded colour out of the robot's front (toward the player).
+   */
+  hit: {
+    count: 6,
+    speedMin: 0.8,
+    speedMax: 1.8,
+    lifeMin: 0.2,
+    lifeMax: 0.4,
+    size: 1.1,
+    spreadDeg: 60,
+    upBias: 0.4,
+    gravityScale: 1.0,
+    drag: 0.8,
+    startOffset: 0.08,
+    shape: 'blob',
+  } satisfies VfxBurstConfig,
+  /** A tether web latched onto a robot: a quick white spark burst. */
+  tether: {
+    count: 10,
+    speedMin: 1.6,
+    speedMax: 3.0,
+    lifeMin: 0.12,
+    lifeMax: 0.24,
+    size: 0.6,
+    spreadDeg: 180,
+    upBias: 0,
+    gravityScale: 0.15,
+    drag: 3.0,
+    startOffset: 0.05,
+    shape: 'streak',
+  } satisfies VfxBurstConfig,
+  /**
+   * A shot left the muzzle: a tiny puff of the loaded paint (white for web)
+   * drifting forward and dripping. Fires every shot, so it stays small and
+   * short — set count 0 if it ever reads as clutter near the hands.
+   */
+  muzzle: {
+    count: 3,
+    speedMin: 0.25,
+    speedMax: 0.6,
+    lifeMin: 0.12,
+    lifeMax: 0.22,
+    size: 0.6,
+    spreadDeg: 35,
+    upBias: 0,
+    gravityScale: 1.0,
+    drag: 1.5,
+    startOffset: 0.0,
+    shape: 'blob',
+  } satisfies VfxBurstConfig,
+} as const;
