@@ -349,6 +349,21 @@
     color: #48dbfb;
     text-align: center;
   }
+  /* PAUSED pill: the first child of the panel, above whichever section is
+     showing. Hidden until the session loses focus mid-round (system menu,
+     headset off); HudSystem.applyPaused flips its display. Amber on the dark
+     glass so it still reads through the dimming Quest puts over the scene
+     while its own menu is open. */
+  .paused {
+    display: none;
+    padding-x: 1.6;
+    padding-y: 0.5;
+    font-size: 2.2;
+    font-weight: bold;
+    color: #0b0b10;
+    background-color: #ffca57;
+    border-radius: 1.6;
+  }
 
   /* --- Persistent footer ------------------------------------------------- */
   .footer {
@@ -381,6 +396,7 @@
   }
 </style>
 <div class="hud-root">
+  <span id="hud-paused" class="paused">PAUSED</span>
   <div id="section-idle" class="section">
     <div class="title-row">
       <span class="glyph-coral">P</span>
@@ -401,9 +417,10 @@
       <div class="dot-sky"></div>
       <div class="dot-lime"></div>
     </div>
-    <span class="howto">Trigger/pinch = fire | Tap your wrist palette = switch paint</span>
+    <span class="howto">Pinch or trigger = fire | Tap your wrist palette = switch paint</span>
     <span class="howto">THWIP (curl middle+ring) or thrust fires whatever is loaded</span>
     <span class="howto">WEB MODE = wrist shooters - or load the WEB chip on your palette</span>
+    <span class="howto">Press buttons with your RIGHT hand: point at one, then pinch</span>
     <div class="btn-row">
       <button id="btn-start" class="btn-amber">START</button>
       <button id="btn-chill" class="btn-sky">CHILL MODE</button>
@@ -435,10 +452,10 @@
   </div>
   <div id="section-chill" class="section-hidden">
     <span class="chill-title">CHILL MODE</span>
-    <span id="hud-chill-status" class="status">Hold trigger to spray. Tap the palette to change paint.</span>
+    <span id="hud-chill-status" class="status">Hold trigger or pinch to spray. Tap the palette to change paint.</span>
     <span class="howto">Paint the easel in front of you, then save the picture</span>
     <span class="howto">THWIP or thrust fires whatever is loaded</span>
-    <span class="howto">Grab the easel with both hands to move it</span>
+    <span class="howto">Pinch or squeeze the easel with both hands to move it</span>
     <div class="btn-row">
       <button id="btn-save-painting" class="btn-amber-line">SAVE PAINTING</button>
       <button id="btn-new-canvas" class="btn-sky-line">NEW CANVAS</button>

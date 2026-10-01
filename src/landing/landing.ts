@@ -89,9 +89,9 @@ export function initLanding(): LandingHandle {
       </section>
 
       <div class="pb-controls">
-        <span><b>Trigger / pinch / thwip</b> fire</span>
+        <span><b>Pinch / punch / trigger</b> fire</span>
         <span><b>Tap the wrist palette</b> switch paint &amp; webs</span>
-        <span><b>A button</b> start round</span>
+        <span><b>Point &amp; pinch START</b> begin a round &middot; no controllers needed</span>
       </div>
 
       <p class="pb-footer">PaintBlast MR &middot; a RethinkReality experiment &middot; Quest 3 / 3S &middot; nothing to install</p>

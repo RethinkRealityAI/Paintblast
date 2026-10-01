@@ -104,6 +104,15 @@ function seedGlobals(world: World) {
   globals.combo = signal(1);
   globals.timeLeft = signal(GAME.roundSec);
   globals.targetsAlive = signal(0);
+  // True whenever the immersive session is not in focus: the Quest system
+  // menu is open (VisibleBlurred), the headset is off (Hidden), or there is no
+  // session at all (NonImmersive — so it reads true on the landing page too).
+  // GameStateSystem owns every write, mirroring world.visibilityState, and
+  // decides per phase what that freezes: the round clock, countdown, game-over
+  // timer and combo window stop, and TargetSystem holds its robots. Idle and
+  // Chill carry on untouched. Seeded false; GameStateSystem.init() corrects it
+  // from the live visibility state the moment it registers.
+  globals.paused = signal(false);
 
   // Selected ammo (BallSpawnSystem owns writes). Three independent axes since
   // round 5: the paint colour from a dab, the ball kind from a chip, and the

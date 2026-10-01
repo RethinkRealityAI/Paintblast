@@ -48,7 +48,8 @@ import {
   WebModePad,
   canFireInPhase,
 } from './BallSpawnSystem';
-import { TargetSystem } from './TargetSystem';
+import { TargetSystem, shiftTimestamps } from './TargetSystem';
+import { PauseClock } from './GameStateSystem';
 import { WEB_SPLAT_TEXTURE_KEY } from './SplatterSystem';
 
 /**
@@ -523,6 +524,15 @@ export class WebShooterSystem extends createSystem({
    * for one multiplication is worse than one field.
    */
   private lastDelta = 0;
+  /**
+   * The `paused` global (GameStateSystem mirrors session focus into it), bound
+   * on first use, and this system's view of game time. While paused nothing
+   * here runs; on resume the tether and strand deadlines move on by the time
+   * away, so a line that was mid-reel when the player opened the Quest menu is
+   * still there when they come back. @see PauseClock
+   */
+  private pausedSignal: Signal<boolean> | undefined;
+  private readonly pauseClock = new PauseClock();
   /** Cached joint indices per hand, JOINT_SLOTS each. -1 = unresolved. */
   private jointIndices!: Int8Array;
   /**
@@ -670,6 +680,8 @@ export class WebShooterSystem extends createSystem({
   }
 
   update(delta: number) {
+    if (this.holdForPause(delta)) return;
+
     // Round 6 moved this gate from "is web ammo loaded" to "may anything be
     // fired at all". The gestures are a second trigger now, not a web feature,
     // so they have to be read whatever the palette says — and the shooter
@@ -687,6 +699,37 @@ export class WebShooterSystem extends createSystem({
     // that just ended has to fade its strand this frame rather than next.
     this.updateTethers(nowSec, nowMs);
     this.updateStrands(nowSec);
+  }
+
+  /**
+   * The pause guard, the same protocol TargetSystem follows.
+   *
+   * @returns true when this frame must not run: paused, or the first frame
+   *   after a pause or a long stall, which is spent moving every deadline on
+   *   by the time away and forgetting every motion sample — a hand that was
+   *   at the Quest menu is not "moving at" wherever it is now.
+   */
+  private holdForPause(delta: number): boolean {
+    this.pausedSignal ??= this.globals.paused as Signal<boolean> | undefined;
+    const paused = this.pausedSignal?.peek() === true;
+    const frozenSec = this.pauseClock.sync(
+      paused,
+      performance.now() / 1000,
+      delta,
+    );
+    if (paused) return true;
+    if (!(frozenSec > 0)) return false;
+
+    shiftTimestamps(this.tetherUntil, frozenSec);
+    shiftTimestamps(this.strandFadeUntil, frozenSec);
+    shiftTimestamps(this.strandStartedAt, frozenSec);
+    for (let hand = 0; hand < 2; hand++) {
+      this.thrustPrimed[hand] = 0;
+      this.handPrimed[hand] = 0;
+      this.shownPrimed[hand] = 0;
+      this.reelQueue[hand] = 0;
+    }
+    return true;
   }
 
   /**
