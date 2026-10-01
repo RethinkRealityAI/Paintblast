@@ -126,6 +126,12 @@ for emotions), and rounded silhouettes that read at 3 m. They must not look like
 the 2025 IWSDK winner's cute robots. Ours are domestic appliances gone rogue: mop heads,
 spray nozzles, vacuum skirts.
 
+![Splotbots lineup concept v1](concepts/splotbots-lineup-v1.jpg)
+
+*Concept v1, generated with Higgsfield `nano_banana_pro` (2 credits) from the template below.
+Left to right: Mopsy, Squeegee, Peekaboo, Duster Duke, Pip. This shows a direction only.
+Approve or redirect it before any 3D spend.*
+
 | Character | Role | Silhouette and behaviour | Hit and pop |
 |---|---|---|---|
 | **Mopsy** | Basic hover target | Squat dome with a mop skirt. Drifts and bobs. | Mop fringe flicks; face shows 😵 |
