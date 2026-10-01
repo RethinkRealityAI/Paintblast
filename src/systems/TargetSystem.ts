@@ -14,8 +14,9 @@ import {
 import type { Entity, Intersection, Object3D } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
-import { BALLS, ROOM, TARGETS } from '../config';
+import { BALLS, ROOM, TARGETS, WEB } from '../config';
 import {
+  AimTargets,
   BallStyle,
   GameEvent,
   GameEventBuffer,
@@ -202,6 +203,12 @@ export class TargetSystem extends createSystem({
    * cross-cutting state ("is this hand busy?"), which is what globals are for.
    */
   private tetheredHands!: Signal<number>;
+  /**
+   * Round 7: where the live robots are, published every frame of a round for
+   * BallSpawnSystem's aim assist. Optional so a test world without the global
+   * still runs.
+   */
+  private aimTargets?: AimTargets;
 
   /** The pool. Fixed length after ensurePool(); slots are reused forever. */
   private readonly slots: Entity[] = [];
@@ -261,6 +268,7 @@ export class TargetSystem extends createSystem({
     this.gamePhase = this.globals.gamePhase as Signal<GamePhase>;
     this.targetsAlive = this.globals.targetsAlive as Signal<number>;
     this.tetheredHands = this.globals.tetheredHands as Signal<number>;
+    this.aimTargets = this.globals.aimTargets as AimTargets | undefined;
 
     const size = TARGETS.poolSize;
     this.slotState = new Int8Array(size);
@@ -332,9 +340,33 @@ export class TargetSystem extends createSystem({
     }
 
     this.testBallOverlaps(nowSec);
+    this.publishAimTargets();
 
     if (this.targetsAlive.peek() !== this.aliveCount) {
       this.targetsAlive.value = this.aliveCount;
+    }
+  }
+
+  /**
+   * Copy this frame's shootable robots into the shared {@link AimTargets}.
+   *
+   * Runs right after {@link testBallOverlaps}, which has just refreshed
+   * `slotWorldPos` for every Active slot — so this is a copy, not a second
+   * round of getWorldPosition calls. A popping or respawning robot is not a
+   * target: assist must never bend a shot toward something that is vanishing.
+   */
+  private publishAimTargets(): void {
+    const aim = this.aimTargets;
+    if (!aim) return;
+    const count = Math.min(aim.capacity, this.slots.length);
+    for (let slot = 0; slot < count; slot++) {
+      const live = this.slotState[slot] === TargetSlotState.Active;
+      aim.active[slot] = live ? 1 : 0;
+      if (!live) continue;
+      const base = slot * 3;
+      aim.positions[base] = this.slotWorldPos[base];
+      aim.positions[base + 1] = this.slotWorldPos[base + 1];
+      aim.positions[base + 2] = this.slotWorldPos[base + 2];
     }
   }
 
@@ -739,10 +771,16 @@ export class TargetSystem extends createSystem({
     // tether has to survive. WebShooterSystem sees the slot go free on its very
     // next poll and fades its strand out.
     this.clearTether(slot);
+    // Off the aim-assist list at once: update() stops publishing when the
+    // round ends, so nothing else would ever clear it.
+    if (this.aimTargets && slot < this.aimTargets.capacity) {
+      this.aimTargets.active[slot] = 0;
+    }
     const object3D = this.slots[slot]?.object3D;
     if (object3D) {
       object3D.visible = false;
       object3D.scale.setScalar(1);
+      object3D.rotation.z = 0;
     }
     this.slotState[slot] = TargetSlotState.Empty;
     this.slotHp[slot] = 0;
@@ -778,6 +816,15 @@ export class TargetSystem extends createSystem({
       // if the art is ever re-authored facing -Z.
       this.slotYaw[slot] += yawStep;
       object3D.rotation.y = this.slotYaw[slot];
+      object3D.rotation.z = 0;
+    } else {
+      // Round 7: a hooked robot struggles. A fast side-to-side rock about its
+      // own Z is the cheapest possible "it's caught and it doesn't like it" —
+      // no animation clips, no allocation, and it stops the instant the line
+      // lets go (the branch above zeroes it).
+      object3D.rotation.z =
+        Math.sin(nowSec * WEB.tetherStruggleHz * Math.PI * 2) *
+        WEB.tetherStruggleRad;
     }
 
     const flashLeft = this.hitFlashUntil[slot] - nowSec;
@@ -838,6 +885,12 @@ export class TargetSystem extends createSystem({
 
       object3D.getWorldPosition(this.ballScratch);
       const ballRadius = ball.getValue(Ball, 'radius') ?? BALLS.radius;
+      // Round 7: a tether web that *could* latch reaches further than paint —
+      // a line that brushes a robot should catch it. Only when the latch can
+      // actually take (the hand is free; the slot check is per slot below),
+      // or a tether that cannot latch would score paint hits at the wider
+      // radius.
+      const latchHand = this.latchHandFor(ball);
 
       for (let slot = 0; slot < this.slots.length; slot++) {
         if (this.slotState[slot] !== TargetSlotState.Active) continue;
@@ -846,7 +899,12 @@ export class TargetSystem extends createSystem({
         const dx = this.ballScratch.x - this.slotWorldPos[base];
         const dy = this.ballScratch.y - this.slotWorldPos[base + 1];
         const dz = this.ballScratch.z - this.slotWorldPos[base + 2];
-        const reach = this.slotRadius[slot] + ballRadius;
+        const reach =
+          this.slotRadius[slot] +
+          ballRadius +
+          (latchHand >= 0 && this.slotTetherHand[slot] < 0
+            ? WEB.tetherLatchBonus
+            : 0);
         if (dx * dx + dy * dy + dz * dz > reach * reach) continue;
 
         // A tether web latches instead of hitting. Detected here rather than
@@ -864,6 +922,18 @@ export class TargetSystem extends createSystem({
         break;
       }
     }
+  }
+
+  /**
+   * The hand a tether ball could latch for, or -1 when it is not a tether web
+   * or that hand already holds a line. Only ever widens the reach test.
+   */
+  private latchHandFor(ball: Entity): number {
+    if (ball.getValue(Ball, 'style') !== BallStyle.Web) return -1;
+    if (ball.getValue(Ball, 'subStyle') !== WebSubMode.Tether) return -1;
+    const hand = ball.getValue(Ball, 'firedBy') ?? -1;
+    if (hand !== 0 && hand !== 1) return -1;
+    return this.tetherSlotForHand(hand) >= 0 ? -1 : hand;
   }
 
   /**

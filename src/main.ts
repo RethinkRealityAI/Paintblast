@@ -64,11 +64,12 @@ import {
   PaletteRoot,
   WristPaletteSystem,
   PALETTE_BOARD_ASSET_KEY,
+  thinnestAxis,
 } from './systems/WristPaletteSystem';
 import { Easel, EaselSystem, EASEL_ASSET_KEY } from './systems/EaselSystem';
 import { SceneScanSystem } from './systems/SceneScanSystem';
 import { initLanding } from './landing/landing';
-import { AUDIO, GAME, HUD, PALETTE } from './config';
+import { AUDIO, GAME, HUD, PALETTE, TARGETS, WEB } from './config';
 import {
   BallKind,
   BallStyle,
@@ -79,6 +80,7 @@ import {
   GamePhase,
   GameEventBuffer,
   WebSubMode,
+  AimTargets,
 } from './types';
 import type { PaletteChipSpec } from './types';
 
@@ -134,6 +136,11 @@ function seedGlobals(world: World) {
 
   // One-frame event mailbox, drained by EventFlushSystem at priority 90.
   globals.gameEvents = new GameEventBuffer();
+
+  // Round 7: live robot positions for aim assist. TargetSystem writes it every
+  // frame of a round, BallSpawnSystem reads it per shot. A struct rather than
+  // a system call for the same import-cycle reason as tetheredHands.
+  globals.aimTargets = new AimTargets(TARGETS.poolSize);
 }
 
 /**
@@ -191,6 +198,16 @@ function loadPaletteBoardModel(): Object3D | undefined {
   const model = source.clone(true);
   const box = new Box3().setFromObject(model);
   const size = box.getSize(new Vector3());
+
+  // Lay the model's thinnest axis onto the board normal (+Y) — the shipped
+  // GLB is a slab thin along Z, and loading it as-is stood the board on edge
+  // against its own dabs (round 7). Then re-measure in the rotated pose.
+  const thin = thinnestAxis(size.x, size.y, size.z);
+  if (thin === 2) model.rotation.x = -Math.PI / 2;
+  else if (thin === 0) model.rotation.z = Math.PI / 2;
+  model.updateMatrixWorld(true);
+  box.setFromObject(model);
+  box.getSize(size);
   const centre = box.getCenter(new Vector3());
 
   const fit = (PALETTE.boardRadius * 2) / (size.x || 1);
@@ -641,18 +658,23 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
       priority: 'background',
     },
     // ROUND4-WEBSHOOTER-ASSET — Higgsfield-modelled wrist web shooter
-    // (image_to_3d). WebShooterSystem measures the art and rescales its
-    // longest axis to WEB.shooterLengthMeters, so swapping the model never
-    // needs a code change (a primitive block-and-nozzle ships as fallback).
+    // (image_to_3d). Round 7 ships a code-built forearm gauntlet instead
+    // (the GLB is a ring cuff, which cannot lie along the forearm), so the
+    // model is only streamed when WEB.shooterUseGlb asks for it.
     //
-    // Must be 'critical', unlike the easel and the palette board: the shooters
-    // are built in WebShooterSystem.init(), which runs during registerSystem,
-    // so a background-streamed model would always miss its own construction.
-    [WEB_SHOOTER_ASSET_KEY]: {
-      url: '/gltf/web-shooter.glb',
-      type: AssetType.GLTF,
-      priority: 'critical',
-    },
+    // Must be 'critical' when it is used, unlike the easel and the palette
+    // board: the shooters are built in WebShooterSystem.init(), which runs
+    // during registerSystem, so a background-streamed model would always miss
+    // its own construction.
+    ...(WEB.shooterUseGlb
+      ? {
+          [WEB_SHOOTER_ASSET_KEY]: {
+            url: '/gltf/web-shooter.glb',
+            type: AssetType.GLTF,
+            priority: 'critical' as const,
+          },
+        }
+      : {}),
   },
   xr: {
     sessionMode: SessionMode.ImmersiveAR,
@@ -744,4 +766,25 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
   world.visibilityState.subscribe((state) => {
     landing.setVisible(state === VisibilityState.NonImmersive);
   });
+
+  // Dev builds only: expose the world so a headless Playwright run (see
+  // scripts/headless-verify.mjs) can drive state the IWER emulator cannot
+  // reach — the cloud sessions this repo is worked in have no MCP relay.
+  // Vite statically replaces import.meta.env.DEV, so production strips it.
+  if ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) {
+    const debug = window as unknown as {
+      __PB_WORLD?: World;
+      __PB_THREE?: Record<string, unknown>;
+    };
+    debug.__PB_WORLD = world;
+    // The same three.js instance the app renders with, so a harness can add
+    // debug geometry (e.g. joint markers when the hand meshes cannot stream).
+    debug.__PB_THREE = {
+      Mesh,
+      SphereGeometry,
+      CylinderGeometry,
+      MeshBasicMaterial,
+      Vector3,
+    };
+  }
 });

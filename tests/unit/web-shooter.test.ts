@@ -5,7 +5,6 @@ import {
   fitShooterScale,
   forwardSpeed,
   isThwipPose,
-  shouldYank,
   stepGestureGate,
   StrandState,
 } from '../../src/systems/WebShooterSystem';
@@ -350,48 +349,5 @@ describe('StrandState', () => {
     expect(StrandState.Flying).toBe(1);
     expect(StrandState.Fading).toBe(2);
     expect(StrandState.Tethered).toBe(3);
-  });
-});
-
-describe('shouldYank', () => {
-  const COLD = Number.POSITIVE_INFINITY;
-
-  it('fires on a hard pull away from the robot', () => {
-    expect(shouldYank(WEB.yankSpeed + 0.5, COLD, WEB)).toBe(true);
-  });
-
-  it('ignores a hand drifting under the threshold', () => {
-    expect(shouldYank(WEB.yankSpeed - 0.01, COLD, WEB)).toBe(false);
-    expect(shouldYank(0, COLD, WEB)).toBe(false);
-  });
-
-  it('ignores a hand pushed TOWARD the robot', () => {
-    // The projection goes negative, which is how shoving your arm out at the
-    // thing on the end of the line avoids reeling it in.
-    expect(shouldYank(-5, COLD, WEB)).toBe(false);
-  });
-
-  it('swallows a second yank inside the cooldown', () => {
-    expect(shouldYank(5, WEB.yankCooldownMs - 1, WEB)).toBe(false);
-    expect(shouldYank(5, WEB.yankCooldownMs, WEB)).toBe(true);
-  });
-
-  it('has no latch — a sustained haul keeps ratcheting', () => {
-    // Deliberately unlike stepGestureGate. Hand-over-hand pulling must not
-    // require the speed to fall back through zero between yanks.
-    let fired = 0;
-    let sinceMs = COLD;
-    for (let frame = 0; frame < 60; frame++) {
-      if (shouldYank(3, sinceMs, WEB)) {
-        fired++;
-        sinceMs = 0;
-      } else {
-        sinceMs += 1000 / 72;
-      }
-    }
-    // 60 frames at 72 Hz is ~833 ms; at a 250 ms floor that is three or four
-    // hauls, not sixty and not one.
-    expect(fired).toBeGreaterThan(2);
-    expect(fired).toBeLessThan(6);
   });
 });

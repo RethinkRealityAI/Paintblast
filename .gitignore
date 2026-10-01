@@ -9,3 +9,7 @@ tests/smoke/out/
 .mcp.json
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
+
+# Agent worktrees and headless verification output
+.claude/worktrees/
+verify-shots/

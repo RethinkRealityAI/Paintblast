@@ -26,7 +26,10 @@ import type { Entity, Material, Object3D } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
 import { BALLS, BALL_KIND_CONFIG, CHILL, FIRE, PALETTE, WEB } from '../config';
+import { pickAssistedAim } from '../wrist-frame';
+import type { AimAssistConfig } from '../wrist-frame';
 import {
+  AimTargets,
   BallKind,
   BallStyle,
   GameEvent,
@@ -37,6 +40,14 @@ import {
   nextWebSubMode,
   packFiredData,
 } from '../types';
+
+const DEG_TO_RAD = Math.PI / 180;
+
+/**
+ * Havok's world gravity, m/s^2 — IWSDK's PhysicsSystem default. Aim assist
+ * solves the ballistic arc with it, scaled by each style's gravity factor.
+ */
+const GRAVITY = 9.81;
 
 /** Values of Ball.flightState. Drives which per-frame checks BallFlightSystem runs. */
 export const BallFlightState = {
@@ -399,6 +410,25 @@ export class BallSpawnSystem extends createSystem({
   private events!: GameEventBuffer;
   /** Scratch for {@link resolveShot} — one shot's worth, reused every shot. */
   private loadout!: ShotLoadout;
+  /** Live robot positions, for aim assist. Written by TargetSystem. */
+  private aimTargets?: AimTargets;
+  /**
+   * Aim-assist settings for paint and for webbing, built once: speed and
+   * gravity differ by style, and a fresh object per shot is exactly the kind
+   * of allocation this file never makes.
+   */
+  private paintAssist!: AimAssistConfig;
+  private webAssist!: AimAssistConfig;
+  /** Scratch for {@link pickAssistedAim}: candidate and chosen directions. */
+  private assistScratch!: Float32Array;
+  private assistOut!: Float32Array;
+  /**
+   * Per hand, 1 while the current pinch (or trigger) press was spent selecting
+   * something on the palette (round 7). Cleared when the press ends. Without
+   * it a hand-tracking pinch on a chip also fired a ball at the player's own
+   * wrist — and in Chill, sprayed for as long as the pinch was held.
+   */
+  private pressConsumed!: Uint8Array;
 
   // Per-hand cooldown timestamps (performance.now() ms) and the entity indices
   // needed to move the "selected" highlights, kept as scalars so the system
@@ -429,6 +459,22 @@ export class BallSpawnSystem extends createSystem({
     this.gamePhase = this.globals.gamePhase as Signal<GamePhase>;
     this.events = this.globals.gameEvents as GameEventBuffer;
     this.loadout = createShotLoadout();
+    this.aimTargets = this.globals.aimTargets as AimTargets | undefined;
+    this.pressConsumed = new Uint8Array(2);
+    this.assistScratch = new Float32Array(3);
+    this.assistOut = new Float32Array(3);
+    this.paintAssist = {
+      speed: FIRE.speed,
+      gravity: GRAVITY,
+      maxAngleRad: FIRE.aimAssistDeg * DEG_TO_RAD,
+      maxRange: FIRE.aimAssistMaxRange,
+    };
+    this.webAssist = {
+      speed: FIRE.speed * WEB.webSpeedMult,
+      gravity: GRAVITY * WEB.webGravityFactor,
+      maxAngleRad: WEB.aimAssistDeg * DEG_TO_RAD,
+      maxRange: FIRE.aimAssistMaxRange,
+    };
 
     // main.ts seeds activeColor from INITIAL_PALETTE_SELECTION and pre-scales
     // the first dab, and dabs are created in PALETTE_DAB_ORDER — so the first
@@ -472,6 +518,9 @@ export class BallSpawnSystem extends createSystem({
   }
 
   update() {
+    // A press spent on the palette stays spent until it is released.
+    this.releaseConsumedPresses();
+
     // Palette selection by squeeze works in EVERY phase, and deliberately does
     // not go through the pointer pipeline: near the wrist palette the touch
     // pointer's 15 cm hover sphere outranks the grab pointer (MultiPointer
@@ -480,6 +529,10 @@ export class BallSpawnSystem extends createSystem({
     // frame cannot be outranked by anything.
     this.trySelectByProximity('left');
     this.trySelectByProximity('right');
+    // Round 7: the same guarantee for a tracked hand's pinch, measured at the
+    // fingertip — and that pinch is then spent, so it never also fires.
+    this.trySelectByPinch('left');
+    this.trySelectByPinch('right');
 
     const phase = this.gamePhase.peek();
     const chilling = phase === GamePhase.Chill;
@@ -523,8 +576,55 @@ export class BallSpawnSystem extends createSystem({
     const grip = this.player.gripSpaces[side];
     if (!grip) return;
     grip.getWorldPosition(this.scratchGripPosition);
+    this.selectNearest(this.scratchGripPosition, PALETTE.grabSelectRadius);
+  }
 
-    const radiusSq = PALETTE.grabSelectRadius * PALETTE.grabSelectRadius;
+  /**
+   * Pinch-to-select at the fingertip, for tracked hands (round 7).
+   *
+   * Hands have no squeeze button, so {@link trySelectByProximity} never ran for
+   * them: a hand player's only routes were a precise fingertip poke, or a pinch
+   * that had to win the pointer-priority fight described there — and when it
+   * lost, the same pinch fired a paintball at their own wrist. This is the
+   * squeeze path's guarantee, measured from the index fingertip (which meets
+   * the thumb in a pinch) with the tighter {@link PALETTE.pinchSelectRadius},
+   * and a pinch that selects something is marked spent so {@link tryFire}
+   * ignores it until it is released.
+   *
+   * Not on a hand that holds a tether: its pinch reels (WebShooterSystem).
+   */
+  private trySelectByPinch(side: 'left' | 'right'): void {
+    if (!this.input.isPrimary('hand', side)) return;
+    const gamepad = this.input.gamepads[side];
+    if (!gamepad?.getSelectStart()) return;
+    const hand = side === 'right' ? 1 : 0;
+    if (this.tetheredHands.peek() & (hand === 1 ? 2 : 1)) return;
+
+    const tip = this.player.indexTipSpaces?.[side];
+    if (!tip) return;
+    tip.getWorldPosition(this.scratchGripPosition);
+    if (this.selectNearest(this.scratchGripPosition, PALETTE.pinchSelectRadius)) {
+      this.pressConsumed[hand] = 1;
+    }
+  }
+
+  /** Un-spend each hand's press once its trigger or pinch has come up. */
+  private releaseConsumedPresses(): void {
+    for (let hand = 0; hand < 2; hand++) {
+      if (!this.pressConsumed[hand]) continue;
+      const gamepad = this.input.gamepads[hand === 1 ? 'right' : 'left'];
+      if (!gamepad?.getSelecting()) this.pressConsumed[hand] = 0;
+    }
+  }
+
+  /**
+   * Select the nearest dab, chip or (visible) sub-mode pad within `radius` of
+   * `point`. Eleven squared-distance checks, on a press edge only.
+   *
+   * @returns true when something was selected.
+   */
+  private selectNearest(point: Vector3, radius: number): boolean {
+    const radiusSq = radius * radius;
     let bestDab: Entity | undefined;
     let bestChip: Entity | undefined;
     let bestPad: Entity | undefined;
@@ -535,7 +635,7 @@ export class BallSpawnSystem extends createSystem({
       if (!object3D) continue;
       object3D.getWorldPosition(this.scratchElementPosition);
       const distSq = this.scratchElementPosition.distanceToSquared(
-        this.scratchGripPosition,
+        point,
       );
       if (distSq < bestDistSq) {
         bestDistSq = distSq;
@@ -549,7 +649,7 @@ export class BallSpawnSystem extends createSystem({
       if (!object3D) continue;
       object3D.getWorldPosition(this.scratchElementPosition);
       const distSq = this.scratchElementPosition.distanceToSquared(
-        this.scratchGripPosition,
+        point,
       );
       if (distSq < bestDistSq) {
         bestDistSq = distSq;
@@ -568,7 +668,7 @@ export class BallSpawnSystem extends createSystem({
       if (!object3D || !visibleInWorld(object3D)) continue;
       object3D.getWorldPosition(this.scratchElementPosition);
       const distSq = this.scratchElementPosition.distanceToSquared(
-        this.scratchGripPosition,
+        point,
       );
       if (distSq < bestDistSq) {
         bestDistSq = distSq;
@@ -584,7 +684,10 @@ export class BallSpawnSystem extends createSystem({
       this.selectSubMode(
         (bestPad.getValue(WebModePad, 'mode') ?? WebSubMode.Splat) as WebSubMode,
       );
+    } else {
+      return false;
     }
+    return true;
   }
 
   /**
@@ -678,7 +781,9 @@ export class BallSpawnSystem extends createSystem({
       state: PhysicsState.Dynamic,
       linearDamping: kindConfig.linearDamping,
       angularDamping: 0.05,
-      gravityFactor: 1.0,
+      // Webbing flies flatter than paint (round 7) — see WEB.webGravityFactor.
+      // Aim assist's ballistic solve reads the same factor, so the two agree.
+      gravityFactor: style === BallStyle.Web ? WEB.webGravityFactor : 1.0,
     });
     ball.addComponent(PhysicsShape, {
       shape: PhysicsShapeType.Sphere,
@@ -714,6 +819,14 @@ export class BallSpawnSystem extends createSystem({
     if (!gamepad) return;
     const wants = spraying ? gamepad.getSelecting() : gamepad.getSelectStart();
     if (!wants) return;
+
+    const hand = side === 'right' ? 1 : 0;
+    // This press already selected something on the palette (round 7).
+    if (this.pressConsumed[hand]) return;
+    // This hand is holding a tether: its press reels the line in instead
+    // (WebShooterSystem). Firing would also have broken the very line the
+    // player is hauling — every ball from a hand lets go of its tether.
+    if (this.tetheredHands.peek() & (hand === 1 ? 2 : 1)) return;
 
     // This hand is clicking the HUD, not shooting. Checked per hand so a
     // left click on the panel never silences the right trigger.
@@ -888,6 +1001,36 @@ export class BallSpawnSystem extends createSystem({
       this.webSubMode.peek(),
     );
 
+    // Round 7: webbing zips — faster and flatter than paint — and both get a
+    // gentle aim assist toward live robots during a round.
+    const web = loadout.style === BallStyle.Web;
+    const speed = web ? FIRE.speed * WEB.webSpeedMult : FIRE.speed;
+    let aimX = dirX;
+    let aimY = dirY;
+    let aimZ = dirZ;
+    const targets = this.aimTargets;
+    if (targets && this.gamePhase.peek() === GamePhase.Playing) {
+      const slot = pickAssistedAim(
+        x,
+        y,
+        z,
+        dirX,
+        dirY,
+        dirZ,
+        targets.positions,
+        targets.active,
+        targets.capacity,
+        web ? this.webAssist : this.paintAssist,
+        this.assistScratch,
+        this.assistOut,
+      );
+      if (slot >= 0) {
+        aimX = this.assistOut[0];
+        aimY = this.assistOut[1];
+        aimZ = this.assistOut[2];
+      }
+    }
+
     // The live-ball cap is spawnBall's job now, not this call site's.
     const hand = side === 'right' ? 1 : 0;
     const ball = this.spawnBall(
@@ -901,7 +1044,7 @@ export class BallSpawnSystem extends createSystem({
       loadout.subStyle,
     );
     ball.addComponent(PhysicsManipulation, {
-      linearVelocity: [dirX * FIRE.speed, dirY * FIRE.speed, dirZ * FIRE.speed],
+      linearVelocity: [aimX * speed, aimY * speed, aimZ * speed],
     });
 
     // BallFired is the one event whose `data` is not just the ball kind:

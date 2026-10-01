@@ -514,3 +514,33 @@ export class GameEventBuffer {
     this._count = 0;
   }
 }
+
+/**
+ * Where the live robots are, for aim assist (round 7).
+ *
+ * TargetSystem writes it every frame of a round; BallSpawnSystem reads it when
+ * a shot is taken. A shared struct in `world.globals` rather than a system
+ * call because TargetSystem imports BallSpawnSystem (for the Ball component),
+ * and importing it back would close a module cycle that throws at load time —
+ * the same reason `tetheredHands` is a signal.
+ *
+ * Fixed capacity, allocated once: `positions` is xyz per pool slot, and
+ * `active[slot]` is 1 for a robot that can currently be shot. Slots past the
+ * pool size simply stay inactive.
+ */
+export class AimTargets {
+  readonly positions: Float32Array;
+  readonly active: Uint8Array;
+  readonly capacity: number;
+
+  constructor(capacity: number) {
+    this.capacity = Math.max(0, Math.floor(capacity));
+    this.positions = new Float32Array(this.capacity * 3);
+    this.active = new Uint8Array(this.capacity);
+  }
+
+  /** Mark every slot inactive — a round ended, or the pool was reset. */
+  clear(): void {
+    this.active.fill(0);
+  }
+}

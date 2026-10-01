@@ -47,6 +47,18 @@ export const FIRE = {
    * not shooting — its trigger pull is swallowed (see BallSpawnSystem).
    */
   uiBlockMaxDistance: 3,
+  /**
+   * Aim assist on paint, degrees (round 7). A shot within this cone of a live
+   * robot is bent onto the ballistic arc that hits it — judged against the
+   * corrected arc, so a player who has learned the drop is already inside it.
+   * Small on purpose: hand tracking is centimetre-noisy and Meta's hands
+   * guidance asks for forgiving targeting, but paint should still feel like
+   * paint. Webs get their own, wider cone ({@link WEB.aimAssistDeg}). Only
+   * live robots attract — walls, the easel and the floor never do. 0 disables.
+   */
+  aimAssistDeg: 4,
+  /** Robots further than this many metres never attract aim assist. */
+  aimAssistMaxRange: 6,
 } as const;
 
 /**
@@ -412,6 +424,61 @@ export const PALETTE = {
    * sphere outranks the grab pointer and can swallow squeeze-grabs.
    */
   grabSelectRadius: 0.09,
+
+  // ---- Hand tracking (round 7) ----------------------------------------------
+  //
+  // The four offsets and the tilt above were tuned on controllers, in the grip
+  // frame, and still drive the controller palette unchanged. A tracked hand's
+  // grip frame is a quarter turn away from a controller's (its -Z points at
+  // the thumb), which is why the palette stood on edge across the forearm in
+  // hand mode — and a bare hand rolls freely, so "above the back of the hand"
+  // ends up *under* the arm the moment you turn your palm up.
+  //
+  // So with hands the palette is posed in world terms instead: it floats
+  // `handLift` metres straight UP from the wrist joint (whatever the roll),
+  // nudged `handForward` toward the fingers, and turns its face to your eyes,
+  // with its dab edge pointing the way your fingers do. Readable in every
+  // pose; reachable by the other index finger.
+  /** Metres straight up (world +Y) from the left wrist joint to the board centre. */
+  handLift: 0.06,
+  /**
+   * Metres along the forearm toward the fingers from the wrist joint. Out over
+   * the hand rather than the wrist, so the board never covers the gauntlet's
+   * selector pads (which ride the forearm just behind the wrist).
+   */
+  handForward: 0.11,
+  /**
+   * Metres sideways, away from the body (to the left of a left forearm), so
+   * the board clears the gauntlet's selector pads. 0 sits it over the wrist.
+   */
+  handOutward: 0.03,
+  /**
+   * Pinch-to-select reach, metres from the pinch point to a dab, chip or pad
+   * centre. Tighter than {@link grabSelectRadius}: a fingertip pinch is a
+   * precise point, a controller's grip origin is not.
+   */
+  pinchSelectRadius: 0.045,
+
+  // ---- Hold still while I poke you (round 7) --------------------------------
+  //
+  // Meta's hands UI guidance: "Do not anchor menus to the user's wrist... a
+  // menu that follows the wrist is hard to use because it shifts position while
+  // the other hand tries to poke it." So the palette now **parks in world space
+  // the moment the other hand's fingertip comes near**, and only rejoins the
+  // wrist once that fingertip has left. You aim at a still target; the board
+  // never visibly detaches unless you move the palette arm mid-poke.
+  /**
+   * Metres from the palette centre at which the other hand's index fingertip
+   * (or controller) parks the palette in place.
+   */
+  lockRadius: 0.16,
+  /** Seconds the fingertip must stay outside `lockRadius` before the palette lets go. */
+  lockReleaseSec: 0.35,
+  /**
+   * Time constant, seconds, of the glide back onto the wrist after a park, so
+   * re-attaching is a quick slide rather than a snap.
+   */
+  reattachSec: 0.06,
 } as const;
 
 /**
@@ -661,6 +728,13 @@ export const EASEL = {
   frameThickness: 0.035,
   /** How far behind the board the rear leg stands, metres. */
   rearLegOffset: 0.16,
+  /**
+   * Time constant, seconds, of the smoothing on the easel's drawn pose while
+   * it is being grabbed (round 7). Two tracked hands tremble independently;
+   * on a 60 cm board that read as jitter. ~70 ms reads as the easel having a
+   * little weight. 0 disables.
+   */
+  grabSmoothingSec: 0.07,
 } as const;
 
 /**
@@ -689,93 +763,128 @@ export const EASEL = {
  * is declared in the **right** hand's frame and flipped for the left.
  */
 export const WEB = {
-  // ---- The shooters on your wrists ----------------------------------------
+  // ---- The shooters on your forearms (round 7) -----------------------------
   //
-  // Round 4 mounted these on the back of the wrist at yaw 0, and the field
-  // report was blunt: "the shooting component is parallel to the user's forearm
-  // / on top; it must be perpendicular to the band, sitting on the UNDERSIDE of
-  // the forearm (palm up), nozzle pointing the way the fist points".
-  //
-  // The GLB measures 0.73 x 1.85 x 1.90 in its own units — a near-square Y/Z
-  // pair with X 2.6x smaller, which is the unmistakable signature of a **band**:
-  // a ring lying in the model's YZ plane whose hole runs along model X. At yaw 0
-  // that hole pointed sideways across the wrist, leaving the hoop standing up in
-  // the plane of the forearm. Exactly the "parallel to the forearm / on top"
-  // being complained about. shooterYawDeg swings it a quarter turn so the hole
-  // runs along the arm and the band goes round the wrist the way a band does.
+  // Rounds 4-6 posed the shooter off the raw WebXR grip space and assumed its
+  // -Z was "where the hand points". For a tracked hand the spec defines grip -Z
+  // as *toward the thumb*, so the device sat across the wrist and webs flew out
+  // sideways — the round-7 field report ("perpendicular to the wrist instead of
+  // parallel and aligned with the forearm"). Every number below now lives in
+  // the **aim frame** built by `src/wrist-pose.ts`: -Z is exactly the direction
+  // a web travels, +Y is the back of the hand, +X is pinky-side on the right
+  // hand (mirrored for the left). The shooter is a gauntlet whose long axis IS
+  // that -Z, so what you see is where it shoots, by construction.
   /**
-   * Cap on the finished shooter's longest dimension, metres.
+   * Where a tracked hand's aim comes from.
    *
-   * Not the primary fit any more — {@link shooterBandMeters} is — but the
-   * backstop for art whose proportions are nothing like the shipped cuff's. If
-   * band-fitting would make the model longer than this, it is length-fitted
-   * instead. Round 4 shipped 0.07 as the primary fit and the field called the
-   * result too small.
+   * - `'ray'` (default): the OS target ray. On Quest this is the same
+   *   shoulder-through-hand pointer the system UI uses, already filtered, so it
+   *   stays steady when you bend your wrist back into the classic web-shooter
+   *   pose and lines up with your forearm when the arm is extended.
+   * - `'hand'`: the hand's own wrist-to-knuckles axis. Shoots exactly where
+   *   the back of the hand points; a bent-back wrist then aims high.
+   *
+   * Controllers always aim along their own ray (the direction the trigger has
+   * always fired), whatever this says.
    */
-  shooterLengthMeters: 0.1,
+  handAimSource: 'ray' as 'ray' | 'hand',
   /**
-   * Target band diameter, metres — the size the cuff is actually fitted to.
-   *
-   * A wrist is a fixed size, so the number that decides whether a worn object
-   * looks right is how wide the band is, not how long the whole model is.
-   * 7.5 cm is a generous adult wrist with the cuff standing a little proud of
-   * it. Deliberately a constant: do NOT try to measure the player's hand at
-   * runtime — joint spans are noisy and this has to look right on frame one.
+   * With `handAimSource: 'ray'`, how far (degrees) the OS ray may stray from
+   * the hand's own axis and still be used outright. The system ray is a
+   * pointer: it stays out in front of you even when you turn your hand up to
+   * look at it, which would peel the gauntlet off your forearm. Past
+   * `rayBlendFarDeg` the hand's axis takes over; smoothstep in between.
+   */
+  rayBlendNearDeg: 30,
+  /** @see rayBlendNearDeg */
+  rayBlendFarDeg: 65,
+  /**
+   * Controllers have no wrist joint: metres from the grip origin back up the
+   * forearm to where the wrist is assumed to be. Hands use the real joint.
+   */
+  controllerWristBack: 0.07,
+  /**
+   * Time constant, seconds, of the smoothing on the shooter's pose — and on
+   * the direction webs fire, which is read off the smoothed device so the shot
+   * always leaves along the barrel you can see. 0 disables it. Around 30 ms
+   * kills hand-tracking shimmer without a perceptible lag.
+   */
+  shooterSmoothingSec: 0.03,
+  /**
+   * Length of the gauntlet along the forearm, metres (body + straps, nozzle
+   * excluded). Also the cap {@link fitShooterScale} applies to an optional GLB.
+   */
+  shooterLengthMeters: 0.11,
+  /**
+   * Forearm diameter the straps are sized to, metres. 7.5 cm is a generous
+   * adult wrist with the strap standing a little proud of it. Deliberately a
+   * constant: do NOT measure the player's hand at runtime — joint spans are
+   * noisy and this has to look right on frame one.
    */
   shooterBandMeters: 0.075,
   /**
-   * Mount yaw about the grip's Y axis, degrees, applied to the model inside its
-   * holder. 90 lays the shipped cuff's hole along the forearm. @see WEB
+   * Swap the code-built gauntlet for `public/gltf/web-shooter.glb`. Off since
+   * round 7: the shipped GLB is a *ring* cuff, which by design cannot lie
+   * along the forearm. A replacement must be authored long axis = model -Z,
+   * nozzle at the -Z end, top (back of the hand) = +Y; it is measured and
+   * rescaled at runtime, and the three mount angles below can correct an
+   * exporter's axes without touching code.
    */
-  shooterYawDeg: 90,
-  /** Mount pitch about the grip's X axis, degrees. Tips the nose up or down. */
+  shooterUseGlb: false,
+  /** Mount yaw (degrees) applied to the model inside its holder. 0 for the gauntlet. */
+  shooterYawDeg: 0,
+  /** Mount pitch about the holder's X, degrees. Tips the nozzle up or down. */
   shooterPitchDeg: 0,
   /**
-   * Mount roll about the grip's Z axis, degrees — applied LAST, so it spins the
-   * mounted cuff around the forearm. This is the knob for bringing a nozzle,
-   * a seam or a logo round to whichever side of the wrist is facing the player.
-   *
-   * **180 since round 6, and that is the palm-up fix.** Round 5 mounted the
-   * cuff for a fists-down punch pose and the field report was that the pose
-   * people actually adopt is the Spider-Man one: forearm supinated, palm and
-   * the underside of the wrist turned UP toward your own face. Half a turn
-   * about the forearm brings the device body round to that side, so it reads
-   * right in supination instead of in pronation.
-   *
-   * Mirrored for the left hand like every other rotation about Y or Z, which
-   * for exactly 180 is the same rotation either way — the two wrists stay
-   * symmetric by construction rather than by luck.
-   *
-   * Nothing about aim changes: webs fly along the grip's forward axis and the
-   * muzzle is a point in the *holder's* frame (see {@link muzzleLocal}), which
-   * the mount rotation does not touch.
+   * Mount roll about the forearm, degrees — spins the device round the arm.
+   * 0 puts the glowing cartridge on the palm side, facing you in the palm-up
+   * pose people adopt to look at their wrist.
    */
-  shooterRollDeg: 180,
-  /** Metres toward the pinky side, in the RIGHT grip's frame. Left mirrors. */
+  shooterRollDeg: 0,
+  /** Metres toward the pinky side, in the RIGHT hand's aim frame. Left mirrors. */
   shooterOffsetX: 0.0,
   /**
-   * Metres along the grip's Y axis. **Negative**, and that is the round-5 fix:
-   * the device belongs against the palm side of the wrist, not on the back of
-   * the hand where round 4 put it.
+   * Metres along the aim frame's Y from the wrist joint. **Negative**: the
+   * device rides the underside (palm side) of the forearm, the way a web
+   * shooter is worn — out of the way of the hand when the wrist bends back.
    */
-  shooterOffsetY: -0.018,
+  shooterOffsetY: -0.034,
   /**
-   * Metres along the grip's Z axis. **Positive**, i.e. back toward the elbow:
-   * the grip origin sits in the palm and a cuff is worn at the wrist behind it.
+   * Metres along the aim frame's Z from the wrist joint. **Positive**, i.e.
+   * back up the forearm: the body sits on the arm and only the nozzle reaches
+   * the wrist crease.
    */
-  shooterOffsetZ: 0.03,
+  shooterOffsetZ: 0.05,
   /**
-   * The nozzle, in the shooter holder's own (grip-aligned) local space, metres.
-   *
-   * Both the web's spawn point and the strand's near end come from here, so
-   * a mount rotation that moves the nozzle moves the webbing with it rather
-   * than leaving strands sprouting from the middle of the cuff. X mirrors
-   * per hand like every other X here; the defaults put it on the underside of
-   * the band's leading edge.
+   * The nozzle tip, in the shooter holder's own (aim-aligned) frame, metres.
+   * Both the web's spawn point and the strand's near end come from here. On
+   * the gauntlet the tip is half a body length plus the nozzle forward of the
+   * device centre, on its axis.
    */
-  muzzleLocal: [0, -0.032, -0.018] as [number, number, number],
+  muzzleLocal: [0, 0, -0.072] as [number, number, number],
   /** Metres past the nozzle that a web ball is born, so it clears the hand. */
   muzzleOffset: 0.09,
+
+  // ---- Webs in flight (round 7) --------------------------------------------
+  /**
+   * Launch speed of webbing relative to paint ({@link FIRE.speed}). A web
+   * should *zip*; at paint speed a tether arced so far under a robot that it
+   * mostly missed.
+   */
+  webSpeedMult: 1.45,
+  /**
+   * Gravity factor on webbing (paint is 1). Low, so a web flies close to where
+   * the barrel points — the "line" reading of a web — without becoming a
+   * laser that never lands.
+   */
+  webGravityFactor: 0.35,
+  /**
+   * Aim assist on webbing, degrees: a shot within this cone of a live robot is
+   * bent onto the arc that hits it. Wider than paint's
+   * ({@link FIRE.aimAssistDeg}) because a tether that just misses is the most
+   * frustrating miss in the game. 0 disables.
+   */
+  aimAssistDeg: 9,
 
   // ---- THWIP gesture (hand tracking) --------------------------------------
   /**
@@ -832,81 +941,102 @@ export const WEB = {
   /** Size multiplier on a web splat versus a paint splat. Webs spread wider. */
   splatSizeMult: 1.6,
 
-  // ---- TETHER WEB (round 6) ------------------------------------------------
+  // ---- TETHER WEB (round 6, reworked round 7) -------------------------------
   //
-  // A second thing web ammo can be, chosen on the wrist selector below or with
-  // the right controller's B button. A tether web flies exactly like a splat
-  // web — same arc, same strand, same wall decal if it misses — but a robot it
-  // touches gets LATCHED instead of damaged. Then you reel it in and it pops.
+  // A second thing web ammo can be, chosen on the wrist selector or with the
+  // right controller's B button. A tether web flies like a splat web, but a
+  // robot it touches gets LATCHED instead of damaged. Then you reel it in and
+  // it pops when it reaches you.
   //
-  // Two ways to reel, because the two input modes want different things: a
-  // controller player has a squeeze button right under their fingers, and a
-  // hand-tracking player has no button but does have a whole arm. So: hold to
-  // reel steadily, or yank to haul it in a chunk at a time.
+  // Round 6 reeled in fixed 0.55 m chunks on a fast yank, and the robot
+  // *teleported* each chunk — the "hook feels janky" report. Round 7 replaces
+  // that with a queue: every way of hauling adds metres of line to a per-hand
+  // queue, and the robot glides along the line at up to `reelGlideSpeed`.
+  // Three ways to haul, all live at once:
+  //   1. PULL — move the hand away from the robot; line comes in proportionally
+  //      (a ratchet: the recovery stroke toward the robot is free);
+  //   2. PINCH or TRIGGER held on the hand that owns the line (that hand stops
+  //      firing while it holds a tether — the press reels instead);
+  //   3. SQUEEZE held (controllers).
   /**
    * Metres from the player's **head** at which a reeled-in robot pops.
-   *
-   * Measured off the head rather than off the hand because that is where the
-   * player's sense of "it's on me now" lives, and because a hand held out at
-   * arm's length would otherwise pop things that are still across the room.
-   * Inside 0.7 m a 35 cm robot fills a satisfying amount of view.
+   * Off the head rather than the hand: an arm held out at full stretch would
+   * otherwise pop things that are still most of a room away.
    */
   tetherKillRadius: 0.7,
   /**
-   * Seconds a tether may stay attached before it lets go on its own.
-   *
-   * A safety valve, not a mechanic. Without it a player who latches a robot and
-   * then walks away has silently removed it from the round: the slot never
-   * respawns and the ring quietly shrinks. Twelve seconds is far longer than
-   * any deliberate reel takes.
+   * Seconds a tether may stay attached before it lets go on its own. A safety
+   * valve, not a mechanic: a latched robot never respawns, so a line nobody
+   * reels would quietly shrink the round.
    */
   tetherMaxSec: 12,
   /**
-   * Speed, m/s, at which the hand moving AWAY from the tethered robot counts
-   * as a yank.
-   *
-   * Measured as the hand's velocity projected onto the robot-to-hand direction,
-   * the same trick {@link thrustSpeed} uses on the pointing axis: pulling back
-   * scores, pushing forward and waving sideways do not. Lower than the thrust
-   * threshold on purpose — a yank is a tug, a thrust is a punch, and the thrust
-   * has to be hard enough that ordinary arm movement never trips it.
+   * Extra metres added to a robot's hit radius for **tether** webs only. A
+   * line that brushes a robot should catch it; a paint ball that brushes one
+   * should not score.
    */
-  yankSpeed: 1.3,
-  /** Metres of line a single yank hauls in. Roughly one arm's worth. */
-  yankReelMeters: 0.55,
+  tetherLatchBonus: 0.12,
   /**
-   * Minimum milliseconds between yanks from one hand.
-   *
-   * Short, unlike the gesture cooldowns: repeated yanking is the *intended*
-   * verb here, so this only has to stop one continuous pull from registering
-   * as five. Four hauls a second is about as fast as an arm can actually go.
+   * Hand speed away from the robot, m/s, ignored as tracking noise before the
+   * pull ratchet takes in any line. Subtracted rather than gated, so hauling
+   * ramps in smoothly.
    */
-  yankCooldownMs: 250,
-  /** Metres per second the line comes in while the squeeze is held. */
+  pullDeadband: 0.2,
+  /** Metres of line per metre of pull. 2.2: a 30 cm haul brings it ~65 cm. */
+  pullGain: 2.2,
+  /** Metres per second the line comes in while a pinch, trigger or squeeze is held. */
   reelSpeed: 1.8,
+  /**
+   * Fastest the robot travels along the line, m/s, while it works through the
+   * queued haul. This is the knob that turns a big pull into a glide instead
+   * of a jump.
+   */
+  reelGlideSpeed: 4.5,
+  /**
+   * Most line, metres, that may be queued but not yet travelled. Caps how far
+   * a robot keeps gliding after the player stops hauling — a burst of frantic
+   * pulling should not carry it on for a second afterwards.
+   */
+  reelQueueMax: 1.2,
+  /**
+   * Minimum milliseconds between TetherReeled events (each is a light rumble
+   * on the hauling hand). Reeling is continuous now, and a buzz every frame
+   * would numb the hand rather than read as a ratchet.
+   */
+  reelFeedbackMs: 110,
+  /**
+   * Radians of side-to-side struggle on a robot while it is on the line. Pure
+   * readability: a hooked robot should look hooked.
+   */
+  tetherStruggleRad: 0.22,
+  /** Struggle oscillation, Hz. */
+  tetherStruggleHz: 7,
 
   // ---- The wrist selector gadget -------------------------------------------
   //
-  // Two mini pads floating above the LEFT shooter, parented into its holder so
-  // they ride the wrist exactly as the cuff does. Poke one, squeeze near one,
-  // or press B. They only exist while web ammo is loaded — with paint on the
-  // palette there is no sub-mode to choose.
+  // Two mini pads on the LEFT gauntlet's palm-side face, parented into its
+  // holder so they ride the forearm exactly as the device does. Poke one,
+  // pinch or squeeze near one, or press B. They only exist while web ammo is
+  // loaded — with paint on the palette there is no sub-mode to choose.
   //
-  // Everything here is in the left grip's frame, same as the shooter mount:
-  // -Y is the palm side, which is the side facing the player in the palm-up
-  // pose the shooter is now mounted for.
+  // Round 7: everything here is in the shooter holder's frame (the aim frame,
+  // origin at the device centre), not the grip's. -Y is the palm side, which
+  // is the side facing the player when they turn the forearm palm-up to look.
   /** Half-height of one pad, metres. Big enough to poke, small enough to wear. */
   selectorPadMeters: 0.022,
   /** Gap between the two pads, metres. */
   selectorPadGap: 0.008,
   /**
-   * Metres along the grip's Y axis. **More negative than
-   * {@link shooterOffsetY}**, i.e. further out on the palm side, so the pads
-   * float clear of the cuff rather than inside it.
+   * Metres along the holder's Y. Negative = palm side, and further out than
+   * the gauntlet body (radius ~1.6 cm) so the pads float clear of it rather
+   * than inside the model the player is trying to poke.
    */
-  selectorOffsetY: -0.058,
-  /** Metres along the grip's Z axis. Slightly forward of the cuff's centre. */
-  selectorOffsetZ: -0.005,
+  selectorOffsetY: -0.03,
+  /**
+   * Metres along the holder's Z. Slightly up the forearm from the device
+   * centre, so a fingertip reaching for a pad never crosses the nozzle.
+   */
+  selectorOffsetZ: 0.012,
   /** Scale applied to whichever pad is selected. */
   selectorSelectedScale: 1.2,
   /** Emissive intensity on the selected pad, on top of that scale. */

@@ -157,7 +157,7 @@ describe('reelDistance', () => {
 
   it('converges on the minimum under repeated hauls, and stops', () => {
     let d = WEB.tetherKillRadius + 3;
-    for (let i = 0; i < 200; i++) d = reelDistance(d, WEB.yankReelMeters, MIN);
+    for (let i = 0; i < 200; i++) d = reelDistance(d, WEB.reelQueueMax, MIN);
     expect(d).toBeCloseTo(MIN, 6);
   });
 
