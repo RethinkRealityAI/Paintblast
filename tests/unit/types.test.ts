@@ -22,6 +22,7 @@ import {
   unpackImpactKind,
   unpackImpactRgb,
   unpackImpactStyle,
+  srgbToLinear,
 } from '../../src/types';
 
 describe('BallKind', () => {
@@ -313,5 +314,29 @@ describe('BallFired data packing', () => {
     expect(packFiredData(BallKind.Splash, 0, BallStyle.Paint)).toBe(
       BallKind.Splash,
     );
+  });
+});
+
+describe('srgbToLinear', () => {
+  it('pins black and white', () => {
+    expect(srgbToLinear(0)).toBe(0);
+    expect(srgbToLinear(1)).toBeCloseTo(1, 10);
+  });
+
+  it('matches the sRGB transfer curve on both branches', () => {
+    expect(srgbToLinear(0.04)).toBeCloseTo(0.04 / 12.92, 8);
+    // Mid-grey 0.5 sRGB is ~0.214 linear.
+    expect(srgbToLinear(0.5)).toBeCloseTo(0.2140, 3);
+  });
+
+  it('darkens every palette channel that is not 0 or 1', () => {
+    // The round-7 pastel bug in one line: treated as linear, these rendered
+    // brighter (washed out) than the HUD swatch that shows them as sRGB.
+    for (const colour of PALETTE_COLORS) {
+      for (let c = 0; c < 3; c++) {
+        const v = colour[c];
+        if (v > 0 && v < 1) expect(srgbToLinear(v)).toBeLessThan(v);
+      }
+    }
   });
 });

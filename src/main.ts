@@ -456,7 +456,8 @@ function seedWristPalette(world: World) {
     const mesh = new Mesh(
       dabGeometry,
       new MeshStandardMaterial({
-        color: new Color(color[0], color[1], color[2]),
+        // sRGB, like the HUD swatch (round 7) — see srgbToLinear in types.ts.
+        color: new Color().setRGB(color[0], color[1], color[2], SRGBColorSpace),
         roughness: PALETTE.dabRoughness,
         metalness: 0,
       }),

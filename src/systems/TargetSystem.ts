@@ -3,6 +3,7 @@ import {
   Box3,
   DepthOccludable,
   Group,
+  PhysicsBody,
   Raycaster,
   Vector3,
   XRMesh,
@@ -95,6 +96,45 @@ export function reelDistance(
   const next = current - Math.max(0, metres);
   return next < minDistance ? Math.min(current, minDistance) : next;
 }
+
+/**
+ * Squared distance from point P to the segment A-B.
+ *
+ * The robot hit test is **swept** since round 7: a ball is tested along the
+ * whole path it covered this frame (A = where it was, B = where it is), not
+ * just at B. A web leaves the wrist at ~12 m/s — 17 cm per frame at 72 Hz, a
+ * quarter of a metre on a 48 Hz hitch frame — and a point test against a
+ * ~30 cm robot let grazing shots step clean through it. Pure and allocation
+ * free, so the geometry is unit-tested directly.
+ */
+export function segmentPointDistSq(
+  ax: number,
+  ay: number,
+  az: number,
+  bx: number,
+  by: number,
+  bz: number,
+  px: number,
+  py: number,
+  pz: number,
+): number {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const abz = bz - az;
+  const apx = px - ax;
+  const apy = py - ay;
+  const apz = pz - az;
+  const lenSq = abx * abx + aby * aby + abz * abz;
+  let t = lenSq > 1e-12 ? (apx * abx + apy * aby + apz * abz) / lenSq : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const dx = apx - abx * t;
+  const dy = apy - aby * t;
+  const dz = apz - abz * t;
+  return dx * dx + dy * dy + dz * dz;
+}
+
+/** Longest stretch, metres, a single frame's swept hit test will look back over. */
+const MAX_SWEEP_METRES = 2;
 
 /** The subset of TARGETS that ringSpawnPosition needs. @see ringSpawnPosition */
 export interface RingSpawnConfig {
@@ -457,7 +497,7 @@ export class TargetSystem extends createSystem({
       }
     }
 
-    this.testBallOverlaps(nowSec);
+    this.testBallOverlaps(nowSec, delta);
     this.publishAimTargets();
 
     if (this.targetsAlive.peek() !== this.aliveCount) {
@@ -1148,12 +1188,14 @@ export class TargetSystem extends createSystem({
   }
 
   /**
-   * Sphere-overlap every free-flying ball against every active robot.
+   * Sphere-overlap every free-flying ball against every active robot — swept
+   * along the stretch the ball covered this frame (round 7, see
+   * {@link segmentPointDistSq}).
    *
    * Robot world positions are cached once per frame so the inner loop is pure
    * arithmetic over TypedArrays; only the balls pay for a getWorldPosition.
    */
-  private testBallOverlaps(nowSec: number): void {
+  private testBallOverlaps(nowSec: number, delta: number): void {
     let activeSlots = 0;
     for (let slot = 0; slot < this.slots.length; slot++) {
       if (this.slotState[slot] !== TargetSlotState.Active) continue;
@@ -1185,20 +1227,43 @@ export class TargetSystem extends createSystem({
       // radius.
       const latchHand = this.latchHandFor(ball);
 
+      // Where it was at the start of the frame: back along its velocity, capped
+      // so a frame-time spike cannot sweep a ball through half the room.
+      let tailX = this.ballScratch.x;
+      let tailY = this.ballScratch.y;
+      let tailZ = this.ballScratch.z;
+      if (ball.hasComponent(PhysicsBody) && delta > 0) {
+        const v = ball.getVectorView(PhysicsBody, '_linearVelocity');
+        let back = delta;
+        const speed = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        if (speed * back > MAX_SWEEP_METRES) back = MAX_SWEEP_METRES / speed;
+        tailX -= v[0] * back;
+        tailY -= v[1] * back;
+        tailZ -= v[2] * back;
+      }
+
       for (let slot = 0; slot < this.slots.length; slot++) {
         if (this.slotState[slot] !== TargetSlotState.Active) continue;
 
         const base = slot * 3;
-        const dx = this.ballScratch.x - this.slotWorldPos[base];
-        const dy = this.ballScratch.y - this.slotWorldPos[base + 1];
-        const dz = this.ballScratch.z - this.slotWorldPos[base + 2];
+        const distSq = segmentPointDistSq(
+          tailX,
+          tailY,
+          tailZ,
+          this.ballScratch.x,
+          this.ballScratch.y,
+          this.ballScratch.z,
+          this.slotWorldPos[base],
+          this.slotWorldPos[base + 1],
+          this.slotWorldPos[base + 2],
+        );
         const reach =
           this.slotRadius[slot] +
           ballRadius +
           (latchHand >= 0 && this.slotTetherHand[slot] < 0
             ? WEB.tetherLatchBonus
             : 0);
-        if (dx * dx + dy * dy + dz * dz > reach * reach) continue;
+        if (distSq > reach * reach) continue;
 
         // A tether web latches instead of hitting. Detected here rather than
         // anywhere else because this loop is already the only place in the game

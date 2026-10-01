@@ -22,6 +22,7 @@ import {
   PhysicsState,
   PhysicsShapeType,
   DepthOccludable,
+  SRGBColorSpace,
 } from '@iwsdk/core';
 import type { Entity, Material, Object3D } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
@@ -1246,7 +1247,8 @@ export class BallSpawnSystem extends createSystem({
             RENDER.webBallColor[1],
             RENDER.webBallColor[2],
           )
-        : new Color(color[0], color[1], color[2]);
+        : // sRGB in, like the HUD swatch — see srgbToLinear in types.ts.
+          new Color().setRGB(color[0], color[1], color[2], SRGBColorSpace);
       const roughness = web ? RENDER.webBallRoughness : RENDER.ballRoughness;
 
       if (RENDER.ballClearcoat > 0) {

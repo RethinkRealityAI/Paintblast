@@ -19,6 +19,7 @@ import {
   GameEvent,
   GameEventBuffer,
   PALETTE_COLORS,
+  srgbToLinear,
   WEB_BALL_COLOR,
   unpackFiredStyle,
   unpackImpactRgb,
@@ -430,14 +431,15 @@ export class VfxSystem extends createSystem({}) {
     this.basisB = new Float32Array(3);
     this.rgb = new Float32Array(3);
 
-    // Same linear-RGB convention as the ball materials and the splat decals
-    // (they all go through Color(r, g, b) / setRGB), so a confetti chip and
-    // the paint on the wall are the same red.
+    // Palette colours are sRGB; an instance-colour buffer is read as linear
+    // and three never converts it, so convert once here — the same colour the
+    // ball materials and splat decals now get via setRGB(..., SRGBColorSpace),
+    // so a confetti chip and the paint on the wall are the same red.
     this.confettiColors = new Float32Array((PALETTE_COLORS.length + 1) * 3);
     for (let i = 0; i < PALETTE_COLORS.length; i++) {
-      this.confettiColors[i * 3] = PALETTE_COLORS[i][0];
-      this.confettiColors[i * 3 + 1] = PALETTE_COLORS[i][1];
-      this.confettiColors[i * 3 + 2] = PALETTE_COLORS[i][2];
+      this.confettiColors[i * 3] = srgbToLinear(PALETTE_COLORS[i][0]);
+      this.confettiColors[i * 3 + 1] = srgbToLinear(PALETTE_COLORS[i][1]);
+      this.confettiColors[i * 3 + 2] = srgbToLinear(PALETTE_COLORS[i][2]);
     }
     const white = PALETTE_COLORS.length * 3;
     this.confettiColors[white] = 1;
@@ -836,10 +838,11 @@ export class VfxSystem extends createSystem({}) {
     return true;
   }
 
+  /** Store an sRGB colour (palette convention) as linear for the buffer. */
   private setRgb(r: number, g: number, b: number): void {
-    this.rgb[0] = r;
-    this.rgb[1] = g;
-    this.rgb[2] = b;
+    this.rgb[0] = srgbToLinear(r);
+    this.rgb[1] = srgbToLinear(g);
+    this.rgb[2] = srgbToLinear(b);
   }
 
   /** Whatever is loaded right now: webbing is always white, paint its dab. */

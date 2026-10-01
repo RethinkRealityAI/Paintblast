@@ -17,6 +17,8 @@
  *   03-thwip-pose.png    wrist bent back (palm forward), from the side
  *   04-palm-up.png       left forearm supinated under the eyes: pads + palette
  *   05-aim-ray.png       a web fired from the right hand, mid-flight, from the side
+ *   06-round-seated.png  a round started from a seat: robots in the forward arc
+ *   07-hit.png           a web fired at the nearest robot (aim assist), on impact
  *
  * Poses are IWER target-ray transforms (the emulator hangs grip and joints off
  * the ray). Quaternions are [x, y, z, w].
@@ -215,5 +217,64 @@ await page.evaluate(() => {
 await page.waitForTimeout(120);
 await page.screenshot({ path: join(outDir, '05-aim-ray.png') });
 
-console.log(JSON.stringify({ outDir, inputMode, errors: errors.slice(0, 20) }, null, 2));
+// A round, from a seated eye height, looking straight ahead.
+const seated = { head: [0, 1.2, 0], headQ: ID };
+const parked = { left: leftParked, leftQ: ID, right: [0.35, 0.9, -0.1], rightQ: ID };
+await pose({ ...seated, ...parked });
+await page.evaluate(() => {
+  for (const s of window.__PB_WORLD.getSystems()) {
+    if (s.constructor?.name === 'GameStateSystem') s.startGame();
+  }
+});
+await page.waitForTimeout(4500); // 3 s countdown + spawn
+await page.screenshot({ path: join(outDir, '06-round-seated.png') });
+
+// Aim the right hand roughly at the first live robot and fire a web.
+const target = await page.evaluate(() => {
+  const aim = window.__PB_WORLD.globals.aimTargets;
+  for (let i = 0; i < aim.capacity; i++) {
+    if (aim.active[i]) {
+      return [aim.positions[i * 3], aim.positions[i * 3 + 1], aim.positions[i * 3 + 2]];
+    }
+  }
+  return null;
+});
+if (target) {
+  const hand = [0.18, 1.0, -0.3];
+  const d = [target[0] - hand[0], target[1] - hand[1], target[2] - hand[2]];
+  const len = Math.hypot(...d);
+  const u = d.map((v) => v / len);
+  // Quaternion turning -Z onto u: axis = (-Z) x u, angle = acos(-Z . u).
+  const ax = [0 * u[2] - -1 * u[1], -1 * u[0] - 0 * u[2], 0];
+  const cos = -u[2];
+  const axLen = Math.hypot(...ax) || 1;
+  const half = Math.acos(Math.max(-1, Math.min(1, cos))) / 2;
+  const q = [
+    (ax[0] / axLen) * Math.sin(half),
+    (ax[1] / axLen) * Math.sin(half),
+    (ax[2] / axLen) * Math.sin(half),
+    Math.cos(half),
+  ];
+  await pose({ ...seated, left: leftParked, leftQ: ID, right: hand, rightQ: q });
+  await page.evaluate(() => {
+    for (const s of window.__PB_WORLD.getSystems()) {
+      if (s.constructor?.name === 'WebShooterSystem') {
+        s.fireGesture(1, performance.now() + 20000);
+      }
+    }
+  });
+  // Flight time at web speed to ~1-3 m is 0.1-0.3 s; catch the burst.
+  await page.waitForTimeout(Math.round((len / 12) * 1000) + 60);
+  await page.screenshot({ path: join(outDir, '07-hit.png') });
+}
+
+const alive = await page.evaluate(() => window.__PB_WORLD.globals.targetsAlive.value);
+const score = await page.evaluate(() => window.__PB_WORLD.globals.score.value);
+console.log(
+  JSON.stringify(
+    { outDir, inputMode, target, alive, score, errors: errors.slice(0, 20) },
+    null,
+    2,
+  ),
+);
 await browser.close();

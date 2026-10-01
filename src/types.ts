@@ -93,6 +93,23 @@ export const PALETTE_COLORS: ReadonlyArray<readonly [number, number, number, num
   [0.30, 0.80, 0.52, 1.0], // green
 ];
 
+/**
+ * One sRGB channel (0..1) to linear light, the curve three.js uses.
+ *
+ * Round 7: every palette colour in this file is an **sRGB** value — the same
+ * numbers the HUD swatch and the easel's 2D canvas display — but rounds 1-6
+ * handed them to three as linear, so every ball, splat, dab and confetti chip
+ * rendered washed-out pastel next to the HUD's saturated swatch (0.42 linear
+ * is ~0.68 on screen). Material colours now go through
+ * `Color.setRGB(r, g, b, SRGBColorSpace)`; raw instance-colour buffers, which
+ * three never converts, go through this.
+ */
+export function srgbToLinear(channel: number): number {
+  return channel <= 0.04045
+    ? channel / 12.92
+    : Math.pow((channel + 0.055) / 1.055, 2.4);
+}
+
 /** Paint dabs on the board, in arc order. One per palette colour. */
 export const PALETTE_DAB_ORDER: ReadonlyArray<
   readonly [number, number, number, number]
