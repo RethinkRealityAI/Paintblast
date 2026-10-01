@@ -30,7 +30,7 @@ Four criteria, each worth 25%:
 |---|---|---|---|
 | Innovation & Creativity | Originality, ambition, fit to the track, use of hands, gaze, passthrough and scene understanding | Strong concept: your real room is the paint canvas | One signature room-aware mechanic: robots that come *out of* your walls and furniture and hide behind your couch |
 | Experience Design | Intuitive from the first second, clear onboarding, a habit-forming purpose, seated and hands-first, and the room should meaningfully change the experience | Core loop works. No onboarding, no progression, too many gestures | A diegetic 60-second tutorial, a daily challenge, a mural that persists in your room, and one hero gesture |
-| Technical Implementation | 60 fps minimum, solid and bug-free, strategic use of hands, passthrough, MRUK and anchors, FoV-aware | Solid ECS core, 497 unit tests, room colliders. **No depth occlusion yet.** On IWSDK 0.3.1 | IWSDK 1.0 upgrade, depth occlusion, a proven 72 fps, anchors |
+| Technical Implementation | 60 fps minimum, solid and bug-free, strategic use of hands, passthrough, MRUK and anchors, FoV-aware | Solid ECS core, 502 unit tests, room colliders. **No depth occlusion yet.** On IWSDK 0.3.1 | IWSDK 1.0 upgrade, depth occlusion, a proven 72 fps, anchors |
 | Polish & Presentation | UI/UX, art direction, sound, a video of real gameplay | R7 improved lighting, paint, VFX and the hand UI. Art is still mixed-source | Consistent characters, a sound pass, and a tight trailer cut from real footage |
 
 **Special awards ($25k each) to aim for**, in order of fit:

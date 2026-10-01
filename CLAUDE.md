@@ -38,18 +38,20 @@ specs: `docs/superpowers/specs/`.
 18. **A tracked hand's grip −Z points at the THUMB, not forward** (spec: −Z along a held rod toward the thumb, X ⟂ back of hand, +Y up the arm). Never mount or aim off raw grip −Z — use `WristPose` (`src/wrist-pose.ts`): wrist joint frame for hands (−Z distal, +Y dorsal, same on both hands), target ray + mirrored grip X for controllers.
 19. `jointTransforms` are **grip-relative**; world = grip world × joint. The emulator does not mirror the right hand's grip offset, so trust joints, not the hand grip's axes.
 20. `World.create` never registers `DepthSensingSystem` — `DepthOccludable` is inert until you register it, and its occlusion shader ignores `instanceMatrix` (instanced splats would test at the field origin).
-21. Palette colour tuples are **sRGB**: build colours with `setRGB(r, g, b, SRGBColorSpace)` (or `srgbToLinear` for raw instance buffers), never `new Color(r, g, b)`. With `scene.environment` set, three overwrites per-material `envMapIntensity` with `scene.environmentIntensity`.
+21. IWSDK 0.3.1 **never hides** grip / ray / index-tip spaces — a dropped hand just freezes them. Detect tracking with `isPrimary('hand'|'controller', side)` (`isTracked` in `wrist-pose.ts`), never `space.visible`.
+22. Anything that flies must cover less than `ROOM.wallThicknessMeters + 2 * BALLS.radius` (14 cm) per 72 Hz step or it tunnels walls (no CCD) — webs are capped by `WEB.webSpeedMult`, and a test pins it.
+23. Palette colour tuples are **sRGB**: build colours with `setRGB(r, g, b, SRGBColorSpace)` (or `srgbToLinear` for raw instance buffers), never `new Color(r, g, b)`. With `scene.environment` set, three overwrites per-material `envMapIntensity` with `scene.environmentIntensity`.
 
 **UI (UIKitML / uikit)**
-22. ASCII only in panel text — the bundled MSDF font lacks `· — × …`.
-23. Text via `setProperties({ text })`; show/hide via `display`; hover with `pointerenter/leave` (`pointerover/out` flicker); there is **no** `backgroundOpacity` — alpha rides in `rgba()` strings; no gradients.
-24. Panel resize goes through `PanelUI.maxWidth/maxHeight` (PanelUISystem cancels object3D scale). Docked follower uses behavior `'face-target'` — `pivot-y` **discards Y offsets**.
-25. Edit `ui/hud.uikitml` only; `public/ui/hud.json` is generated (dev server and build both recompile it).
+24. ASCII only in panel text — the bundled MSDF font lacks `· — × …`.
+25. Text via `setProperties({ text })`; show/hide via `display`; hover with `pointerenter/leave` (`pointerover/out` flicker); there is **no** `backgroundOpacity` — alpha rides in `rgba()` strings; no gradients.
+26. Panel resize goes through `PanelUI.maxWidth/maxHeight` (PanelUISystem cancels object3D scale). Docked follower uses behavior `'face-target'` — `pivot-y` **discards Y offsets**.
+27. Edit `ui/hud.uikitml` only; `public/ui/hud.json` is generated (dev server and build both recompile it).
 
 ## Build / test / troubleshoot workflow
 
 1. `npx tsc --noEmit` first — always, before any runtime testing.
-2. `npm test` — Vitest; pure-logic tests only (497 as of R7). New mechanics get pure exported helpers + tests (see `detectImpact`, `ringSpawnPosition`, `isThwipPose` for the pattern). `tests/__mocks__/iwsdk-core.ts` grows stubs as imports demand.
+2. `npm test` — Vitest; pure-logic tests only (502 as of R7). New mechanics get pure exported helpers + tests (see `detectImpact`, `ringSpawnPosition`, `isThwipPose` for the pattern). `tests/__mocks__/iwsdk-core.ts` grows stubs as imports demand.
 3. **Emulator drive** (the proof, per the owner's verify-before-shipping rule):
    check `xr_get_session_status` FIRST. If it fails: the dev server may be down
    or port-shifted — Vite wants **8083**; during agent sessions the MCP relay

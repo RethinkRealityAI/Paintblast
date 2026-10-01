@@ -19,6 +19,7 @@ import {
   thinnestAxis,
 } from '../../src/systems/WristPaletteSystem';
 import { AimTargets } from '../../src/types';
+import { isTracked } from '../../src/wrist-pose';
 import { WEB } from '../../src/config';
 
 const EPS = 1e-5;
@@ -578,5 +579,23 @@ describe('thinnestAxis', () => {
 
   it('prefers no rotation on a tie', () => {
     expect(thinnestAxis(1, 1, 1)).toBe(1);
+  });
+});
+
+describe('isTracked', () => {
+  // IWSDK 0.3.1 never hides grip/ray/index-tip spaces; a dropped hand only
+  // stops being primary. This is the one signal the wrist code trusts.
+  const input = (hand: boolean, controller: boolean) => ({
+    isPrimary: (type: 'controller' | 'hand') =>
+      type === 'hand' ? hand : controller,
+  });
+
+  it('is true for a tracked hand or a connected controller', () => {
+    expect(isTracked(input(true, false), 'left')).toBe(true);
+    expect(isTracked(input(false, true), 'right')).toBe(true);
+  });
+
+  it('is false when neither drives the side', () => {
+    expect(isTracked(input(false, false), 'left')).toBe(false);
   });
 });

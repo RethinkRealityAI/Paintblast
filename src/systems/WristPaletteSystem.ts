@@ -9,7 +9,7 @@ import {
 
 import { PALETTE, WEB } from '../config';
 import { buildFacingBasis, quatFromBasis, smoothingAlpha } from '../wrist-frame';
-import { WristPose } from '../wrist-pose';
+import { WristPose, isTracked } from '../wrist-pose';
 
 const DEG_TO_RAD = Math.PI / 180;
 
@@ -323,8 +323,10 @@ export class WristPaletteSystem extends createSystem({
   private fingertipDistance(): number {
     if (!this.primed) return Number.POSITIVE_INFINITY;
     const tip = this.player?.indexTipSpaces?.right;
-    const grip = this.player?.gripSpaces?.right;
-    if (!tip || !grip || grip.visible === false) {
+    // Not `visible`: IWSDK leaves a lost hand's spaces frozen where it was
+    // last seen, and a frozen fingertip inside lockRadius would park the
+    // palette forever — exactly when the left arm occludes the right hand.
+    if (!tip || !this.input || !isTracked(this.input, 'right')) {
       return Number.POSITIVE_INFINITY;
     }
     tip.getWorldPosition(this.fingertip);

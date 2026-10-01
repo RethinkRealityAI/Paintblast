@@ -26,8 +26,8 @@ paint-splatter hero fronts the WebXR app.
 | **Firing** | Trigger / hand-pinch fire along the target ray; **thrust** (forward punch, measured along the aim) and the finger-curl gesture fire along the *shown gauntlet barrel* — all fire whatever ammo is loaded, in Idle sandbox, Playing, and Chill. Per-hand shared cooldowns. Hold-to-spray in Chill only. **Aim assist** (R7): a shot within `FIRE.aimAssistDeg` (paint, 4°) / `WEB.aimAssistDeg` (webs, 9°) of a live robot — straight line *or* ballistic arc — is bent onto the arc that hits it. Robot hit test is **swept** along the ball's last-frame path. |
 | **Ammo** | Wrist palette (left): 4 paint **dabs** (color) + 5 **chips** — NORMAL / BOUNCY / STICKY / SPLASH (kind) and **WEB** (style). Tap (poke), controller squeeze, and (R7) **pinch at the fingertip** (`PALETTE.pinchSelectRadius`), which consumes that pinch so it never also fires. Palette colours are **sRGB** everywhere (R7 fixed pastel rendering). |
 | **Hand-mode palette (R7)** | Controllers: unchanged grip-frame mount. Hands: floats `PALETTE.handLift` straight up from the wrist joint, out over the hand, **facing the eyes** in any wrist roll. **Parks in world space** while the right index fingertip is within `PALETTE.lockRadius` (Meta: don't move a menu under the poking finger), glides back after `lockReleaseSec`. Palette GLB now lies flat (it is thin along Z; it stood on edge R3-R6). |
-| **Web** | Code-built **forearm gauntlet** on both arms (R7; replaces the ring-cuff GLB, which is no longer loaded): authored along the aim axis, palm side of the forearm, straps round the arm, glowing cartridge (white = splat, sky = tether), nozzle at the wrist. Pose from `WristPose` (wrist joint for hands, ray + grip for controllers), smoothed 30 ms. Webs fly ×1.45 faster, 0.35 gravity. Strand from nozzle to impact, web-pattern decals (pool 192). Sub-modes **SPLAT** / **TETHER** via holo pads on the left gauntlet or the **B button**. |
-| **Tether (R7 rework)** | Latch radius +`WEB.tetherLatchBonus` for tether webs. Reel = a per-hand **queue** paid out at ≤`reelGlideSpeed` (glide, no teleports) fed by: proportional **pull** (hand speed away from robot past a deadband × `pullGain`, ratchet), **pinch / trigger held** on the owning hand (that hand stops firing while tethered), **squeeze held**. Thrust disabled while hauling; the finger-curl gesture is the deliberate release. Hooked robots **struggle**. Pops within 0.7 m of the head through normal scoring. |
+| **Web** | Code-built **forearm gauntlet** on both arms (R7; replaces the ring-cuff GLB, which is no longer loaded): authored along the aim axis, palm side of the forearm, straps round the arm, glowing cartridge (white = splat, sky = tether), nozzle at the wrist. Pose from `WristPose` (wrist joint for hands, ray + grip for controllers), smoothed 30 ms. Webs fly ×1.15 faster (capped so they cannot tunnel 6 cm walls), 0.35 gravity. Tracking is read from `isPrimary`, never `visible` (IWSDK never hides lost spaces); a >30 cm palm jump re-primes. Strand from nozzle to impact, web-pattern decals (pool 192). Sub-modes **SPLAT** / **TETHER** via holo pads on the left gauntlet or the **B button**. |
+| **Tether (R7 rework)** | **Tap** (pinch/trigger released < `releaseTapMs`) releases; hold reels; `tetherMaxSec` 8. Latch radius +`WEB.tetherLatchBonus` for tether webs. Reel = a per-hand **queue** paid out at ≤`reelGlideSpeed` (glide, no teleports) fed by: proportional **pull** (hand speed away from robot past a deadband × `pullGain`, ratchet), **pinch / trigger held** on the owning hand (that hand stops firing while tethered), **squeeze held**. Thrust disabled while hauling; the finger-curl gesture is the deliberate release. Hooked robots **struggle**. Pops within 0.7 m of the head through normal scoring. |
 | **Game loop** | Idle → Countdown(3s) → Playing(90s) → GameOver(8s) → Idle. Robots spawn in a **150° forward arc** centred on the player's facing at round start (`TARGETS.spawnArcDeg`; 360 = old ring) — seated-friendly. **Pause/resume** (R7): losing session focus freezes timer, countdown, combo, robots, tethers and strands; resumes exactly (`PauseClock`, PAUSED pill). Combo scoring, best score in localStorage. |
 | **Chill** | No timer/robots/score. Easel: balls stamp a 1024×768 canvas, SAVE / NEW / ROTATE CANVAS, two-hand grab to move (**drawn pose smoothed**, `EASEL.grabSmoothingSec`). Lofi music. **WEB MODE** title shortcut. ⚠️ Easel spawns 1.4 m away — out of reach seated (Phase 1). |
 | **Room collision** | XRPlane → static colliders (vertical planes 6 cm thick), labeled XRMesh → colliders, global room mesh → static TriMesh (`isBounded3D === false`), FloorGuard slab. Census log `[PaintBlast] room colliders: …`. |
@@ -148,14 +148,18 @@ systems read during `init()` must be `priority: 'critical'` in the manifest.
    palette GLB laid flat; sRGB palette colours (pastel bug since R1).
    Parallel streams merged: pause/resume + seated forward arc + hands-first
    copy; IBL + PBR Neutral tone mapping, clearcoat balls, VfxSystem. Headless
-   IWER harness for cloud sessions. 497 unit tests.
+   IWER harness for cloud sessions. Independent review then caught: webs at
+   ×1.45 tunnelled walls (capped ×1.15 + test), tracking loss never detected
+   (IWSDK never hides spaces → `isTracked`), palette lock stranding, no
+   controller tether release (→ tap-to-release), pipeline pinches still firing.
+   502 unit tests.
 
 Full specs: `docs/superpowers/specs/`. Session-level detail lives in the
 orchestrating agent's memory, but this file must stand alone.
 
 ## Open items / on-device checklist
 
-R7 is verified by tsc, 497 unit tests and the headless IWER harness only — **every
+R7 is verified by tsc, 502 unit tests and the headless IWER harness only — **every
 item below needs a headset** (Quest 3 *and* 3S) before it ships.
 
 - [ ] **Forearm gauntlet** on real hands: lies along the forearm, nozzle at the

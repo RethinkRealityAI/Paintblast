@@ -282,6 +282,8 @@ to haul, all live at once:
   hand-tracking player's "hold to reel", which round 6 did not have.
 - **SQUEEZE held** (controllers), same speed.
 
+A *tap* (released within `WEB.releaseTapMs`) lets go instead — see below.
+
 `WEB.reelQueueMax` (1.2 m) caps how far it keeps gliding after you stop; a
 light haptic tick fires at most every `WEB.reelFeedbackMs` (110 ms). A tether
 web also latches from `WEB.tetherLatchBonus` (12 cm) further out than paint
@@ -295,10 +297,11 @@ head** it pops — normal score, normal combo, normal pop sound, plus the hardes
 rumble in the game. Measured off the head rather than the hand so an arm held
 out at full stretch does not pop things across the room.
 
-**Letting go.** The line ends without a pop when any of these happen: 12 seconds
-elapse (`WEB.tetherMaxSec`, paused while the game is paused), that same hand
-fires a gesture shot, you switch off web ammo, the round ends, or somebody
-shoots the robot off the end of it. The strand
+**Letting go.** **Tap** — a pinch or trigger on the tethered hand, released
+within `WEB.releaseTapMs` (250 ms) — lets go; holding the same press reels. The
+line also ends without a pop when `WEB.tetherMaxSec` (8 s, paused while the game
+is paused) runs out, that hand fires a gesture shot, you switch off web ammo,
+the round ends, or somebody shoots the robot off the end of it. The strand
 fades out rather than blinking away.
 
 Outside a round there are no robots, so a tether shot is just a web. That falls
@@ -342,8 +345,14 @@ by construction — webs fire along the *shown* barrel.
 Everything X-ish is still declared in the **right** hand's frame and mirrored
 for the left (yaw and roll flip, pitch does not).
 
-**Webs zip now.** `WEB.webSpeedMult` (1.45 × paint speed) and
-`WEB.webGravityFactor` (0.35) make a web read as a line, not a lob.
+**Webs zip now.** `WEB.webGravityFactor` (0.35) makes a web read as a line, not
+a lob; `WEB.webSpeedMult` (1.15 × paint speed) adds a little pace. Do not push
+the speed past ~1.15: with no continuous collision detection, anything covering
+more than 14 cm per frame starts passing through 6 cm walls (a test pins it).
+
+**Tracking dropouts.** A hand that vanishes and reappears more than
+`WEB.reacquireJumpMeters` (30 cm) away in one frame is treated as a new hand —
+no fake thrust, no phantom haul, and the gauntlet snaps rather than gliding.
 
 ### Aim assist (round 7)
 

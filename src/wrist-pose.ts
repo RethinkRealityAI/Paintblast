@@ -38,6 +38,19 @@ export interface WristPosePlayer {
   raySpaces: { left: Object3D; right: Object3D };
 }
 
+/**
+ * Is this side currently driven by a tracked hand or a connected controller?
+ *
+ * The only reliable tracking signal in IWSDK 0.3.1 — its grip, ray and
+ * index-tip spaces are never hidden, they just freeze at the last pose.
+ */
+export function isTracked(
+  input: Pick<WristPoseInput, 'isPrimary'>,
+  side: 'left' | 'right',
+): boolean {
+  return input.isPrimary('hand', side) || input.isPrimary('controller', side);
+}
+
 /** Where a tracked hand's aim comes from. @see WEB.handAimSource */
 export type HandAimSource = 'ray' | 'hand';
 
@@ -135,7 +148,13 @@ export class WristPose {
     cfg: WristPoseConfig,
   ): boolean {
     const grip = player?.gripSpaces?.[this.side];
-    if (!grip || grip.visible === false || !input) {
+    // Tracking is read from the input manager, never from `grip.visible`:
+    // IWSDK 0.3.1 never hides grip, ray or fingertip spaces — a hand that
+    // drops out just leaves them frozen at its last pose — but it does stop
+    // reporting the source as primary. Without this, a dropped hand fell
+    // through to the controller branch with a stale grip and every "tracking
+    // lost" reset downstream was dead code.
+    if (!grip || !input || !isTracked(input, this.side)) {
       this.valid = false;
       return false;
     }

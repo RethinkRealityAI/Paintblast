@@ -514,6 +514,12 @@ export class WebShooterSystem extends createSystem({
   private reelQueue!: Float32Array;
   /** performance.now() ms of this hand's last TetherReeled rumble. */
   private lastReelFeedbackMs!: Float64Array;
+  /**
+   * performance.now() ms at which a press began on a hand that already held a
+   * line, or -1. Only such presses can be a release tap; the press that fired
+   * the tether in the first place started before it latched and never counts.
+   */
+  private tetherPressStartMs!: Float64Array;
   /** Strand slot drawing this hand's line, or -1. */
   private tetherStrand!: Int8Array;
   /**
@@ -621,6 +627,7 @@ export class WebShooterSystem extends createSystem({
     this.tetherUntil = new Float64Array(2);
     this.reelQueue = new Float32Array(2);
     this.lastReelFeedbackMs = new Float64Array(2).fill(Number.NEGATIVE_INFINITY);
+    this.tetherPressStartMs = new Float64Array(2).fill(-1);
     this.tetherStrand = new Int8Array(2).fill(-1);
     this.jointIndices = new Int8Array(2 * JOINT_SLOTS).fill(-1);
     this.thwipScratch = {
@@ -832,6 +839,21 @@ export class WebShooterSystem extends createSystem({
    */
   private sampleHandMotion(hand: number, delta: number): void {
     const base = hand * 3;
+    // Round 7: a palm that jumps further than any real hand moves in a frame
+    // is a hand that dropped out and came back somewhere else. Treat it as a
+    // fresh acquisition — no velocity, a new thrust window, a snapped pose —
+    // or the gap reads as a thrust (a shot nobody fired) or a giant haul.
+    if (this.handPrimed[hand]) {
+      const jx = this.gripPosition.x - this.handPos[base];
+      const jy = this.gripPosition.y - this.handPos[base + 1];
+      const jz = this.gripPosition.z - this.handPos[base + 2];
+      const jump = WEB.reacquireJumpMeters;
+      if (jx * jx + jy * jy + jz * jz > jump * jump) {
+        this.handPrimed[hand] = 0;
+        this.thrustPrimed[hand] = 0;
+        this.shownPrimed[hand] = 0;
+      }
+    }
     if (this.handPrimed[hand] && delta > 0) {
       const inv = 1 / delta;
       this.handVel[base] = (this.gripPosition.x - this.handPos[base]) * inv;
@@ -1199,6 +1221,7 @@ export class WebShooterSystem extends createSystem({
         this.tetherUntil[hand] = nowSec + WEB.tetherMaxSec;
         this.reelQueue[hand] = 0;
         this.lastReelFeedbackMs[hand] = Number.NEGATIVE_INFINITY;
+        this.tetherPressStartMs[hand] = -1;
         this.adoptTetherStrand(hand, nowSec);
       }
 
@@ -1224,8 +1247,33 @@ export class WebShooterSystem extends createSystem({
         continue;
       }
 
+      if (this.tapReleased(hand, nowMs)) {
+        targets.endTether(slot, false);
+        this.releaseTetherStrand(hand);
+        this.tetherSlot[hand] = -1;
+        continue;
+      }
+
       this.reelHand(targets, hand, slot, nowMs);
     }
+  }
+
+  /**
+   * Did the tethered hand just *tap* — press and let go inside
+   * {@link WEB.releaseTapMs}? That is "let go of the line" (round 7). Holding
+   * the same press reels instead, so one verb covers both, for hands (pinch)
+   * and controllers (trigger) alike. Before this a controller player had no
+   * deliberate release at all: their tethered hand cannot fire, the thrust is
+   * off while hauling, and there are no fingers to curl.
+   */
+  private tapReleased(hand: number, nowMs: number): boolean {
+    const gamepad = this.input?.gamepads?.[hand === 1 ? 'right' : 'left'];
+    if (!gamepad) return false;
+    if (gamepad.getSelectStart()) this.tetherPressStartMs[hand] = nowMs;
+    if (!gamepad.getSelectEnd()) return false;
+    const started = this.tetherPressStartMs[hand];
+    this.tetherPressStartMs[hand] = -1;
+    return started >= 0 && nowMs - started < WEB.releaseTapMs;
   }
 
   /**

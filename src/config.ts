@@ -857,6 +857,14 @@ export const WEB = {
    */
   shooterSmoothingSec: 0.03,
   /**
+   * A palm that moves further than this in one frame (metres) is treated as a
+   * hand that dropped out and came back, not as motion: the velocity sample,
+   * the thrust window and the pose smoothing all restart. 30 cm in ~14 ms is
+   * over 20 m/s — no real hand does that, but a reacquired one does, and
+   * without this it read as a thrust (a spurious shot) or a huge haul.
+   */
+  reacquireJumpMeters: 0.3,
+  /**
    * Length of the gauntlet along the forearm, metres (body + straps, nozzle
    * excluded). Also the cap {@link fitShooterScale} applies to an optional GLB.
    */
@@ -916,8 +924,15 @@ export const WEB = {
    * Launch speed of webbing relative to paint ({@link FIRE.speed}). A web
    * should *zip*; at paint speed a tether arced so far under a robot that it
    * mostly missed.
+   *
+   * **Capped by the walls, not by feel.** There is no CCD (gotcha 6): one
+   * Havok step at 72 Hz must not carry a ball further than the wall capture
+   * band, `ROOM.wallThicknessMeters + 2 * BALLS.radius` (14 cm). 1.15 is
+   * 13.6 cm per step; R7's first cut at 1.45 (17 cm) let one head-on web in
+   * five pass straight through a wall. The flat, fast *look* comes mostly from
+   * {@link webGravityFactor}. A test pins this.
    */
-  webSpeedMult: 1.45,
+  webSpeedMult: 1.15,
   /**
    * Gravity factor on webbing (paint is 1). Low, so a web flies close to where
    * the barrel points — the "line" reading of a web — without becoming a
@@ -1015,7 +1030,15 @@ export const WEB = {
    * valve, not a mechanic: a latched robot never respawns, so a line nobody
    * reels would quietly shrink the round.
    */
-  tetherMaxSec: 12,
+  tetherMaxSec: 8,
+  /**
+   * A pinch or trigger press on the tethered hand that **starts** after the
+   * line latched and is released within this many milliseconds lets go of the
+   * line instead of reeling (round 7). Holding reels; tapping releases — the
+   * same verb for hands and controllers, and the controller player's only
+   * deliberate release (their hand cannot fire while it holds a line).
+   */
+  releaseTapMs: 250,
   /**
    * Extra metres added to a robot's hit radius for **tether** webs only. A
    * line that brushes a robot should catch it; a paint ball that brushes one

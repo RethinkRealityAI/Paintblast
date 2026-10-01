@@ -504,12 +504,15 @@ export class BallSpawnSystem extends createSystem({
       this.queries.chips.subscribe('qualify', () => this.applyChipHighlight()),
       this.queries.pads.subscribe('qualify', () => this.applyPadHighlight()),
       this.queries.pressedDabs.subscribe('qualify', (dab) => {
+        this.consumeActivePinches();
         this.selectColor(dab);
       }),
       this.queries.pressedChips.subscribe('qualify', (chip) => {
+        this.consumeActivePinches();
         this.selectChip(chip);
       }),
       this.queries.pressedPads.subscribe('qualify', (pad) => {
+        this.consumeActivePinches();
         this.selectSubMode(
           (pad.getValue(WebModePad, 'mode') ?? WebSubMode.Splat) as WebSubMode,
         );
@@ -541,7 +544,10 @@ export class BallSpawnSystem extends createSystem({
     this.trySelectByProximity('right');
     // Round 7: the same guarantee for a tracked hand's pinch, measured at the
     // fingertip — and that pinch is then spent, so it never also fires.
-    this.trySelectByPinch('left');
+    // Right hand only: the palette and the selector pads both ride the LEFT
+    // arm, and the left hand's own fingertip sits a few centimetres from its
+    // dabs — so a left pinch (firing, or gripping the easel) would otherwise
+    // change ammo and eat the press.
     this.trySelectByPinch('right');
 
     const phase = this.gamePhase.peek();
@@ -615,6 +621,24 @@ export class BallSpawnSystem extends createSystem({
     tip.getWorldPosition(this.scratchGripPosition);
     if (this.selectNearest(this.scratchGripPosition, PALETTE.pinchSelectRadius)) {
       this.pressConsumed[hand] = 1;
+    }
+  }
+
+  /**
+   * A palette element was just pressed through the pointer pipeline (a poke,
+   * a ray-pinch, the touch sphere): spend the pinch of every tracked hand that
+   * is mid-pinch right now, so the same pinch cannot also fire this frame. The
+   * pipeline runs at priority -4, well before {@link tryFire} at 10 — which is
+   * how round 7's first cut, which only guarded its own fingertip path, still
+   * let a pinch on a chip shoot the player's wrist.
+   */
+  private consumeActivePinches(): void {
+    for (let hand = 0; hand < 2; hand++) {
+      const side = hand === 1 ? 'right' : 'left';
+      if (!this.input.isPrimary('hand', side)) continue;
+      if (this.input.gamepads[side]?.getSelecting()) {
+        this.pressConsumed[hand] = 1;
+      }
     }
   }
 

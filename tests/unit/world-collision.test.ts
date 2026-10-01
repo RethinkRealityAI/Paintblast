@@ -7,7 +7,7 @@ import {
   isCollidableMesh,
   isGlobalMesh,
 } from '../../src/systems/WorldCollisionSystem';
-import { BALLS, FIRE, ROOM } from '../../src/config';
+import { BALLS, FIRE, ROOM, WEB } from '../../src/config';
 
 /**
  * Every semantic label the WebXR registry defines, verbatim. Quest maps its own
@@ -141,6 +141,15 @@ describe('ROOM.wallThicknessMeters', () => {
     const travelPerFrame = FIRE.speed / 72;
     const captureBand = ROOM.wallThicknessMeters + 2 * BALLS.radius;
     expect(captureBand).toBeGreaterThan(travelPerFrame);
+  });
+
+  it('is thicker than one frame of WEB travel too', () => {
+    // Round 7 made webs faster than paint. Its first cut (x1.45, 17 cm per
+    // step) strode over the 14 cm band one head-on shot in five; this pins
+    // the fastest thing that flies, not just the trigger speed.
+    const fastest = FIRE.speed * Math.max(1, WEB.webSpeedMult);
+    const captureBand = ROOM.wallThicknessMeters + 2 * BALLS.radius;
+    expect(captureBand).toBeGreaterThan(fastest / 72);
   });
 
   it('stays thin enough that the bulge is invisible in passthrough', () => {

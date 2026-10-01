@@ -655,6 +655,19 @@ describe('WEB', () => {
     expect(WEB.tetherMaxSec).toBeLessThan(GAME.roundSec);
   });
 
+  it('tells a release tap from a hold-to-reel', () => {
+    // Longer than a deliberate tap, far shorter than a reel anyone holds.
+    expect(WEB.releaseTapMs).toBeGreaterThan(120);
+    expect(WEB.releaseTapMs).toBeLessThan(500);
+  });
+
+  it('treats only an impossible palm jump as a reacquired hand', () => {
+    // A real hand at a hard 4 m/s covers ~6 cm in a 72 Hz frame; a dropout
+    // and reacquire jumps tens of centimetres.
+    expect(WEB.reacquireJumpMeters).toBeGreaterThan(4 / 72);
+    expect(WEB.reacquireJumpMeters).toBeLessThan(1);
+  });
+
   it('catches a tether on a brush, but not from across the room', () => {
     expect(WEB.tetherLatchBonus).toBeGreaterThan(0);
     expect(WEB.tetherLatchBonus).toBeLessThan(0.3);
