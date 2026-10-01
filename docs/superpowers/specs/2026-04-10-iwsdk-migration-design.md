@@ -1,0 +1,580 @@
+# PaintBlast-MR → IWSDK Migration & Agentic Upgrade
+
+**Status:** Draft — awaiting user review
+**Date:** 2026-04-10
+**Author:** Claude (brainstormed with user)
+
+## Summary
+
+Migrate the existing vanilla Three.js `PaintBlast-MR` WebXR app to the Immersive Web SDK (`@iwsdk/core`), rewriting its hand-rolled subsystems as ECS components and systems, and wiring in IWSDK's MCP tools so Claude Code can drive, inspect, and debug the app directly. Expand scope beyond pure migration to add Havok physics, multiple ball types, a wall-target game loop, UIKitML spatial UI, voice + gesture commands, and an agent-driven smoke test.
+
+The whole body of work is one spec split into three clearly labeled phases so implementation can proceed in order:
+
+- **Phase 1 — Foundation:** scaffold, ECS port, UIKitML palette, `XRAnchor` persistent splatters, depth occlusion, MCP server wiring (agent mode)
+- **Phase 2 — Physics & game loop:** Havok integration, ball kinds, wall-target spawning, scoring, timer, HUD
+- **Phase 3 — Polish & agentic workflow:** voice commands, clear-room gesture, optional MCP servers (`iwsdk-rag-local`, `hzdb`), agent-driven smoke test
+
+## Goals
+
+- Feature parity with current app on IWSDK's ECS foundation
+- Replace ~6 hand-rolled modules with ECS components/systems that align with IWSDK idioms
+- Enable Claude Code to see, interact with, and debug the XR scene via all 32 IWSDK MCP tools plus two optional MCP servers
+- Add a real game loop (targets, score, timer) on top of the paint sandbox
+- Ship Havok physics so balls bounce, stick, and splash realistically
+- Voice + gesture as alternative input for clearing splats and starting games
+
+## Non-goals
+
+- Multiplayer / networking
+- Persistent splatters across app restarts (anchors persist within a session only)
+- Custom MCP tools we author ourselves
+- Quest 2 / Vision Pro support (Quest 3 / 3S primary, emulator for dev)
+- Training `iwsdk-rag-local` on our custom code (we use its built-in IWSDK knowledge only)
+- `hzdb` asset *downloads at runtime* — it's a dev-time tool for Claude to browse and suggest assets, not a shipping game feature
+- Real-device passthrough quality tuning
+
+## Decisions locked during brainstorm
+
+| Decision | Value | Why |
+|---|---|---|
+| Migration shape | Full in-place rewrite on IWSDK | Small codebase, hand-rolled systems map 1:1 to SDK features |
+| Scope | Sets 1+2+3 in one spec, three phases | User preference; spec is sectioned by phase for execution order |
+| Language | TypeScript | IWSDK examples assume TS; ECS ergonomics and agent inspection benefit from types |
+| Target device | Quest 3 / 3S primary, WebXR emulator for dev | Full scene understanding, depth sensing, hand tracking |
+| Architecture | "ECS for gameplay, pooled geometry for splats" | Avoids per-splat entity overhead while keeping agent inspection useful |
+| HUD positioning | Head-locked (billboard) | Always visible regardless of orientation |
+| Palette size | 4×4 (16 slots) | 4 colors × 4 ball kinds; user may revise later |
+| Default agent mode | `agent` (headless background) | Lets user keep working in real browser while Claude drives Playwright |
+
+---
+
+## Section 1 — Project structure & tooling
+
+### Target folder layout
+
+```
+PaintBlast-MR/
+├── src/
+│   ├── main.ts                    # World.create, register systems, mount to DOM
+│   ├── components/
+│   │   ├── ball.ts                # Ball, BallKind enum
+│   │   ├── target.ts              # Target, HitCount
+│   │   ├── splatterField.ts       # SplatterField (holds pool metadata only)
+│   │   └── paletteSlot.ts         # PaletteSlot (color + ball kind)
+│   ├── systems/
+│   │   ├── BallSpawnSystem.ts     # spawns from palette grab
+│   │   ├── BallPhysicsSystem.ts   # Havok step, collision callbacks
+│   │   ├── SplatterSystem.ts      # pooled instanced-mesh splat pool
+│   │   ├── WorldCollisionSystem.ts # XRPlane/XRMesh → Havok static bodies
+│   │   ├── TargetSystem.ts        # wall-based target spawn + hit resolution
+│   │   ├── ScoreSystem.ts         # score/time state, drives HUD
+│   │   ├── PaletteBindingSystem.ts # populates world.ui.store.rows
+│   │   ├── VoiceCommandSystem.ts  # Phase 3
+│   │   └── ClearRoomSystem.ts     # Phase 3
+│   ├── ui/
+│   │   ├── palette.uikitml        # floating palette (replaces palette-ui.js)
+│   │   └── hud.uikitml            # score/timer HUD
+│   ├── assets/
+│   │   └── splatter.ktx2          # splat decal texture
+│   └── types.ts                   # shared enums, constants, UIStore interface
+├── tests/
+│   ├── unit/                      # Vitest unit tests
+│   ├── integration/               # Vitest + createTestWorld ECS tests
+│   └── smoke/                     # MCP-driven end-to-end script
+│       ├── play-game.ts
+│       ├── baseline/              # committed screenshots + state snapshots
+│       └── out/                   # generated, gitignored
+├── public/                        # audio, gltf (unchanged from current)
+├── .mcp.json                      # generated by `iwsdk adapter sync`
+├── vite.config.ts                 # IWSDK plugin + WebXR emulator + mkcert
+├── tsconfig.json                  # moduleResolution: "bundler", strict: true
+├── package.json
+└── index.html                     # minimal — IWSDK mounts the enter-XR button itself
+```
+
+### Dependency changes
+
+**Removed:**
+- `three` (direct dep) — IWSDK bundles it via `@iwsdk/core`
+
+**Added:**
+- `@iwsdk/core` — runtime, ECS, XR session, built-in systems and components
+- `@iwsdk/cli` — `iwsdk dev up`, `iwsdk mcp stdio`, `iwsdk adapter sync`
+- `@felixtz/iwsdk-rag-mcp` — optional MCP: semantic search over IWSDK API docs/code
+- `@meta-quest/hzdb` — optional MCP: Meta Quest device management + 3D asset library
+- `vitest` + `@vitest/ui` — unit and integration tests
+- `@playwright/test` — already transitively included by IWSDK for the smoke test runner
+
+**Retained:**
+- `vite` — IWSDK wraps it with its own plugin
+- `vite-plugin-mkcert` — HTTPS for local WebXR dev
+
+### Migration mechanics
+
+1. Run `npm create @iwsdk@latest` into a temp sibling folder `../paintblast-iwsdk-scaffold/`
+2. In the wizard: TypeScript, Augmented Reality, enable locomotion=no (room-scale), grabbing=yes, physics=yes, scene understanding=yes
+3. Delete current `src/` from `PaintBlast-MR/` (git preserves history as reference)
+4. Copy generated `src/`, `vite.config.ts`, `tsconfig.json`, `package.json` deltas into `PaintBlast-MR/`
+5. Keep the `public/` folder intact
+6. Replace `index.html` with the minimal scaffold version
+7. Delete the temp sibling folder
+8. Run `iwsdk dev up` once to initialize runtime state, then `iwsdk adapter sync` to generate `.mcp.json`
+9. First Phase 1 commit: "Scaffold IWSDK project over old vanilla Three.js code"
+
+### Old → new file mapping (traceability)
+
+| Old file | New location |
+|---|---|
+| `main.js` (XR boot) | `main.ts` (`World.create` handles most) |
+| `hand-tracker.js` (grab/pinch detection) | Deleted — grab/pinch handled by `OneHandGrabbable`; raw joint data for the Phase 3 clear-room gesture comes from IWSDK's built-in `XRHand` component |
+| `paint-balls.js` (spawn/physics/grab) | `BallSpawnSystem` + `BallPhysicsSystem` + `OneHandGrabbable` |
+| `splatter.js` (instanced splats) | `SplatterSystem` (single entity pool, ECS-addressable) |
+| `environment.js` (plane colliders) | `WorldCollisionSystem` + Havok static bodies synced to `XRPlane` entities |
+| `palette-ui.js` (floating UI) | `palette.uikitml` + `PaletteSlot` components |
+
+---
+
+## Section 2 — ECS layer
+
+### Components (pure data)
+
+```typescript
+// components/ball.ts
+export const BallKind = { Normal: 0, Bouncy: 1, Sticky: 2, Splash: 3 } as const;
+export type BallKind = typeof BallKind[keyof typeof BallKind];
+
+export const Ball = createComponent('Ball', {
+  kind:      { type: Types.UInt8,   default: BallKind.Normal },
+  colorR:    { type: Types.Float32, default: 1 },
+  colorG:    { type: Types.Float32, default: 1 },
+  colorB:    { type: Types.Float32, default: 1 },
+  radius:    { type: Types.Float32, default: 0.04 },
+  spawnTime: { type: Types.Float64, default: 0 },
+  bounceCount: { type: Types.UInt8, default: 0 }, // bouncy kind only
+});
+
+// components/target.ts
+export const Target = createComponent('Target', {
+  hitCount:   { type: Types.UInt16, default: 0 },
+  hitsToKill: { type: Types.UInt16, default: 3 },
+  points:     { type: Types.UInt16, default: 10 },
+});
+
+// components/splatterField.ts — exactly ONE exists per session.
+// The singleton entity that holds this component is ALSO tagged with
+// XRAnchor so its origin (and every instanced splat offset from that origin)
+// stays locked to the real room across WebXR tracking drift / relocalization.
+export const SplatterField = createComponent('SplatterField', {
+  capacity:  { type: Types.UInt16, default: 256 },
+  writeIdx:  { type: Types.UInt16, default: 0 },
+  liveCount: { type: Types.UInt16, default: 0 },
+});
+
+// components/paletteSlot.ts
+export const PaletteSlot = createComponent('PaletteSlot', {
+  kind:   { type: Types.UInt8,   default: BallKind.Normal },
+  colorR: { type: Types.Float32, default: 1 },
+  colorG: { type: Types.Float32, default: 1 },
+  colorB: { type: Types.Float32, default: 1 },
+});
+```
+
+Plus built-in IWSDK components reused as-is: `OneHandGrabbable`, `Interactable`, `PhysicsBody`, `XRPlane`, `XRMesh`, `XRAnchor`, `XRHand`.
+
+### Systems (behavior)
+
+| System | Query | Runs | Purpose |
+|---|---|---|---|
+| `BallSpawnSystem` | `paletteSlots: required [PaletteSlot, Interactable]` | on grab event | Detects palette grab, spawns new ball entity in grabbing hand with `Ball`, `OneHandGrabbable`, `PhysicsBody` |
+| `BallPhysicsSystem` | `balls: required [Ball, PhysicsBody]` | every frame | Steps Havok for all balls, handles ball↔wall / ball↔target collisions, routes to `SplatterSystem` / `TargetSystem` |
+| `SplatterSystem` | `field: required [SplatterField]` | on hit event | Owns single `THREE.InstancedMesh` (256 decal quads). On hit: writes pos/normal/color into ring buffer, bumps `writeIdx`, increments `liveCount` |
+| `WorldCollisionSystem` | `planes: required [XRPlane]`, `meshes: required [XRMesh]` | on qualify/disqualify | Attaches/removes Havok static bodies matching detected geometry |
+| `TargetSystem` | `targets: required [Target]`, `planes: required [XRPlane]` | init + on hit | Picks vertical walls at game start, spawns `Target` entities with `XRAnchor`. On hit: increments `hitCount`, kills at `>= hitsToKill`, notifies `ScoreSystem` |
+| `ScoreSystem` | game state events | every frame | Holds `score`, `timeRemaining`, `isPlaying`; pushes into HUD's reactive UIKitML bindings |
+| `PaletteBindingSystem` | `paletteSlots: required [PaletteSlot]` | init | Populates `world.ui.store.rows` from registered `PaletteSlot` entities |
+| `VoiceCommandSystem` | — | Web Speech API callback | Phrase-matches after wake word, emits `GameIntent.*` events |
+| `ClearRoomSystem` | `field: required [SplatterField]`, hand joints | on clear intent | Resets `writeIdx`, `liveCount`, hides all instances |
+
+### World setup (src/main.ts)
+
+```typescript
+import {
+  World, SessionMode, SceneUnderstandingSystem,
+  XRPlane, XRMesh, XRAnchor,
+} from '@iwsdk/core';
+import * as components from './components';
+import * as systems from './systems';
+
+const world = await World.create(document.body, {
+  xr: {
+    sessionMode: SessionMode.ImmersiveAR,
+    features: {
+      handTracking: true,
+      planeDetection: true,
+      meshDetection: true,
+      anchors: true,
+      depthSensing: true,
+      hitTest: true,
+    },
+  },
+  features: {
+    enableGrabbing: true,
+    enablePhysics: true,
+    enableUIKitML: true,
+  },
+});
+
+world
+  .registerComponent(components.Ball)
+  .registerComponent(components.Target)
+  .registerComponent(components.SplatterField)
+  .registerComponent(components.PaletteSlot)
+  .registerComponent(XRPlane)
+  .registerComponent(XRMesh)
+  .registerComponent(XRAnchor)
+  .registerSystem(SceneUnderstandingSystem)
+  .registerSystem(systems.WorldCollisionSystem)
+  .registerSystem(systems.BallSpawnSystem)
+  .registerSystem(systems.BallPhysicsSystem)
+  .registerSystem(systems.SplatterSystem)
+  .registerSystem(systems.TargetSystem)
+  .registerSystem(systems.ScoreSystem)
+  .registerSystem(systems.PaletteBindingSystem)
+  .registerSystem(systems.VoiceCommandSystem)
+  .registerSystem(systems.ClearRoomSystem);
+```
+
+---
+
+## Section 3 — Scene understanding, collisions, depth occlusion
+
+### Plane & mesh → physics collider pipeline
+
+`SceneUnderstandingSystem` already turns each detected plane/mesh into an ECS entity with `XRPlane`/`XRMesh` and an `object3D`. `WorldCollisionSystem` is the glue:
+
+```typescript
+class WorldCollisionSystem extends createSystem({
+  planes: { required: [XRPlane] },
+  meshes: { required: [XRMesh] },
+}) {
+  init() {
+    this.queries.planes.subscribe('qualify', (e) => {
+      this.world.physics.addStaticPlaneBody(e);
+    });
+    this.queries.planes.subscribe('disqualify', (e) => {
+      this.world.physics.removeBody(e);
+    });
+
+    this.queries.meshes.subscribe('qualify', (e) => {
+      const label = e.getValue(XRMesh, 'semanticLabel');
+      if (['table', 'couch', 'chair', 'other'].includes(label ?? '')) {
+        this.world.physics.addStaticMeshBody(e);
+      }
+    });
+  }
+}
+```
+
+`TargetSystem` reuses the same `planes` query but filters for vertical orientation to pick walls to stick targets on.
+
+### Depth occlusion
+
+Quest 3 exposes per-frame depth via the `depth-sensing` WebXR feature. IWSDK wires the depth texture into Three.js when `features.depthSensing: true` is set. Per-object opt-in:
+
+```typescript
+mesh.material.userData.xrDepthOcclusion = true;
+```
+
+Applied to: ball meshes, splatter instanced mesh, target meshes. NOT applied to HUD or palette (UI stays on top).
+
+### Edge cases handled explicitly
+
+- **Plane revoked mid-session** (room re-scan): `disqualify` handler removes Havok body cleanly
+- **Zero planes detected** after session start: `main.ts` calls `xrSession.initiateRoomCapture?.()` after 3s delay (preserves the UX fallback from current `main.js`)
+- **Depth unavailable** (emulator, older device): feature-detect `depth-sensing`; if absent, skip `xrDepthOcclusion` flag — balls render in front of real objects, game still plays
+- **`semanticLabel` missing** on Quest 2-era devices: `WorldCollisionSystem` falls back to plane-only colliders; targets spawn on any vertical plane regardless of label
+
+---
+
+## Section 4 — Spatial UI (UIKitML)
+
+### Palette (`src/ui/palette.uikitml`)
+
+Replaces current `palette-ui.js` with a compile-time-compiled 3D panel. 4×4 grid of grabbable slots (4 colors × 4 ball kinds).
+
+```xml
+<root position="0 -0.3 -0.6" rotation="-30 0 0" width="0.4" height="0.4">
+  <text fontSize="0.025" color="#fff" marginBottom="0.02">Palette</text>
+  <container flexDirection="column" gap="0.01">
+    <container flexDirection="row" gap="0.01" bind:each="row in rows">
+      <container
+        bind:each="slot in row"
+        width="0.07" height="0.07" borderRadius="0.01"
+        bind:backgroundColor="slot.hex"
+        bind:data-slot-id="slot.id"
+        grabbable="true"
+        grabKind="spawnBall"
+      />
+    </container>
+  </container>
+</root>
+```
+
+- `grabbable="true"` auto-attaches `Interactable` + `OneHandGrabbable` at compile time
+- `grabKind="spawnBall"` is a custom prop `BallSpawnSystem` reads to decide spawn-vs-pickup
+- `bind:` expressions read from `world.ui.store` reactive proxy
+- Each slot's `data-slot-id` maps to a `PaletteSlot` entity
+
+### HUD (`src/ui/hud.uikitml`)
+
+```xml
+<root position="0 0.4 -1" width="0.5" height="0.15" billboard="true">
+  <container flexDirection="row" justifyContent="space-between" padding="0.02">
+    <text fontSize="0.04" bind:text="score.value" color="#feca57">Score: 0</text>
+    <text fontSize="0.04" bind:text="score.timer" color="#48dbfb">1:30</text>
+  </container>
+  <container flexDirection="row" justifyContent="center" marginTop="0.01">
+    <text fontSize="0.02" bind:text="score.status" color="#888">
+      Say "start game" to begin
+    </text>
+  </container>
+</root>
+```
+
+- `billboard="true"` keeps HUD facing the user regardless of head rotation
+- `ScoreSystem` writes to `world.ui.store.score.*`, HUD auto-updates via bindings
+
+### Store shape (src/types.ts)
+
+```typescript
+export interface UIStore {
+  rows: Array<Array<{ id: string; hex: string; kind: BallKind }>>;
+  score: { value: number; timer: string; status: string };
+}
+```
+
+---
+
+## Section 5 — Physics, ball kinds, game loop
+
+### Havok integration
+
+Balls get a `PhysicsBody` at spawn:
+
+```typescript
+const ball = world.createTransformEntity(ballMesh);
+ball.addComponent(Ball, { kind, colorR, colorG, colorB, radius: 0.04 });
+ball.addComponent(OneHandGrabbable, { rotate: false, translate: true });
+ball.addComponent(PhysicsBody, {
+  shape: 'sphere',
+  radius: 0.04,
+  mass: 0.05,
+  friction: 0.3,
+  restitution: 0.2,  // overridden per kind
+  linearDamping: 0.02,
+});
+```
+
+Static bodies for walls/furniture come from `WorldCollisionSystem`. Targets register as sensors (no bounce, just hit callback).
+
+### Ball kinds
+
+| Kind | Mass | Restitution | On wall hit | On target hit |
+|---|---|---|---|---|
+| **Normal** | 50 g | 0.2 | splat once, despawn | +10, splat, despawn |
+| **Bouncy** | 40 g | 0.85 | bounce, splat, keep going up to 3 bounces then despawn | +15 per target in one life |
+| **Sticky** | 60 g | 0.0 | splat, create static `PhysicsBody` at impact point so next ball bounces off it, despawn | +20, splat, despawn |
+| **Splash** | 70 g | 0.1 | splat at impact + spawn 8 radial splats in 0.3 m disk, despawn | +25, multi-splat |
+
+`BallPhysicsSystem` reads `Ball.kind` in the collision callback and dispatches to the right handler. Bouncy decrements `bounceCount`; at zero despawns. Sticky removes its `OneHandGrabbable`, disables motion, registers new static body — stuck ball becomes terrain.
+
+### Splash ball mechanics detail
+
+The 8 radial splats call `SplatterSystem.addSplat()` 9 times in one frame (1 center + 8 radial). The ring buffer's `writeIdx` advances naturally; if the pool is full, oldest splats are overwritten. No special-casing needed.
+
+### SplatterField anchoring
+
+The singleton `SplatterField` entity is created during `SplatterSystem.init()` and gets an `XRAnchor` attached immediately. All instanced splat positions are stored in the field's local space (Float32Arrays relative to the anchor transform). This means:
+
+- One anchor covers all 256 splats — well within the WebXR anchor budget
+- If the runtime relocalizes the room, every splat moves with the anchor as a rigid group, so they don't drift off walls
+- `ClearRoomSystem` wipes the pool but leaves the anchor in place so the next round starts from the same origin
+
+### Game loop state machine
+
+```
+ idle  ──("start game" voice / HUD tap)──▶  arming
+ arming  ──(3s countdown tick)──▶            playing
+ playing ──(timer = 0 or all targets dead)──▶ scoring
+ scoring ──(5s display)──▶                    idle
+```
+
+Lives in `ScoreSystem` as a single enum field on a world-level `GameState` singleton component. Each transition writes to `world.ui.store.score.status` so the HUD narrates.
+
+| State | HUD status text |
+|---|---|
+| `idle` | *"Say 'start game' to begin"* |
+| `arming` | *"Get ready: 3… 2… 1…"* |
+| `playing` | *"{n} targets left"* |
+| `scoring` | *"Final: {score} — say 'start game' to replay"* |
+
+### Target spawning rules
+
+On `playing` transition, `TargetSystem` picks up to **6** vertical `XRPlane` entities (largest area first), anchors one `Target` entity per plane at a random point within the plane polygon, offset +5 cm from the wall surface, with a distinctive red-ring mesh. Each target: `points × hitsToKill` (default 10 × 3). Timer default: 90 seconds.
+
+Fewer than 6 walls → spawn what it can, floor `targetsRemaining` at that count, log a console warning the MCP agent can pick up.
+
+---
+
+## Section 6 — Agent workflow, MCP servers, voice & gestures
+
+### MCP server wiring
+
+`iwsdk adapter sync` generates `.mcp.json` at repo root with three servers:
+
+```jsonc
+{
+  "mcpServers": {
+    "iwsdk": {
+      "command": "npx",
+      "args": ["iwsdk", "mcp", "stdio"]
+    },
+    "iwsdk-rag-local": {
+      "command": "npx",
+      "args": ["@felixtz/iwsdk-rag-mcp"]
+    },
+    "hzdb": {
+      "command": "npx",
+      "args": ["@meta-quest/hzdb"]
+    }
+  }
+}
+```
+
+- **`iwsdk`** — 32 native tools: session accept/end, headset/controller/hand transform, input simulation, screenshots, console, scene query, ECS pause/step, entity query, state snapshot diff
+- **`iwsdk-rag-local`** — semantic search over IWSDK API docs + code
+- **`hzdb`** — Meta Quest device management + Meta's hosted 3D asset library
+
+Claude Code reads `.mcp.json` at conversation start. No per-conversation setup needed after `iwsdk adapter sync` runs once.
+
+### Default operating mode: `agent` (headless background)
+
+Documents `iwsdk dev up --mode oversight` and `--mode collaborate` as opt-ins:
+- **oversight** — watch the agent play the game
+- **collaborate** — interact alongside Claude in the same session
+
+### Voice commands (Phase 3)
+
+`VoiceCommandSystem` uses Web Speech API (`SpeechRecognition`). Wake word: **"paintblast"**. Phrase grammar:
+
+| Phrase after wake | Intent emitted |
+|---|---|
+| *"start game"* | `GameIntent.Start` |
+| *"stop game"* / *"end game"* | `GameIntent.Stop` |
+| *"clear the room"* / *"wipe it"* | `GameIntent.ClearSplats` |
+| *"reset targets"* | `GameIntent.ResetTargets` |
+| *"give me bouncy"* | `GameIntent.ForcePaletteKind(Bouncy)` |
+
+Feature-detected: if `SpeechRecognition` is absent, HUD prompt swaps to *"Tap palette to begin"* and the same intents fire from UI taps.
+
+### Clear-room gesture (Phase 3)
+
+Alternative to voice: both hands held palms-up for 2 seconds. `ClearRoomSystem` watches hand joint data via the built-in `XRHand` component and checks:
+
+1. Both hands tracked
+2. Both palm normals pointing up (dot with world-up > 0.8)
+3. Hands ≥ 20 cm apart horizontally
+4. Pose held continuously for 2 seconds
+
+Triggers `GameIntent.ClearSplats`.
+
+### Agent-driven smoke test (Phase 3)
+
+Script `tests/smoke/play-game.ts` talks directly to MCP tools:
+
+```
+1. mcp.iwsdk.acceptXRSession(mode: 'immersive-ar')
+2. mcp.iwsdk.moveHead({pos: [0, 1.6, 0], rot: [0, 0, 0]})
+3. mcp.iwsdk.screenshot() → tests/smoke/out/01-boot.png
+4. mcp.iwsdk.queryEntities({ component: 'PaletteSlot' }) → assert 16
+5. mcp.iwsdk.simulateGrab({ hand: 'right', target: 'paletteSlot[0]' })
+6. mcp.iwsdk.simulateRelease({ hand: 'right', velocity: [0, 2, -5] })
+7. Wait 1s (real time for Havok step)
+8. mcp.iwsdk.queryEntities({ component: 'Ball' }) → assert spawned-then-despawned
+9. mcp.iwsdk.screenshot() → tests/smoke/out/02-after-throw.png
+10. mcp.iwsdk.stateSnapshot() → diff against baseline
+```
+
+Runs against oversight mode in CI (headed Chromium with WebXR emulation) and locally via `npm run smoke`. Failures post screenshots + console logs + ECS state diff.
+
+---
+
+## Section 7 — Testing & verification strategy
+
+### Layer 1 — Unit tests (Vitest)
+
+Pure logic, no browser, no XR:
+
+```
+tests/unit/
+├── ball-kinds.test.ts          # restitution/mass per kind, ForcePaletteKind
+├── splatter-pool.test.ts       # ring-buffer writeIdx wraparound, liveCount cap
+├── score-state-machine.test.ts # idle→arming→playing→scoring transitions
+└── voice-grammar.test.ts       # phrase matching, wake word, intent emission
+```
+
+### Layer 2 — System integration tests (Vitest + `createTestWorld`)
+
+IWSDK's `createTestWorld()` boots a headless `World` with stubbed XR:
+
+```
+tests/integration/
+├── palette-spawn.test.ts       # grab palette slot → Ball entity with right kind/color
+├── scene-collisions.test.ts    # fake XRPlane qualify → static body added
+├── target-hit.test.ts          # simulate sensor callback → Target.hitCount, score update
+└── splash-radial.test.ts       # splash ball hit → 9 splats in pool
+```
+
+### Layer 3 — Agent-driven smoke test (MCP + Playwright)
+
+The script from Section 6. Committed baseline screenshots + ECS state snapshots in `tests/smoke/baseline/`. Generated output in `tests/smoke/out/` (gitignored).
+
+### Per-phase gates
+
+**Phase 1 gate:**
+- [ ] `npm run dev` boots the IWSDK app in the emulator
+- [ ] Hand-tracking grab + throw works with a palette slot
+- [ ] Splat appears on detected walls
+- [ ] `.mcp.json` generated, Claude can call `iwsdk.screenshot` successfully
+- [ ] Unit + integration tests green
+
+**Phase 2 gate:**
+- [ ] Havok bodies added for walls, balls bounce correctly
+- [ ] All four ball kinds distinguishable visually and behaviorally
+- [ ] Targets spawn on walls at game start, score counts hits
+- [ ] Full game loop: idle → arming → playing → scoring → idle
+- [ ] HUD updates live from `world.ui.store`
+- [ ] Integration tests for new systems green
+
+**Phase 3 gate:**
+- [ ] Voice wake word + "start game" and "clear the room" intents fire
+- [ ] Two-hands-up gesture triggers clear (feature-detected, doesn't crash emulator)
+- [ ] `iwsdk-rag-local` and `hzdb` servers both appear in Claude's MCP list
+- [ ] `npm run smoke` exits 0 with committed baseline
+- [ ] Smoke test catches a deliberately-injected regression
+
+### Not tested
+
+- Real-device passthrough quality (subjective)
+- Havok physics correctness (trust the library)
+- UIKitML compile output (trust the build plugin)
+- Speech recognition accuracy in noisy environments (out of our control)
+
+---
+
+## Open questions to revisit during implementation
+
+- Exact Havok static-body shape for non-rectangular plane polygons (likely simplified bounding box on first pass, refined if balls clip through angled walls)
+- Whether `hzdb` device pairing is a one-time CLI step or needs runtime configuration
+- IWSDK's `world.ui.store` exact signal API (docs are thin; may need source-diving during Phase 1)
+- Whether the WebXR emulator supports `depth-sensing` or if Phase 1 depth-occlusion verification has to wait for on-device testing

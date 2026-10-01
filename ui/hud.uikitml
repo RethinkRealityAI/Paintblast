@@ -1,0 +1,458 @@
+<style>
+  /* UIKitML units are CENTIMETRES. The whole panel is one document; HudSystem
+     shows exactly one phase section at a time and leaves the footer up.
+
+     Accents are the four paint colours from src/types.ts, so the chrome and
+     the paint you shoot are literally the same palette:
+       coral #ff6b6b | amber #ffca57 | sky #48dbfb | lime #4dcc85
+
+     ASCII text only anywhere in here - the bundled MSDF font has no glyphs for
+     the typographic dashes, ellipsis or multiplication sign. */
+  .hud-root {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 46;
+    padding: 2.6;
+    gap: 1.1;
+    background-color: rgba(16, 16, 22, 0.55);
+    border-radius: 3.2;
+    border-width: 0.12;
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+  .section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    gap: 0.9;
+  }
+  /* Every non-idle section starts hidden so the panel never flashes all three
+     at once on the frame before HudSystem binds. */
+  .section-hidden {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    gap: 0.9;
+  }
+
+  /* --- Title: one span per letter, cycling through the paint palette ------ */
+  .title-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+  }
+  .glyph-coral {
+    font-size: 5.4;
+    font-weight: bold;
+    color: #ff6b6b;
+  }
+  .glyph-amber {
+    font-size: 5.4;
+    font-weight: bold;
+    color: #ffca57;
+  }
+  .glyph-sky {
+    font-size: 5.4;
+    font-weight: bold;
+    color: #48dbfb;
+  }
+  .glyph-lime {
+    font-size: 5.4;
+    font-weight: bold;
+    color: #4dcc85;
+  }
+
+  .tagline {
+    font-size: 2;
+    color: #e4e4e7;
+    text-align: center;
+  }
+  /* Four paint dabs under the tagline, in palette order. */
+  .dot-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 0.8;
+    margin-top: 0.1;
+  }
+  .dot-coral {
+    width: 1.1;
+    height: 1.1;
+    border-radius: 0.55;
+    background-color: #ff6b6b;
+  }
+  .dot-amber {
+    width: 1.1;
+    height: 1.1;
+    border-radius: 0.55;
+    background-color: #ffca57;
+  }
+  .dot-sky {
+    width: 1.1;
+    height: 1.1;
+    border-radius: 0.55;
+    background-color: #48dbfb;
+  }
+  .dot-lime {
+    width: 1.1;
+    height: 1.1;
+    border-radius: 0.55;
+    background-color: #4dcc85;
+  }
+  .howto {
+    font-size: 1.6;
+    color: #a1a1aa;
+    text-align: center;
+  }
+
+  /* --- Buttons: pills, one paint colour each ----------------------------- */
+  .btn-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 1.2;
+    margin-top: 0.5;
+  }
+  .btn-amber {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-x: 3.2;
+    padding-y: 1.2;
+    font-size: 2.6;
+    font-weight: bold;
+    color: #0b0b10;
+    background-color: #ffca57;
+    border-radius: 2.6;
+  }
+  .btn-sky {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-x: 3.2;
+    padding-y: 1.2;
+    font-size: 2.6;
+    font-weight: bold;
+    color: #0b0b10;
+    background-color: #48dbfb;
+    border-radius: 2.6;
+  }
+  .btn-lime {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-x: 3.2;
+    padding-y: 1.2;
+    font-size: 2.6;
+    font-weight: bold;
+    color: #0b0b10;
+    background-color: #4dcc85;
+    border-radius: 2.6;
+  }
+  /* Outline pills: the fill is a whisper of the accent so the hit target is
+     still findable against passthrough, while reading as transparent.
+
+     HudSystem repaints backgroundColor on every button as the pointer enters,
+     leaves and presses it (see wireInteractiveButton) — the alphas declared
+     here are only the resting look. Keep them as rgba(): uikit reads a
+     background's opacity out of the colour itself, so the hover and pressed
+     states are the same string with a bigger last number. */
+  .btn-coral-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-x: 2.6;
+    padding-y: 1;
+    font-size: 2.2;
+    font-weight: bold;
+    color: #ff6b6b;
+    background-color: rgba(255, 107, 107, 0.08);
+    border-width: 0.12;
+    border-color: #ff6b6b;
+    border-radius: 2.2;
+  }
+  .btn-amber-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-x: 2.6;
+    padding-y: 1;
+    font-size: 2.2;
+    font-weight: bold;
+    color: #ffca57;
+    background-color: rgba(255, 202, 87, 0.08);
+    border-width: 0.12;
+    border-color: #ffca57;
+    border-radius: 2.2;
+  }
+  .btn-sky-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-x: 2.6;
+    padding-y: 1;
+    font-size: 2.2;
+    font-weight: bold;
+    color: #48dbfb;
+    background-color: rgba(72, 219, 251, 0.08);
+    border-width: 0.12;
+    border-color: #48dbfb;
+    border-radius: 2.2;
+  }
+  .btn-lime-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-x: 2.6;
+    padding-y: 1;
+    font-size: 2.2;
+    font-weight: bold;
+    color: #4dcc85;
+    background-color: rgba(77, 204, 133, 0.08);
+    border-width: 0.12;
+    border-color: #4dcc85;
+    border-radius: 2.2;
+  }
+  /* WEB MODE: a glass pill with a coral border, sitting on its own row under
+     START / CHILL MODE. Deliberately not one of the four solid pills — it is a
+     shortcut into chill with web ammo loaded, not a third top-level mode, and
+     the lighter weight says so. HudSystem brings the coral up from behind the
+     white on hover and press (see the btn-web wiring). */
+  .btn-web {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    /* Explicit width, unlike every other pill here, and it is load-bearing:
+       left to size itself this one wrapped to "WEB / MODE" in the emulator.
+       A pill alone on its row has no sibling to establish the row's width, so
+       it measured its own text against a narrower box than it needed. */
+    width: 19;
+    padding-y: 1;
+    font-size: 2.2;
+    font-weight: bold;
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-width: 0.12;
+    border-color: #ff6b6b;
+    border-radius: 2.2;
+  }
+  /* Room-scan notice: an amber advisory strip, hidden until SceneScanSystem
+     says the headset has no scene model to give us. HudSystem flips its display
+     — the row starts hidden so a scanned room never sees it flash. */
+  .scan-notice {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    gap: 0.6;
+    margin-top: 0.4;
+    padding-y: 0.8;
+    padding-x: 1.2;
+    background-color: rgba(255, 202, 87, 0.1);
+    border-width: 0.1;
+    border-color: rgba(255, 202, 87, 0.45);
+    border-radius: 1.6;
+  }
+  .scan-text {
+    font-size: 1.5;
+    color: #ffca57;
+    text-align: center;
+  }
+  .btn-glass {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-x: 1.8;
+    padding-y: 0.8;
+    font-size: 1.5;
+    font-weight: medium;
+    color: #e4e4e7;
+    background-color: rgba(255, 255, 255, 0.07);
+    border-width: 0.1;
+    border-color: rgba(255, 255, 255, 0.2);
+    border-radius: 1.6;
+  }
+
+  /* --- Live round -------------------------------------------------------- */
+  .row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+  .row-center {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 1.4;
+  }
+  .score {
+    font-size: 4.2;
+    font-weight: bold;
+    color: #ffca57;
+  }
+  .timer {
+    font-size: 4.2;
+    font-weight: bold;
+    color: #48dbfb;
+  }
+  /* HudSystem repaints backgroundColor per combo level (x2 amber, x3 coral,
+     x4+ sky); this is only the resting look. */
+  .combo {
+    display: none;
+    padding-x: 1.3;
+    padding-y: 0.4;
+    font-size: 2;
+    font-weight: bold;
+    color: #0b0b10;
+    background-color: #ffca57;
+    border-radius: 1.4;
+  }
+  .targets {
+    font-size: 2;
+    font-weight: medium;
+    color: #a1a1aa;
+  }
+  .status {
+    font-size: 1.7;
+    color: #a1a1aa;
+    text-align: center;
+  }
+  .over-title {
+    font-size: 3.2;
+    font-weight: bold;
+    color: #ff6b6b;
+    text-align: center;
+  }
+  .final {
+    font-size: 5;
+    font-weight: bold;
+    color: #ffca57;
+    text-align: center;
+  }
+  .best {
+    font-size: 1.8;
+    color: #a1a1aa;
+    text-align: center;
+  }
+  .chill-title {
+    font-size: 3;
+    font-weight: bold;
+    color: #48dbfb;
+    text-align: center;
+  }
+
+  /* --- Persistent footer ------------------------------------------------- */
+  .footer {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    margin-top: 0.4;
+    padding-top: 1;
+    border-top-width: 0.1;
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+  .ammo-group {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.8;
+  }
+  .swatch {
+    width: 1.6;
+    height: 1.6;
+    border-radius: 0.8;
+    background-color: #ff6b6b;
+  }
+  .ammo {
+    font-size: 1.5;
+    font-weight: medium;
+    color: #e4e4e7;
+  }
+</style>
+<div class="hud-root">
+  <div id="section-idle" class="section">
+    <div class="title-row">
+      <span class="glyph-coral">P</span>
+      <span class="glyph-amber">A</span>
+      <span class="glyph-sky">I</span>
+      <span class="glyph-lime">N</span>
+      <span class="glyph-coral">T</span>
+      <span class="glyph-amber">B</span>
+      <span class="glyph-sky">L</span>
+      <span class="glyph-lime">A</span>
+      <span class="glyph-coral">S</span>
+      <span class="glyph-amber">T</span>
+    </div>
+    <span class="tagline">Rogue bots detected in your room</span>
+    <div class="dot-row">
+      <div class="dot-coral"></div>
+      <div class="dot-amber"></div>
+      <div class="dot-sky"></div>
+      <div class="dot-lime"></div>
+    </div>
+    <span class="howto">Trigger/pinch = fire | Tap your wrist palette = switch paint</span>
+    <span class="howto">THWIP (curl middle+ring) or thrust fires whatever is loaded</span>
+    <span class="howto">WEB MODE = wrist shooters - or load the WEB chip on your palette</span>
+    <div class="btn-row">
+      <button id="btn-start" class="btn-amber">START</button>
+      <button id="btn-chill" class="btn-sky">CHILL MODE</button>
+    </div>
+    <div class="btn-row">
+      <button id="btn-web" class="btn-web">WEB MODE</button>
+    </div>
+    <div id="scan-notice" class="scan-notice">
+      <span id="scan-notice-text" class="scan-text">No room scan found - paint has no walls to stick to</span>
+      <button id="btn-scan-room" class="btn-amber-line">SCAN ROOM</button>
+    </div>
+  </div>
+  <div id="section-playing" class="section-hidden">
+    <div class="row">
+      <span id="hud-score" class="score">0</span>
+      <span id="hud-timer" class="timer">1:30</span>
+    </div>
+    <div class="row-center">
+      <span id="hud-combo" class="combo">x1</span>
+      <span id="hud-targets" class="targets">0 bots</span>
+    </div>
+    <span id="hud-status" class="status">Get ready</span>
+  </div>
+  <div id="section-gameover" class="section-hidden">
+    <span class="over-title">ROUND OVER</span>
+    <span id="hud-final" class="final">0</span>
+    <span id="hud-best" class="best">Best 0</span>
+    <button id="btn-restart" class="btn-lime">PLAY AGAIN</button>
+  </div>
+  <div id="section-chill" class="section-hidden">
+    <span class="chill-title">CHILL MODE</span>
+    <span id="hud-chill-status" class="status">Hold trigger to spray. Tap the palette to change paint.</span>
+    <span class="howto">Paint the easel in front of you, then save the picture</span>
+    <span class="howto">THWIP or thrust fires whatever is loaded</span>
+    <span class="howto">Grab the easel with both hands to move it</span>
+    <div class="btn-row">
+      <button id="btn-save-painting" class="btn-amber-line">SAVE PAINTING</button>
+      <button id="btn-new-canvas" class="btn-sky-line">NEW CANVAS</button>
+    </div>
+    <div class="btn-row">
+      <button id="btn-orientation" class="btn-lime-line">ROTATE CANVAS</button>
+      <button id="btn-exit-chill" class="btn-coral-line">EXIT CHILL</button>
+    </div>
+  </div>
+  <div class="footer">
+    <button id="btn-clear" class="btn-glass">CLEAR PAINT</button>
+    <div class="ammo-group">
+      <div id="hud-ammo-swatch" class="swatch"></div>
+      <span id="hud-ammo" class="ammo">NORMAL</span>
+    </div>
+  </div>
+</div>

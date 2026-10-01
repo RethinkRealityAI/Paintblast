@@ -1,0 +1,269 @@
+/* PaintBlast MR — landing overlay. Rendered above the IWSDK canvas until the
+   player enters AR; returns when the session ends. */
+
+:root {
+  --pb-coral: #ff6b6b;
+  --pb-amber: #ffca57;
+  --pb-sky: #48dbfb;
+  --pb-lime: #4dcc85;
+  --pb-ink: #0b0b10;
+  --pb-paper: #f5f2ec;
+  --pb-glass: rgba(22, 22, 30, 0.55);
+  --pb-glass-border: rgba(255, 255, 255, 0.14);
+}
+
+#landing-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background:
+    linear-gradient(180deg, rgba(11, 11, 16, 0.82) 0%, rgba(11, 11, 16, 0.6) 45%, rgba(11, 11, 16, 0.94) 100%),
+    url('/landing/hero.png') center 30% / cover no-repeat,
+    var(--pb-ink);
+  color: var(--pb-paper);
+  font-family: 'Sora', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  opacity: 1;
+  transition: opacity 0.45s ease;
+}
+
+#landing-root.pb-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#pb-splat-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none; /* clicks land on .pb-page, which forwards them */
+}
+
+.pb-page {
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: clamp(16px, 3vw, 40px);
+  cursor: crosshair; /* the whole page is a paintable surface */
+}
+
+.pb-nav {
+  width: 100%;
+  max-width: 1080px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.pb-wordmark {
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  font-size: 18px;
+  background: linear-gradient(90deg, var(--pb-coral), var(--pb-amber), var(--pb-sky), var(--pb-lime));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  white-space: nowrap;
+}
+
+.pb-chip {
+  font-size: 12px;
+  padding: 6px 12px;
+  border: 1px solid var(--pb-glass-border);
+  border-radius: 999px;
+  background: var(--pb-glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: rgba(245, 242, 236, 0.8);
+  white-space: nowrap;
+}
+
+.pb-hero {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: clamp(40px, 9vh, 110px) 8px 28px;
+  max-width: 900px;
+}
+
+.pb-title {
+  font-size: clamp(52px, 11vw, 128px);
+  font-weight: 800;
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+  margin: 0;
+  background: linear-gradient(92deg, var(--pb-coral) 0%, var(--pb-amber) 34%, var(--pb-sky) 67%, var(--pb-lime) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 4px 24px rgba(0, 0, 0, 0.55));
+}
+
+.pb-tagline {
+  font-size: clamp(20px, 3.4vw, 30px);
+  font-weight: 700;
+  margin: 18px 0 6px;
+}
+
+.pb-sub {
+  font-size: clamp(14px, 2vw, 17px);
+  color: rgba(245, 242, 236, 0.72);
+  margin: 0 0 30px;
+  max-width: 560px;
+}
+
+.pb-cta-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+}
+
+.pb-btn {
+  cursor: pointer;
+  border: 0;
+  border-radius: 999px;
+  padding: 16px 34px;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.2s ease;
+}
+
+.pb-btn:hover { transform: translateY(-2px) scale(1.02); }
+.pb-btn:active { transform: translateY(0) scale(0.99); }
+
+.pb-btn-primary {
+  color: var(--pb-ink);
+  background: linear-gradient(92deg, var(--pb-amber), var(--pb-coral));
+  box-shadow: 0 8px 30px rgba(255, 107, 107, 0.35);
+}
+
+.pb-btn-secondary {
+  color: var(--pb-paper);
+  background: var(--pb-glass);
+  border: 1px solid var(--pb-glass-border);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.pb-hint {
+  margin-top: 26px;
+  font-size: 13px;
+  color: rgba(245, 242, 236, 0.55);
+  animation: pb-pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes pb-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+.pb-qr-card {
+  display: none;
+  margin-top: 26px;
+  padding: 18px;
+  border-radius: 20px;
+  background: var(--pb-glass);
+  border: 1px solid var(--pb-glass-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  text-align: center;
+}
+
+.pb-qr-card.pb-open { display: inline-block; }
+.pb-qr-card img {
+  width: 190px;
+  height: 190px;
+  border-radius: 12px;
+  display: block;
+  margin: 0 auto 10px;
+}
+.pb-qr-card p { margin: 0; font-size: 13px; color: rgba(245, 242, 236, 0.75); }
+
+.pb-features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 14px;
+  width: 100%;
+  max-width: 1080px;
+  margin: 26px 0 8px;
+}
+
+.pb-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 250px;
+  border-radius: 20px;
+  overflow: hidden;
+  border: 1px solid var(--pb-glass-border);
+  border-top: 3px solid var(--card-accent, var(--pb-amber));
+  /* Generated art behind a scrim that keeps the copy readable. */
+  background-image:
+    linear-gradient(180deg, rgba(11, 11, 16, 0.05) 0%, rgba(11, 11, 16, 0.42) 55%, rgba(11, 11, 16, 0.92) 100%),
+    var(--card-img, none);
+  background-color: var(--pb-glass);
+  background-size: cover;
+  background-position: center;
+  text-align: left;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.pb-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+}
+
+.pb-card-body {
+  padding: 96px 20px 20px;
+}
+
+.pb-card h3 {
+  margin: 0 0 8px;
+  font-size: 16.5px;
+  font-weight: 800;
+  color: var(--card-accent, var(--pb-paper));
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
+}
+
+.pb-card p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: rgba(245, 242, 236, 0.86);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
+}
+
+.pb-controls {
+  display: flex;
+  gap: 10px 26px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin: 26px 0 10px;
+  padding: 14px 26px;
+  border-radius: 999px;
+  background: rgba(11, 11, 16, 0.5);
+  border: 1px solid var(--pb-glass-border);
+  font-size: 13.5px;
+  color: rgba(245, 242, 236, 0.8);
+}
+
+.pb-controls b { color: var(--pb-amber); font-weight: 700; }
+
+.pb-footer {
+  margin: 22px 0 8px;
+  font-size: 12px;
+  color: rgba(245, 242, 236, 0.45);
+  text-align: center;
+}

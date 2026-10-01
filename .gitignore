@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.netlify/
+.iwsdk/
+tests/smoke/out/
+*.local
+
+# Generated per-machine by the IWSDK dev plugin
+.mcp.json
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
