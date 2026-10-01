@@ -24,6 +24,7 @@ import {
   packTetherData,
 } from '../types';
 import { Ball, BallFlightState } from './BallSpawnSystem';
+import { PauseClock } from './GameStateSystem';
 
 /** AssetManifest key main.ts registers public/gltf/robot/robot.gltf under. */
 export const ROBOT_ASSET_KEY = 'robot';
@@ -97,7 +98,8 @@ export interface RingSpawnConfig {
 }
 
 /**
- * Pick one robot spawn point on the ring around the player.
+ * Pick one robot spawn point on the ring around the player — or, since the
+ * seated-play pass, on an arc of that ring in front of them.
  *
  * Pure and allocation-free (the caller owns `outVec3`) so the distribution can
  * be unit-tested without a World. The three `rand*` arguments are independent
@@ -106,10 +108,22 @@ export interface RingSpawnConfig {
  *
  * `outVec3` receives x/z as an **offset from the player**, and y as an
  * absolute height above the floor (the reference space is `local-floor`).
+ * Angles throughout are in this function's own convention: a direction at
+ * angle `a` is `(cos a, 0, sin a)`, so -Z (straight ahead at the origin) is
+ * -pi/2. {@link flatHeadingAngle} turns a head pose into one of these.
  *
- * Angles are index-based so `count` concurrent robots surround the player
- * evenly, plus up to ±½ slice × spawnAngleJitter of wander so successive
- * rounds do not look stamped from the same template.
+ * **Full ring** (`arcDeg >= 360`, the default): angles are index-based so
+ * `count` concurrent robots surround the player evenly, plus up to ±½ slice ×
+ * spawnAngleJitter of wander so successive rounds do not look stamped from the
+ * same template. `arcCenterRad` is ignored — a ring has no front — which keeps
+ * this path exactly what it was before the arc existed.
+ *
+ * **Arc** (`arcDeg < 360`): the arc `arcCenterRad ± arcDeg/2` is cut into
+ * `count` equal lanes and robot `index` stands at the middle of lane
+ * `index mod count`, plus the same jitter, clamped to at most a whole lane so
+ * no draw can ever leave the arc. Lane centres rather than lane starts, so the
+ * spread is symmetric about the player's facing and a single robot stands
+ * dead ahead.
  */
 export function ringSpawnPosition(
   index: number,
@@ -119,14 +133,108 @@ export function ringSpawnPosition(
   rand2: number,
   cfg: RingSpawnConfig,
   outVec3: Float32Array,
+  arcCenterRad = 0,
+  arcDeg = 360,
 ): void {
-  const slice = (Math.PI * 2) / Math.max(1, count);
-  const angle = index * slice + (rand0 - 0.5) * slice * cfg.spawnAngleJitter;
+  let angle: number;
+  // Written as a negated `<` so a NaN arc falls back to the full ring.
+  if (!(arcDeg < 360)) {
+    const slice = (Math.PI * 2) / Math.max(1, count);
+    angle = index * slice + (rand0 - 0.5) * slice * cfg.spawnAngleJitter;
+  } else {
+    const lanes = Math.max(1, count);
+    const arc = Math.max(0, arcDeg) * DEG_TO_RAD;
+    const slice = arc / lanes;
+    const lane = ((index % lanes) + lanes) % lanes;
+    const jitter = Math.min(1, Math.max(0, cfg.spawnAngleJitter));
+    angle =
+      arcCenterRad -
+      arc / 2 +
+      (lane + 0.5) * slice +
+      (rand0 - 0.5) * slice * jitter;
+  }
   const radius = cfg.ringMinR + rand1 * (cfg.ringMaxR - cfg.ringMinR);
 
   outVec3[0] = Math.cos(angle) * radius;
   outVec3[1] = cfg.heightMin + rand2 * (cfg.heightMax - cfg.heightMin);
   outVec3[2] = Math.sin(angle) * radius;
+}
+
+/** Straight ahead (-Z) in {@link ringSpawnPosition}'s angle convention. */
+export const FORWARD_HEADING_RAD = -Math.PI / 2;
+
+/**
+ * Which way a head is facing across the floor, as a ring angle
+ * (`(cos a, 0, sin a)`, see {@link ringSpawnPosition}).
+ *
+ * Pure: takes the head's world forward (its -Z axis) and up (+Y axis) as
+ * plain numbers, so it is testable without a matrix. The obvious answer —
+ * `atan2` of forward with Y dropped — falls apart exactly when the round
+ * starts with the player looking down at their wrist palette or up at a
+ * robot: forward's horizontal part shrinks to nothing and its direction turns
+ * into noise. So the up vector is blended in by how far the head is pitched:
+ * pitched down, the top of the head points the way the face does; pitched
+ * up, the back of the head does. `forward - forward.y * up` is exactly that
+ * blend, and at level pitch it is plain forward.
+ *
+ * @returns the heading angle, or `fallbackRad` when even the blend has no
+ *   horizontal extent (a degenerate or uninitialised pose).
+ */
+export function flatHeadingAngle(
+  forwardX: number,
+  forwardY: number,
+  forwardZ: number,
+  upX: number,
+  upZ: number,
+  fallbackRad: number = FORWARD_HEADING_RAD,
+): number {
+  const x = forwardX - forwardY * upX;
+  const z = forwardZ - forwardY * upZ;
+  if (!(x * x + z * z > 1e-8)) return fallbackRad;
+  return Math.atan2(z, x);
+}
+
+/**
+ * Push every set timestamp in `stamps` forward by `bySec`, in place.
+ *
+ * TargetSystem keeps its deadlines as absolute performance.now() seconds
+ * (`respawnAt`, `popStartedAt`, `hitFlashUntil`), and more than one code path
+ * stamps them off the raw clock (endTether pops a robot on its own), so
+ * freezing the robots cannot be done by switching to a private clock without
+ * touching every writer. Instead the clock keeps running and, on resume,
+ * every deadline is moved on by exactly the time spent paused: a robot that
+ * had 0.4 s left to respawn still has 0.4 s left.
+ *
+ * Entries `<= 0` are left alone — 0 is the "not set" value every slot is
+ * cleared to — so an idle slot never gains a phantom deadline.
+ *
+ * Pure and allocation-free.
+ */
+export function shiftTimestamps(stamps: Float64Array, bySec: number): void {
+  if (!(bySec > 0)) return;
+  for (let i = 0; i < stamps.length; i++) {
+    if (stamps[i] > 0) stamps[i] += bySec;
+  }
+}
+
+/**
+ * Re-phase a `sin(now * omega + phase)` oscillator so it carries on from
+ * where it froze instead of jumping by `pausedSec` worth of cycles.
+ *
+ * The hover bob reads the wall clock directly, so after a pause `now` is
+ * `pausedSec` later than when the robot stopped; subtracting
+ * `pausedSec * omega` from the phase cancels that out. Wrapped into
+ * [0, 2pi) so a long session of pauses never walks the phase off into
+ * large-float territory.
+ */
+export function rewindPhase(
+  phase: number,
+  pausedSec: number,
+  omega: number,
+): number {
+  const tau = Math.PI * 2;
+  const next = (phase - pausedSec * omega) % tau;
+  return next < 0 ? next + tau : next;
 }
 
 /**
@@ -306,6 +414,9 @@ export class TargetSystem extends createSystem({
   }
 
   update(delta: number) {
+    // Frozen while the session is out of focus; the frame that ends a freeze
+    // is spent re-basing the clocks rather than animating. @see holdForPause
+    if (this.holdForPause(delta)) return;
     if (!this.roundActive) return;
 
     const nowSec = performance.now() / 1000;
@@ -335,6 +446,74 @@ export class TargetSystem extends createSystem({
 
     if (this.targetsAlive.peek() !== this.aliveCount) {
       this.targetsAlive.value = this.aliveCount;
+    }
+  }
+
+  // ---- Pause / resume ------------------------------------------------------
+  //
+  // GameStateSystem owns the decision (it mirrors the session's visibility
+  // into the `paused` global); this file only has to make the robots honour
+  // it. While paused nothing here runs — no hover, no spin, no pop animation,
+  // no respawn, no hit test — and on the way out every absolute deadline is
+  // moved on by the time spent away, so the round resumes exactly where it
+  // stopped. Fields live beside the methods that own them.
+
+  /**
+   * The `paused` global, bound on first use. It is seeded before
+   * registerSystem like every other global, so the first update is as good a
+   * place to bind it as init(); keeping the binding here keeps the whole pause
+   * mechanism in one block. Undefined only in a World that never seeded it,
+   * where the robots simply never pause.
+   */
+  private pausedSignal: Signal<boolean> | undefined;
+  /** This system's view of game time. @see PauseClock */
+  private readonly pauseClock = new PauseClock();
+
+  /**
+   * The top-of-update guard.
+   *
+   * @returns true when this frame must not animate: either the game is paused,
+   *   or this is the frame a pause (or an unannounced stall longer than
+   *   GAME.pauseGapSec) just ended, which {@link resumeFromPause} spends
+   *   re-basing every deadline. Skipping that one frame also keeps its delta —
+   *   which spans the whole pause — out of the yaw drift.
+   */
+  private holdForPause(delta: number): boolean {
+    this.pausedSignal ??= this.globals.paused as Signal<boolean> | undefined;
+    const paused = this.pausedSignal?.peek() === true;
+    // How long the robots were frozen, if that ended on this frame — whether
+    // it was a real pause or a stall the visibility signal never saw.
+    const frozenSec = this.pauseClock.sync(
+      paused,
+      performance.now() / 1000,
+      delta,
+    );
+    if (paused) return true;
+    if (!(frozenSec > 0)) return false;
+
+    this.resumeFromPause(frozenSec);
+    return true;
+  }
+
+  /**
+   * Carry every clock-based piece of robot state across a pause of
+   * `pausedSec`: the three deadline arrays move forward by it, and the hover
+   * bob is re-phased so robots pick up mid-bob instead of snapping to wherever
+   * the sine would have been. Yaw drift and positions need nothing — they only
+   * advance when update() runs, and it did not.
+   */
+  private resumeFromPause(pausedSec: number): void {
+    shiftTimestamps(this.respawnAt, pausedSec);
+    shiftTimestamps(this.popStartedAt, pausedSec);
+    shiftTimestamps(this.hitFlashUntil, pausedSec);
+
+    const bobOmega = TARGETS.bobHz * Math.PI * 2;
+    for (let slot = 0; slot < this.slotBobPhase.length; slot++) {
+      this.slotBobPhase[slot] = rewindPhase(
+        this.slotBobPhase[slot],
+        pausedSec,
+        bobOmega,
+      );
     }
   }
 
@@ -578,9 +757,30 @@ export class TargetSystem extends createSystem({
     return true;
   }
 
-  /** Wake the pool for a fresh round. */
+  /**
+   * Middle of the spawn arc, as a ring angle (see {@link ringSpawnPosition}).
+   * Captured once per round in {@link beginRound}; respawns reuse it, so the
+   * arc stays put if the player glances around mid-round. Defaults to -Z.
+   */
+  private spawnArcCenter = FORWARD_HEADING_RAD;
+
+  /**
+   * Wake the pool for a fresh round, with the spawn arc facing the way the
+   * player is looking right now.
+   *
+   * The heading is read straight out of the head's world matrix — column 2 is
+   * +Z, so forward is its negation, and column 1 is up — which needs no
+   * scratch objects at all. Only yaw survives: {@link flatHeadingAngle}
+   * flattens the pose onto the floor, so starting a round while looking down
+   * at the wrist palette still faces the arc forward rather than at the floor.
+   */
   private beginRound(): void {
     if (!this.ensurePool()) return;
+
+    const head = this.player.head;
+    head.updateWorldMatrix(true, false);
+    const m = head.matrixWorld.elements;
+    this.spawnArcCenter = flatHeadingAngle(-m[8], -m[9], -m[10], m[4], m[6]);
 
     for (let slot = 0; slot < this.slots.length; slot++) {
       this.deactivate(slot);
@@ -645,11 +845,12 @@ export class TargetSystem extends createSystem({
    * as the angle, and the radius is the lever that usually saves a cramped
    * direction: a nearer draw simply fits where the far one did not.
    *
-   * Samples stay inside the slot's own angular band so the ring keeps its even
-   * spread and two robots never stack. If every sample is rejected — a
-   * genuinely tiny room — the roomiest direction seen wins and the robot stands
-   * at `ROOM.spawnMinDist`, which is at least somewhere the player can turn and
-   * hit.
+   * Samples stay inside the slot's own angular band — its lane of the
+   * `TARGETS.spawnArcDeg` arc in front of the player, or its slice of the full
+   * ring at 360 — so the spread stays even and two robots never stack. If
+   * every sample is rejected — a genuinely tiny room — the roomiest direction
+   * seen wins and the robot stands at `ROOM.spawnMinDist`, which is at least
+   * somewhere the player can turn and hit.
    *
    * Leaves the chosen unit direction in `this.spawnDirection` and returns the
    * distance along it, measured from the head.
@@ -657,7 +858,14 @@ export class TargetSystem extends createSystem({
   private pickRoomAwareSpawn(slot: number, count: number): number {
     const attempts = Math.max(1, ROOM.spawnAttempts);
     let bestWall = -1;
-    this.bestDirection.set(0, 0, -1);
+    // Last-ditch default: straight down the middle of the arc, i.e. wherever
+    // the player was facing when the round began. Only survives if no sample
+    // produced a usable direction at all.
+    this.bestDirection.set(
+      Math.cos(this.spawnArcCenter),
+      0,
+      Math.sin(this.spawnArcCenter),
+    );
 
     for (let attempt = 0; attempt < attempts; attempt++) {
       ringSpawnPosition(
@@ -668,6 +876,8 @@ export class TargetSystem extends createSystem({
         Math.random(),
         TARGETS,
         this.spawnOffset,
+        this.spawnArcCenter,
+        TARGETS.spawnArcDeg,
       );
 
       // ringSpawnPosition returns x/z relative to the player and y absolute,

@@ -1,4 +1,4 @@
-import { InputComponent, createSystem } from '@iwsdk/core';
+import { InputComponent, VisibilityState, createSystem } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
 import { CHILL, GAME } from '../config';
@@ -188,6 +188,167 @@ export class ComboTracker {
 }
 
 /**
+ * Does this visibility state mean the player can no longer see and act on the
+ * game? Everything but `Visible` does.
+ *
+ * `VisibleBlurred` is the Quest system menu (or any OS overlay): the scene is
+ * still drawn, dimmed, but input goes to the overlay. `Hidden` is the headset
+ * coming off or the browser backgrounding the session. `NonImmersive` is no
+ * session at all — the landing page, or a session that ended mid-round, which
+ * is a pause too: ENTER AR again and the round carries on.
+ */
+export function isFocusLost(state: VisibilityState): boolean {
+  return state !== VisibilityState.Visible;
+}
+
+/**
+ * The phases a pause actually freezes: the three that run on a clock.
+ *
+ * Idle and Chill have no clock to stop, so losing focus in them changes
+ * nothing visible — which matters for Chill in particular, whose status line
+ * HudSystem may have rewritten (ROTATE CANVAS) and must not be clobbered by a
+ * trip to the system menu.
+ */
+export function isTimedPhase(phase: GamePhase): boolean {
+  return (
+    phase === GamePhase.Countdown ||
+    phase === GamePhase.Playing ||
+    phase === GamePhase.GameOver
+  );
+}
+
+/**
+ * Wall-clock bookkeeping for a game that can be frozen.
+ *
+ * Pure and clock-injected like {@link ComboTracker}: every method takes
+ * `nowSec` (or a frame delta) from the caller, so a whole pause/resume cycle
+ * — including the frame that comes back after minutes with no warning — is
+ * unit-testable without timers or a World.
+ *
+ * Two jobs:
+ *
+ * 1. **Game time.** {@link now} is the wall clock minus every second spent
+ *    paused, and it stands still while paused. Anything that measures "how
+ *    long since X" against a timestamp it took from here (the combo window)
+ *    therefore cannot lapse while the player is in the system menu.
+ * 2. **Frame budget.** {@link consumeFrame} says how much of a frame's delta
+ *    the round clock may spend: none while paused, none on the first frame
+ *    back (its delta spans the pause), and none for a stall longer than
+ *    `gapSec` — the case where the session went hidden, the browser stopped
+ *    delivering frames, and no visibility change was ever observed. A stall
+ *    is credited to the paused total, so game time does not jump either.
+ *
+ * TargetSystem keeps its own instance and drives it through {@link sync},
+ * which reports how far to push its absolute deadlines on the frame a freeze
+ * ends.
+ */
+export class PauseClock {
+  /** Longest frame, seconds, that still counts as play. */
+  readonly gapSec: number;
+
+  private _paused = false;
+  private _pausedAtSec = 0;
+  private _pausedTotalSec = 0;
+  private _resumePending = false;
+
+  constructor(gapSec: number = GAME.pauseGapSec) {
+    this.gapSec = gapSec;
+  }
+
+  /** True between a pause() and the matching resume(). */
+  get paused(): boolean {
+    return this._paused;
+  }
+
+  /** Every second spent paused so far, completed pauses and stalls only. */
+  get pausedTotalSec(): number {
+    return this._pausedTotalSec;
+  }
+
+  /** Freeze. Idempotent: a second call does not move the pause start. */
+  pause(nowSec: number): void {
+    if (this._paused) return;
+    this._paused = true;
+    this._pausedAtSec = nowSec;
+  }
+
+  /**
+   * Unfreeze, banking the span just ended. Idempotent.
+   *
+   * @returns the seconds that pause lasted, or 0 when nothing was paused.
+   */
+  resume(nowSec: number): number {
+    if (!this._paused) return 0;
+    const span = Math.max(0, nowSec - this._pausedAtSec);
+    this._paused = false;
+    this._pausedTotalSec += span;
+    this._resumePending = true;
+    return span;
+  }
+
+  /**
+   * Game time in seconds: wall clock less every paused second. Frozen at the
+   * moment of the pause until resume() is called, then continuous with it.
+   */
+  now(nowSec: number): number {
+    return (this._paused ? this._pausedAtSec : nowSec) - this._pausedTotalSec;
+  }
+
+  /**
+   * The share of this frame's `delta` that game clocks may advance by. Call it
+   * exactly once per frame, paused or not.
+   *
+   * - **Paused:** 0.
+   * - **First frame after resume():** 0, once. That frame's delta was
+   *   measured across the pause; resume() already banked the time.
+   * - **Stall** (`delta > gapSec`): 0, and the delta is banked as paused time
+   *   so now() does not leap forward by it.
+   * - **Nonsense** (negative, NaN): 0.
+   * - Otherwise the delta, untouched.
+   */
+  consumeFrame(delta: number): number {
+    if (this._paused) return 0;
+    if (this._resumePending) {
+      this._resumePending = false;
+      return 0;
+    }
+    if (!(delta > 0)) return 0;
+    if (delta > this.gapSec) {
+      this._pausedTotalSec += delta;
+      return 0;
+    }
+    return delta;
+  }
+
+  /**
+   * The whole per-frame protocol for a system that polls `paused` rather than
+   * subscribing to visibility, and keeps its deadlines on the raw clock
+   * (TargetSystem): pause or resume to match, spend the frame, and report how
+   * much time just came out of the freeze.
+   *
+   * The report is the growth of {@link pausedTotalSec} across the call, which
+   * is what makes the awkward case come out right: a pause whose last frames
+   * were also a stall (blurred, then hidden, then back) is banked once by
+   * resume(), and the stall-sized delta on the resume frame is then discarded
+   * rather than banked a second time.
+   *
+   * @returns seconds to push every absolute deadline forward by — the span of
+   *   a pause that ended on this frame, or of a stall — or 0 on an ordinary
+   *   frame and on every frame that is still paused.
+   */
+  sync(paused: boolean, nowSec: number, delta: number): number {
+    if (paused) {
+      this.pause(nowSec);
+      return 0;
+    }
+    const before = this._pausedTotalSec;
+    this.resume(nowSec);
+    this.consumeFrame(delta);
+    return this._pausedTotalSec - before;
+  }
+}
+
+/**
  * Seconds → `m:ss`. Rounds up, so the last visible second is `0:01` and
  * `0:00` appears exactly when the round is over. Negatives clamp to `0:00`.
  */
@@ -222,12 +383,27 @@ function writeBestScore(score: number): void {
  * The referee: owns the phase machine, the round clock, the score, and the
  * combo. Every other system reacts to the signals this one writes.
  *
- * Writes `gamePhase`, `score`, `bestScore`, `combo`, `timeLeft` and the three
- * HUD strings (`hudScore`, `hudTimer`, `hudStatus`); reads `targetsAlive`.
+ * Writes `gamePhase`, `score`, `bestScore`, `combo`, `timeLeft`, `paused` and
+ * the three HUD strings (`hudScore`, `hudTimer`, `hudStatus`); reads
+ * `targetsAlive`.
  *
  * Runs at priority 30, i.e. after every event producer (BallFlightSystem at
  * 12, TargetSystem at 14) and before EventFlushSystem at 90, so scoring sees
  * a complete frame of events exactly once.
+ *
+ * ### Pause
+ *
+ * The competition brief asks for "clean pause/resume": open the Quest menu
+ * mid-round, come back, and the round is exactly where you left it. This
+ * system owns that decision. It mirrors `world.visibilityState` into the
+ * `paused` global (true whenever the session is not `Visible`), and while it
+ * is set the round clock, the countdown, the game-over timer and the combo
+ * window all stand still. TargetSystem freezes its robots off the same signal.
+ *
+ * The render loop writes visibilityState at the top of each frame, before
+ * any system updates, so the subscription below has already flipped `paused`
+ * by the time TargetSystem (priority 14) reads it — both systems freeze and
+ * thaw on the same frame regardless of priority.
  */
 export class GameStateSystem extends createSystem({}) {
   private events!: GameEventBuffer;
@@ -240,9 +416,12 @@ export class GameStateSystem extends createSystem({}) {
   private hudScore!: Signal<number>;
   private hudTimer!: Signal<string>;
   private hudStatus!: Signal<string>;
+  private paused!: Signal<boolean>;
 
   private comboTracker!: ComboTracker;
   private tick!: PhaseTick;
+  /** Game time and the per-frame budget. @see PauseClock */
+  private pauseClock!: PauseClock;
 
   private phaseElapsed = 0;
   /** Last whole second published to hudTimer — guards per-frame formatting. */
@@ -259,9 +438,11 @@ export class GameStateSystem extends createSystem({}) {
     this.hudScore = this.globals.hudScore as Signal<number>;
     this.hudTimer = this.globals.hudTimer as Signal<string>;
     this.hudStatus = this.globals.hudStatus as Signal<string>;
+    this.paused = this.globals.paused as Signal<boolean>;
 
     this.comboTracker = new ComboTracker(GAME.comboWindowSec, GAME.comboCap);
     this.tick = createPhaseTick();
+    this.pauseClock = new PauseClock();
 
     this.bestScore.value = readBestScore();
 
@@ -272,10 +453,30 @@ export class GameStateSystem extends createSystem({}) {
     this.hudScore.value = this.score.peek();
     this.publishTimer(this.timeLeft.peek());
     this.refreshStatus();
+
+    // Last, because subscribe() runs the callback immediately with the current
+    // state and applyFocus() reads the signals bound above. On the landing
+    // page that state is NonImmersive, so the game starts out paused and
+    // thaws the moment the immersive session becomes Visible.
+    this.cleanupFuncs.push(
+      this.world.visibilityState.subscribe((state) => this.applyFocus(state)),
+    );
   }
 
   update(delta: number) {
     const phase = this.gamePhase.peek();
+    // Spent every frame, paused or not, so the frame that ends a pause has its
+    // delta (which was measured across the pause) discarded exactly once.
+    const step = this.pauseClock.consumeFrame(delta);
+
+    if (this.paused.peek()) {
+      // Frozen: no clock, no countdown, no combo decay, no start button. The
+      // one thing still honoured is this frame's events — a ball already in
+      // the air when focus went can still land and paint, and the splat it
+      // leaves is on the wall either way, so its points count.
+      if (phase === GamePhase.Playing) this.scoreFrameEvents();
+      return;
+    }
 
     if (
       (phase === GamePhase.Idle || phase === GamePhase.GameOver) &&
@@ -287,7 +488,7 @@ export class GameStateSystem extends createSystem({}) {
 
     if (phase === GamePhase.Playing) {
       this.scoreFrameEvents();
-      if (this.comboTracker.decay(performance.now() / 1000)) {
+      if (this.comboTracker.decay(this.gameNowSec())) {
         this.combo.value = this.comboTracker.current;
       }
     }
@@ -296,7 +497,7 @@ export class GameStateSystem extends createSystem({}) {
       phase,
       this.phaseElapsed,
       this.timeLeft.peek(),
-      delta,
+      step,
       GAME,
       this.tick,
     );
@@ -443,7 +644,7 @@ export class GameStateSystem extends createSystem({}) {
           break;
 
         case GameEvent.TargetPopped: {
-          const multiplier = this.comboTracker.hit(performance.now() / 1000);
+          const multiplier = this.comboTracker.hit(this.gameNowSec());
           gained += GAME.scoreTargetHit * multiplier;
           if (this.comboTracker.current !== this.combo.peek()) {
             this.combo.value = this.comboTracker.current;
@@ -483,6 +684,36 @@ export class GameStateSystem extends createSystem({}) {
     );
   }
 
+  /**
+   * Mirror the session's focus into `paused`, and bank the time spent away.
+   *
+   * Runs from the visibilityState subscription, i.e. at the top of the frame
+   * the change was observed in, before any system's update — so TargetSystem
+   * sees the new `paused` on the same frame this system does.
+   *
+   * The status line is only rewritten in a timed phase. Idle's line is static
+   * anyway, and Chill's may be HudSystem's ROTATE CANVAS notice, which is
+   * meant to stay up for the rest of the visit and would otherwise be wiped by
+   * a trip to the system menu.
+   */
+  private applyFocus(state: VisibilityState): void {
+    const lost = isFocusLost(state);
+    const nowSec = performance.now() / 1000;
+    if (lost) this.pauseClock.pause(nowSec);
+    else this.pauseClock.resume(nowSec);
+
+    if (this.paused.peek() !== lost) this.paused.value = lost;
+    if (isTimedPhase(this.gamePhase.peek())) this.refreshStatus();
+  }
+
+  /**
+   * Seconds on the game clock: performance.now() less every paused second.
+   * What the combo window is measured against, so a combo survives the menu.
+   */
+  private gameNowSec(): number {
+    return this.pauseClock.now(performance.now() / 1000);
+  }
+
   /** Write hudTimer only when the displayed second actually changes. */
   private publishTimer(secondsLeft: number): void {
     const whole = Math.max(0, Math.ceil(secondsLeft));
@@ -493,7 +724,15 @@ export class GameStateSystem extends createSystem({}) {
 
   /** One line of context under the score, per phase. */
   private refreshStatus(): void {
-    switch (this.gamePhase.peek()) {
+    const phase = this.gamePhase.peek();
+    // A frozen round says so instead of its usual line. The normal copy comes
+    // back on its own: applyFocus() calls in here again when focus returns.
+    if (this.paused.peek() && isTimedPhase(phase)) {
+      this.hudStatus.value = GAME.pausedStatusText;
+      return;
+    }
+
+    switch (phase) {
       case GamePhase.Countdown:
         // '...', not '…' — the bundled MSDF font has no ellipsis glyph.
         this.hudStatus.value = 'Get ready...';

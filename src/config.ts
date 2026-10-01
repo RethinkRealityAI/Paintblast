@@ -166,6 +166,29 @@ export const GAME = {
   scoreTargetHit: 100,
   /** Points for painting the room (per splat) — rewards decorating, not just aim. */
   scoreWallSplat: 5,
+  /**
+   * HUD status line while a round is frozen because the headset lost focus —
+   * the Quest system menu is open, the headset came off, or the session ended
+   * mid-round. Replaces the Countdown / Playing line until focus returns, when
+   * the normal line comes straight back. ASCII only (MSDF font).
+   */
+  pausedStatusText: 'Paused - the round waits for you',
+  /**
+   * The longest single frame, seconds, that still counts as play time.
+   *
+   * The pause itself is driven by the session's visibility state, but a
+   * hidden session gets no frames at all — the browser simply stops calling
+   * back — so the first frame after the headset comes back can arrive with a
+   * delta of minutes and no visibility change ever having been seen. Any frame
+   * longer than this is treated as time spent paused instead: the round clock,
+   * the countdown, the combo window and every robot timer skip it.
+   *
+   * Half a second sits far above a real hitch (a shader compile is ~0.1-0.3 s,
+   * and that time WAS on screen) and far below any stall a player would call
+   * "I was away". Raise it if long hitches start eating round time; lower it
+   * and genuine hitches stop counting against the clock.
+   */
+  pauseGapSec: 0.5,
 } as const;
 
 /**
@@ -225,6 +248,25 @@ export const TARGETS = {
   hitFlashScale: 1.18,
   /** Seconds the shrink-to-nothing pop animation takes. */
   popDurationSec: 0.15,
+  /**
+   * Width of the arc robots spawn in, degrees, centred on the way the player
+   * is facing at the moment the round starts.
+   *
+   * The competition's "airplane seat" test is the reason this exists: on a
+   * full ring a seated player has to twist round to find the robot behind
+   * them, and in a real airplane seat they cannot. 150 is +/-75 degrees — every
+   * robot sits inside a comfortable head-and-shoulders turn with no torso
+   * rotation, while the outer lanes still make the player look left and right
+   * rather than stare straight ahead.
+   *
+   * The robots split the arc into equal lanes (spawnAngleJitter wanders inside
+   * a lane, never out of it), so narrowing it bunches them up; below ~90 with
+   * four robots they start to overlap at the near radius. 360 restores the
+   * original full ring around the player, which ignores facing entirely.
+   * Respawns reuse the arc captured at round start, so it does not chase the
+   * player's head mid-round.
+   */
+  spawnArcDeg: 150,
 } as const;
 
 /**
@@ -579,8 +621,12 @@ export const FLOOR = {
  * Chill mode: no clock, no robots, no score. Just you and a room to paint.
  */
 export const CHILL = {
-  /** Status line shown under the HUD while chilling. ASCII only (MSDF font). */
-  statusText: 'Hold trigger to spray. Tap the palette to change paint.',
+  /**
+   * Status line shown under the HUD while chilling. ASCII only (MSDF font).
+   * Names the pinch as well as the trigger: a hands-only player has no trigger
+   * to hold, and holding a pinch sprays exactly the same way.
+   */
+  statusText: 'Hold trigger or pinch to spray. Tap the palette to change paint.',
   /** Shown for the rest of the session after ROTATE CANVAS wipes the picture. */
   rotatedText: 'Canvas rotated - blank page, fresh start.',
   /** Loop ambient music while chilling. Set false for a silent studio. */

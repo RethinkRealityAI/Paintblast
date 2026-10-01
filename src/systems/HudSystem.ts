@@ -21,7 +21,7 @@ import {
   ammoLabel,
 } from '../types';
 import { EaselSystem } from './EaselSystem';
-import { GameStateSystem } from './GameStateSystem';
+import { GameStateSystem, isTimedPhase } from './GameStateSystem';
 import { SceneScanSystem } from './SceneScanSystem';
 import { SplatterSystem } from './SplatterSystem';
 
@@ -165,6 +165,8 @@ export class HudSystem extends createSystem({
   private webSubMode!: Signal<WebSubMode>;
   private activeColor!: Signal<readonly [number, number, number, number]>;
   private sceneScanMissing!: Signal<boolean>;
+  /** Session out of focus. Written by GameStateSystem. @see applyPaused */
+  private paused!: Signal<boolean>;
   private events!: GameEventBuffer;
 
   /**
@@ -190,6 +192,7 @@ export class HudSystem extends createSystem({
   private bestText?: HudElement;
   private ammoText?: HudElement;
   private ammoSwatch?: HudElement;
+  private pausedBanner?: HudElement;
 
   init() {
     this.gamePhase = this.globals.gamePhase as Signal<GamePhase>;
@@ -206,6 +209,7 @@ export class HudSystem extends createSystem({
       readonly [number, number, number, number]
     >;
     this.sceneScanMissing = this.globals.sceneScanMissing as Signal<boolean>;
+    this.paused = this.globals.paused as Signal<boolean>;
     this.events = this.globals.gameEvents as GameEventBuffer;
 
     this.cleanupFuncs.push(() => {
@@ -246,6 +250,7 @@ export class HudSystem extends createSystem({
       this.webSubMode.subscribe(() => this.applyAmmo()),
       this.activeColor.subscribe(() => this.applyAmmo()),
       this.sceneScanMissing.subscribe(() => this.applyScanNotice()),
+      this.paused.subscribe(() => this.applyPaused()),
     );
   }
 
@@ -267,6 +272,7 @@ export class HudSystem extends createSystem({
     this.bestText = element(document, 'hud-best');
     this.ammoText = element(document, 'hud-ammo');
     this.ammoSwatch = element(document, 'hud-ammo-swatch');
+    this.pausedBanner = element(document, 'hud-paused');
   }
 
   private releaseElements(): void {
@@ -286,6 +292,7 @@ export class HudSystem extends createSystem({
     this.bestText = undefined;
     this.ammoText = undefined;
     this.ammoSwatch = undefined;
+    this.pausedBanner = undefined;
   }
 
   /** START / CHILL MODE / PLAY AGAIN / SCAN ROOM / EXIT / paint buttons. */
@@ -561,7 +568,25 @@ export class HudSystem extends createSystem({
     // Lives inside the idle section, so it has to follow the phase as well as
     // its own signal.
     this.applyScanNotice();
+    // Same shape: shown for a phase AND a signal, so it follows both.
+    this.applyPaused();
     this.applyDock(phase);
+  }
+
+  /**
+   * The PAUSED pill across the top of the panel, up exactly while a timed
+   * phase (Countdown / Playing / GameOver) is frozen for lack of focus.
+   *
+   * A pill rather than only the status line because the status line is not on
+   * every timed screen — ROUND OVER has none — and because on Quest the most
+   * likely way to be looking at a paused HUD is through the dimmed scene
+   * behind the system menu, where a small grey line is easy to miss. Idle and
+   * Chill never show it: nothing in them is frozen, so there is nothing to
+   * announce.
+   */
+  private applyPaused(): void {
+    const show = this.paused.peek() && isTimedPhase(this.gamePhase.peek());
+    this.pausedBanner?.setProperties({ display: show ? 'flex' : 'none' });
   }
 
   /**
