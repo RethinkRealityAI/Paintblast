@@ -5,6 +5,7 @@ import {
   Mesh,
   SphereGeometry,
   MeshStandardMaterial,
+  MeshPhysicalMaterial,
   Color,
   Vector3,
   Quaternion,
@@ -25,7 +26,15 @@ import {
 import type { Entity, Material, Object3D } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
-import { BALLS, BALL_KIND_CONFIG, CHILL, FIRE, PALETTE, WEB } from '../config';
+import {
+  BALLS,
+  BALL_KIND_CONFIG,
+  CHILL,
+  FIRE,
+  PALETTE,
+  RENDER,
+  WEB,
+} from '../config';
 import {
   BallKind,
   BallStyle,
@@ -1060,9 +1069,23 @@ export class BallSpawnSystem extends createSystem({
   }
 
   /**
-   * One MeshStandardMaterial per palette colour, created on first use. Four
-   * entries in practice; sharing them is what keeps 20 live balls to a handful
-   * of draw-call state changes.
+   * One material per palette colour, created on first use. Five entries in
+   * practice (four dabs + webbing); sharing them is what keeps 20 live balls
+   * to a handful of draw-call state changes — and why balls are destroy()ed,
+   * never dispose()d.
+   *
+   * Round 7 made them read as wet paint: a low-roughness base under a
+   * clearcoat glaze (MeshPhysicalMaterial), so each ball carries a sharp
+   * highlight from the room IBL over a still-saturated colour. Every ball
+   * material sets the same feature flags (clearcoat on, nothing else), so all
+   * colours share ONE shader program — compiled once, on the first ball drawn.
+   * RENDER.ballClearcoat = 0 falls back to MeshStandardMaterial, whose program
+   * the palette dabs have already compiled.
+   *
+   * Webbing is identified by colour: WEB_BALL_COLOR is the only white that
+   * ever reaches here (resolveShot substitutes it for every web shot, and no
+   * palette dab is white). It gets a satin pearl instead — softer base, cooler
+   * white, a faint self-light so it never greys out in a dim room.
    */
   private getMaterial(
     color: readonly [number, number, number, number],
@@ -1070,11 +1093,45 @@ export class BallSpawnSystem extends createSystem({
     const key = `${color[0]},${color[1]},${color[2]}`;
     let material = this.materialCache.get(key);
     if (!material) {
-      material = new MeshStandardMaterial({
-        color: new Color(color[0], color[1], color[2]),
-        roughness: 0.4,
-        metalness: 0.0,
-      });
+      const web =
+        color[0] === WEB_BALL_COLOR[0] &&
+        color[1] === WEB_BALL_COLOR[1] &&
+        color[2] === WEB_BALL_COLOR[2];
+      const base = web
+        ? new Color(
+            RENDER.webBallColor[0],
+            RENDER.webBallColor[1],
+            RENDER.webBallColor[2],
+          )
+        : new Color(color[0], color[1], color[2]);
+      const roughness = web ? RENDER.webBallRoughness : RENDER.ballRoughness;
+
+      if (RENDER.ballClearcoat > 0) {
+        material = new MeshPhysicalMaterial({
+          color: base,
+          roughness,
+          metalness: 0,
+          clearcoat: RENDER.ballClearcoat,
+          clearcoatRoughness: web
+            ? RENDER.webBallClearcoatRoughness
+            : RENDER.ballClearcoatRoughness,
+        });
+      } else {
+        material = new MeshStandardMaterial({
+          color: base,
+          roughness,
+          metalness: 0,
+        });
+      }
+      // Emissive is a plain uniform on both material types (no shader
+      // variant), so the pearl's self-light costs nothing.
+      if (web) {
+        material.emissive.setRGB(
+          RENDER.webBallEmissive[0],
+          RENDER.webBallEmissive[1],
+          RENDER.webBallEmissive[2],
+        );
+      }
       this.materialCache.set(key, material);
     }
     return material;

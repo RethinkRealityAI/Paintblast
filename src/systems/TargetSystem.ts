@@ -11,10 +11,17 @@ import {
   createSystem,
   Types,
 } from '@iwsdk/core';
-import type { Entity, Intersection, Object3D } from '@iwsdk/core';
+import type {
+  Entity,
+  Intersection,
+  Material,
+  Mesh,
+  MeshStandardMaterial,
+  Object3D,
+} from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
-import { BALLS, ROOM, TARGETS } from '../config';
+import { BALLS, RENDER, ROOM, TARGETS } from '../config';
 import {
   BallStyle,
   GameEvent,
@@ -528,6 +535,82 @@ export class TargetSystem extends createSystem({
     // is a property of this export, not a guarantee. Box3 tells the truth for
     // whatever model is dropped in here next.
     const first = source.clone(true);
+
+    // Round 7 polish: a subtle holo rim on the silhouette and a little more
+    // environment light, so robots separate from a busy real room. Patched on
+    // the art's *materials*, which clone(true) shares between all pool slots
+    // (and which the GLTF shares between its 18 meshes), so it is one patch,
+    // one extra shader program, and a few ALU per robot fragment — no extra
+    // draw calls, no per-frame work.
+    //
+    // Must happen BEFORE the DepthOccludable components below: IWSDK's
+    // DepthSensingSystem (not registered today, so the tag is inert) wraps
+    // whatever onBeforeCompile it finds, so installing ours first means both
+    // injections would chain. The cache key names the patch and the current
+    // onBeforeCompile, so a material compiled before and after such a wrap can
+    // never share a program.
+    //
+    // `number`, widened from the config's literal type, so the "is it plain?"
+    // test still type-checks whatever value is tuned in.
+    const envBoost: number = RENDER.robotEnvBoost;
+    if (RENDER.robotRimStrength > 0 || envBoost !== 1) {
+      const f = (value: number) => value.toFixed(4);
+      const rim = RENDER.robotRimColor;
+      const rimGlsl = `vec3(${f(rim[0])}, ${f(rim[1])}, ${f(rim[2])})`;
+      const strength = f(RENDER.robotRimStrength);
+      const power = f(RENDER.robotRimPower);
+      const env = f(envBoost);
+      const cacheTag = `pb-robot-polish:${rimGlsl}:${strength}:${power}:${env}`;
+      const polish = (material: Material) => {
+        const standard = material as MeshStandardMaterial;
+        if (!standard.isMeshStandardMaterial) return;
+        if (standard.userData.paintblastPolish) return;
+        standard.userData.paintblastPolish = true;
+        standard.onBeforeCompile = (shader) => {
+          shader.fragmentShader = shader.fragmentShader
+            // `normal` and `vViewPosition` are both view space here, and
+            // `totalEmissiveRadiance` is still open for additions.
+            .replace(
+              '#include <emissivemap_fragment>',
+              [
+                '#include <emissivemap_fragment>',
+                '{',
+                '  float pbFacing = saturate( dot( normal, normalize( vViewPosition ) ) );',
+                `  totalEmissiveRadiance += ${rimGlsl} * ( ${strength} * pow( 1.0 - pbFacing, ${power} ) );`,
+                '}',
+              ].join('\n'),
+            )
+            // Scale the IBL contribution right after it is gathered, before
+            // the BRDF turns it into reflected light.
+            .replace(
+              '#include <lights_fragment_maps>',
+              [
+                '#include <lights_fragment_maps>',
+                '#if defined( RE_IndirectDiffuse )',
+                `  iblIrradiance *= ${env};`,
+                '#endif',
+                '#if defined( RE_IndirectSpecular )',
+                `  radiance *= ${env};`,
+                '#endif',
+              ].join('\n'),
+            );
+        };
+        standard.customProgramCacheKey = function (this: Material) {
+          return `${cacheTag}|${this.onBeforeCompile.toString()}`;
+        };
+        standard.needsUpdate = true;
+      };
+      first.traverse((child) => {
+        const material = (child as Mesh).material as
+          | Material
+          | Material[]
+          | undefined;
+        if (!material) return;
+        if (Array.isArray(material)) material.forEach(polish);
+        else polish(material);
+      });
+    }
+
     this.measureBox.setFromObject(first);
     this.measureBox.getSize(this.measureSize);
     this.measureBox.getCenter(this.measureCenter);
