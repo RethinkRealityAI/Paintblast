@@ -9,7 +9,7 @@ Production: **https://paintblast-mr.netlify.app** (Netlify `paintblast-mr`,
 linked folder). Player/tuning docs: [GAME_GUIDE.md](GAME_GUIDE.md). Historical
 specs: `docs/superpowers/specs/`.
 
-## Hard-won gotchas (verified against source across 6 rounds — do not relearn)
+## Hard-won gotchas (verified against source across 7 rounds — do not relearn)
 
 **elics / ECS**
 1. `entity.getValue()/setValue()` **THROW** on Vec2/Vec3/Vec4/Color fields — always `getVectorView()`.
@@ -35,17 +35,21 @@ specs: `docs/superpowers/specs/`.
 15. Hand joints: `this.input.visualAdapters.hand[side].jointTransforms` — 16 floats/joint, column-major, grip-space; tips at indices 9/14/19/24.
 16. WebXR grip frames are **right-handed on both hands** — left-side mounts mirror X, yaw and roll; pitch unchanged.
 17. `features.grabbing` must stay `{ useHandPinchForGrab: true }` — the boolean shorthand silently kills hand-pinch grabbing.
+18. **A tracked hand's grip −Z points at the THUMB, not forward** (spec: −Z along a held rod toward the thumb, X ⟂ back of hand, +Y up the arm). Never mount or aim off raw grip −Z — use `WristPose` (`src/wrist-pose.ts`): wrist joint frame for hands (−Z distal, +Y dorsal, same on both hands), target ray + mirrored grip X for controllers.
+19. `jointTransforms` are **grip-relative**; world = grip world × joint. The emulator does not mirror the right hand's grip offset, so trust joints, not the hand grip's axes.
+20. `World.create` never registers `DepthSensingSystem` — `DepthOccludable` is inert until you register it, and its occlusion shader ignores `instanceMatrix` (instanced splats would test at the field origin).
+21. Palette colour tuples are **sRGB**: build colours with `setRGB(r, g, b, SRGBColorSpace)` (or `srgbToLinear` for raw instance buffers), never `new Color(r, g, b)`. With `scene.environment` set, three overwrites per-material `envMapIntensity` with `scene.environmentIntensity`.
 
 **UI (UIKitML / uikit)**
-18. ASCII only in panel text — the bundled MSDF font lacks `· — × …`.
-19. Text via `setProperties({ text })`; show/hide via `display`; hover with `pointerenter/leave` (`pointerover/out` flicker); there is **no** `backgroundOpacity` — alpha rides in `rgba()` strings; no gradients.
-20. Panel resize goes through `PanelUI.maxWidth/maxHeight` (PanelUISystem cancels object3D scale). Docked follower uses behavior `'face-target'` — `pivot-y` **discards Y offsets**.
-21. Edit `ui/hud.uikitml` only; `public/ui/hud.json` is generated (dev server and build both recompile it).
+22. ASCII only in panel text — the bundled MSDF font lacks `· — × …`.
+23. Text via `setProperties({ text })`; show/hide via `display`; hover with `pointerenter/leave` (`pointerover/out` flicker); there is **no** `backgroundOpacity` — alpha rides in `rgba()` strings; no gradients.
+24. Panel resize goes through `PanelUI.maxWidth/maxHeight` (PanelUISystem cancels object3D scale). Docked follower uses behavior `'face-target'` — `pivot-y` **discards Y offsets**.
+25. Edit `ui/hud.uikitml` only; `public/ui/hud.json` is generated (dev server and build both recompile it).
 
 ## Build / test / troubleshoot workflow
 
 1. `npx tsc --noEmit` first — always, before any runtime testing.
-2. `npm test` — Vitest; pure-logic tests only (334 as of R6). New mechanics get pure exported helpers + tests (see `detectImpact`, `ringSpawnPosition`, `isThwipPose` for the pattern). `tests/__mocks__/iwsdk-core.ts` grows stubs as imports demand.
+2. `npm test` — Vitest; pure-logic tests only (497 as of R7). New mechanics get pure exported helpers + tests (see `detectImpact`, `ringSpawnPosition`, `isThwipPose` for the pattern). `tests/__mocks__/iwsdk-core.ts` grows stubs as imports demand.
 3. **Emulator drive** (the proof, per the owner's verify-before-shipping rule):
    check `xr_get_session_status` FIRST. If it fails: the dev server may be down
    or port-shifted — Vite wants **8083**; during agent sessions the MCP relay
@@ -62,6 +66,12 @@ specs: `docs/superpowers/specs/`.
    ~5 cm behind/below the device origin in IWER); ammo state via footer
    screenshots; splat counts via `ecs_query_entity` on the SplatterField
    (paint + web mirrors); `ecs_toggle_system` to isolate suspects.
+   **No MCP relay (cloud sessions)?** `npx vite --config vite.verify.config.ts`
+   (port 8090, no mkcert — its binary download is blocked by the proxy) +
+   `scripts/headless-verify.mjs`. Scripted IWER poses only stick after
+   `IWER_DEVICE.controlMode = 'programmatic'` (the DevUI rig overwrites them
+   otherwise); dev builds expose `window.__PB_WORLD` / `__PB_THREE`. Headless
+   SwiftShader runs ~5 fps: trust poses and screenshots, not timing.
 5. Runtime debugging: console via `browser_get_console_logs` with `count` only
    (no level filter); the collider census line; `ecs_snapshot`/`ecs_diff`
    around an action.
