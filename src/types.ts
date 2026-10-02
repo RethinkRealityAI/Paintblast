@@ -394,6 +394,15 @@ export const GameEvent = {
    * by hand deserves. `data` is {@link packTetherData}.
    */
   TetherPopped: 14,
+
+  // ---- Gauntlet blasters (round 8) -----------------------------------------
+  /**
+   * The gauntlets changed mode (HAND / BLASTER / WEB). Emitted by
+   * GauntletSystem as it starts the deploy/stow animation, so FeedbackSystem
+   * can put a click and a buzz under it. `data` is the new {@link BlasterMode};
+   * the position is unused (the cue is non-positional).
+   */
+  BlasterModeChanged: 15,
 } as const;
 
 export type GameEvent = typeof GameEvent[keyof typeof GameEvent];
@@ -621,4 +630,25 @@ export class AimTargets {
   clear(): void {
     this.active.fill(0);
   }
+}
+
+/**
+ * Where each hand's gauntlet launches from this frame (round 8).
+ *
+ * Written by GauntletSystem (priority 9) after it poses the hardware, read by
+ * BallSpawnSystem (11) when the trigger or pinch fires in BLASTER or WEB mode,
+ * so the shot leaves the barrel the player can see. A struct on
+ * `world.globals.gauntletMuzzles` rather than a system call for the same
+ * reason as {@link AimTargets}: GauntletSystem imports BallSpawnSystem (for
+ * the Ball component), and importing it back would close a module cycle.
+ *
+ * Index 0 = left hand, 1 = right; vectors are xyz triples.
+ */
+export class GauntletMuzzles {
+  /** 1 while that hand has a posed gauntlet whose mode launches from it. */
+  readonly valid = new Uint8Array(2);
+  /** World-space launch point (muzzle plus clearance), xyz per hand. */
+  readonly origin = new Float32Array(6);
+  /** Unit launch direction (the shown barrel's -Z), xyz per hand. */
+  readonly direction = new Float32Array(6);
 }

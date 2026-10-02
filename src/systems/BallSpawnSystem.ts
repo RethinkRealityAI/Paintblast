@@ -30,6 +30,7 @@ import type { Signal } from '@preact/signals-core';
 import {
   BALLS,
   BALL_KIND_CONFIG,
+  BLASTER,
   CHILL,
   FIRE,
   PALETTE,
@@ -48,6 +49,7 @@ import {
   GameEvent,
   GameEventBuffer,
   GamePhase,
+  GauntletMuzzles,
   WEB_BALL_COLOR,
   WebSubMode,
   nextWebSubMode,
@@ -276,6 +278,53 @@ export function canFireInPhase(
   );
 }
 
+/** How the trigger/pinch path fires this frame. Caller-owned. */
+export interface FireGate {
+  /** True: fire while held (getSelecting). False: once per press (getSelectStart). */
+  level: boolean;
+  /** Minimum milliseconds between shots from one hand. */
+  cooldownMs: number;
+}
+
+/** A default FireGate to hand to {@link resolveFireGate}. */
+export function createFireGate(): FireGate {
+  return { level: false, cooldownMs: 0 };
+}
+
+/**
+ * Decide how the trigger/pinch fires (round 8).
+ *
+ * - **BLASTER mode** auto-fires: hold to keep shooting at
+ *   `autoFireCooldownMs`, in every phase where firing is allowed at all.
+ * - **Chill** sprays on hold at `sprayCooldownMs`, whatever the mode.
+ * - Both at once: the shorter cooldown wins.
+ * - Otherwise one ball per press at `cooldownMs` (HAND and WEB — a held
+ *   pinch on a tethered hand reels instead, see WebShooterSystem).
+ *
+ * Pure apart from writing `out`; exported for tests.
+ */
+export function resolveFireGate(
+  mode: BlasterMode,
+  chilling: boolean,
+  cooldownMs: number,
+  sprayCooldownMs: number,
+  autoFireCooldownMs: number,
+  out: FireGate,
+): FireGate {
+  const auto = mode === BlasterMode.Paint;
+  out.level = chilling || auto;
+  if (chilling && auto) {
+    out.cooldownMs = Math.min(sprayCooldownMs, autoFireCooldownMs);
+  } else if (chilling) {
+    out.cooldownMs = sprayCooldownMs;
+  } else if (auto) {
+    out.cooldownMs = autoFireCooldownMs;
+  } else {
+    out.cooldownMs = cooldownMs;
+  }
+  return out;
+}
+
 /**
  * Paint one chip as selected or not: the swell, plus an emissive lift in the
  * chip's own identity colour.
@@ -464,6 +513,13 @@ export class BallSpawnSystem extends createSystem({
   // never holds entity references.
   private lastFireLeftMs = 0;
   private lastFireRightMs = 0;
+  /** Scratch for {@link resolveFireGate}, written once per frame. */
+  private readonly fireGate: FireGate = createFireGate();
+  /**
+   * Where each gauntlet launches from (round 8), written by GauntletSystem.
+   * Bound on first use: GauntletSystem creates it in its own init().
+   */
+  private gauntletMuzzles?: GauntletMuzzles;
   private selectedDabIndex = -1;
   private previousDabIndex = -1;
 
@@ -614,8 +670,17 @@ export class BallSpawnSystem extends createSystem({
     if (this.queries.hoveredUI.entities.size > 0) return;
 
     const nowMs = performance.now();
-    this.tryFire('left', nowMs, chilling);
-    this.tryFire('right', nowMs, chilling);
+    // Round 8: BLASTER mode holds-to-auto-fire; Chill sprays. @see resolveFireGate
+    resolveFireGate(
+      this.blasterMode.peek(),
+      chilling,
+      FIRE.cooldownMs,
+      CHILL.sprayCooldownMs,
+      BLASTER.autoFireCooldownMs,
+      this.fireGate,
+    );
+    this.tryFire('left', nowMs, this.fireGate);
+    this.tryFire('right', nowMs, this.fireGate);
   }
 
   /**
@@ -905,20 +970,20 @@ export class BallSpawnSystem extends createSystem({
    * Fire one ball from `side`'s pointing ray, if that hand asked to shoot this
    * frame and its cooldown has elapsed.
    *
-   * `spraying` switches the trigger from edge-triggered to level-triggered:
-   * every phase but Chill wants one ball per pull (getSelectStart), while Chill
-   * wants a held trigger to keep painting (getSelecting) on a much shorter
-   * cooldown. Both helpers cover the controller trigger AND the hand-tracking
-   * pinch, so spray works in either input mode.
+   * `gate.level` switches the trigger from edge-triggered to level-triggered:
+   * one ball per pull (getSelectStart), or a held trigger that keeps firing
+   * (getSelecting) — Chill's spray and, since round 8, BLASTER mode's
+   * auto-fire. Both helpers cover the controller trigger AND the hand-tracking
+   * pinch, so holding works in either input mode.
    */
   private tryFire(
     side: 'left' | 'right',
     nowMs: number,
-    spraying: boolean,
+    gate: FireGate,
   ): void {
     const gamepad = this.input.gamepads[side];
     if (!gamepad) return;
-    const wants = spraying ? gamepad.getSelecting() : gamepad.getSelectStart();
+    const wants = gate.level ? gamepad.getSelecting() : gamepad.getSelectStart();
     if (!wants) return;
 
     const hand = side === 'right' ? 1 : 0;
@@ -933,7 +998,7 @@ export class BallSpawnSystem extends createSystem({
     // left click on the panel never silences the right trigger.
     if (this.isPointingAtPanel(this.player.raySpaces[side])) return;
 
-    const cooldownMs = spraying ? CHILL.sprayCooldownMs : FIRE.cooldownMs;
+    const cooldownMs = gate.cooldownMs;
     const lastMs = side === 'left' ? this.lastFireLeftMs : this.lastFireRightMs;
     if (nowMs - lastMs < cooldownMs) return;
     if (side === 'left') {
@@ -1051,6 +1116,32 @@ export class BallSpawnSystem extends createSystem({
   }
 
   private fireFrom(side: 'left' | 'right', raySpace: Object3D): void {
+    // Round 8: with a gauntlet out (BLASTER or WEB), the shot leaves the
+    // barrel the player can see, along its shown aim — the same origin and
+    // direction the gestures use. HAND mode (or a hand GauntletSystem could
+    // not pose this frame) keeps the bare-hand ray, as since round 1.
+    const muzzles = (this.gauntletMuzzles ??= this.globals.gauntletMuzzles as
+      | GauntletMuzzles
+      | undefined);
+    const hand = side === 'right' ? 1 : 0;
+    if (
+      muzzles &&
+      muzzles.valid[hand] === 1 &&
+      this.blasterMode.peek() !== BlasterMode.Hand
+    ) {
+      const b = hand * 3;
+      this.launch(
+        side,
+        muzzles.origin[b],
+        muzzles.origin[b + 1],
+        muzzles.origin[b + 2],
+        muzzles.direction[b],
+        muzzles.direction[b + 1],
+        muzzles.direction[b + 2],
+      );
+      return;
+    }
+
     raySpace.getWorldPosition(this.scratchPosition);
     raySpace.getWorldQuaternion(this.scratchQuaternion);
     // XR ray spaces point along their LOCAL -Z; Object3D.getWorldDirection

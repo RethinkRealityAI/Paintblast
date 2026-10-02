@@ -1,7 +1,5 @@
 import {
   AssetManager,
-  Box3,
-  CapsuleGeometry,
   CircleGeometry,
   Color,
   CylinderGeometry,
@@ -26,13 +24,8 @@ import type { Entity, Object3D, Texture } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
 import { FIRE, WEB } from '../config';
-import {
-  drainReelQueue,
-  handMirror,
-  pullReel,
-  smoothingAlpha,
-} from '../wrist-frame';
-import { WristPose } from '../wrist-pose';
+import { drainReelQueue, pullReel } from '../wrist-frame';
+import { GauntletSystem } from './GauntletSystem';
 import {
   BallStyle,
   GameEvent,
@@ -53,25 +46,16 @@ import { PauseClock } from './GameStateSystem';
 import { WEB_SPLAT_TEXTURE_KEY } from './SplatterSystem';
 
 /**
- * Optional AssetManifest key for a modelled web shooter.
- *
- * Drop `public/gltf/web-shooter.glb` in and uncomment the manifest entry marked
- * ROUND4-WEBSHOOTER-ASSET in main.ts, and both wrists wear that model instead
- * of the primitive below. Same contract as the palette board and the easel: the
- * art is decorative, every behaviour is in code, and the fallback ships.
+ * Round 8: the hardware (and the optional GLB, its asset key and the band
+ * fit) moved to GauntletSystem. Re-exported here so main.ts's manifest and
+ * the round-5 tests keep finding them where they always did.
  */
-export const WEB_SHOOTER_ASSET_KEY = 'webShooter';
-
-const DEG_TO_RAD = Math.PI / 180;
-
-/** Gauntlet body — graphite, so the glowing cartridge and nozzle carry the read. */
-const SHOOTER_BODY_COLOR = '#262a33';
-/** Straps — a softer, rubbery near-black. */
-const SHOOTER_STRAP_COLOR = '#15171c';
-/** Trim rings and the nozzle collar. The same coral the HUD uses for web controls. */
-const SHOOTER_ACCENT_COLOR = '#ff6b6b';
-/** The cartridge window's glow while webbing is loaded. */
-const SHOOTER_WEB_GLOW = '#e9f4ff';
+export {
+  WEB_SHOOTER_ASSET_KEY,
+  createShooterFit,
+  fitShooterScale,
+} from './GauntletSystem';
+export type { ShooterFit } from './GauntletSystem';
 
 /**
  * Selector pad colours. The splat pad wears the same web-grey as the WEB chip
@@ -123,11 +107,6 @@ export const StrandState = {
 
 export type StrandState = typeof StrandState[keyof typeof StrandState];
 
-/** Marks one of the two wrist-mounted shooters. 0 = left hand, 1 = right. */
-export const WebShooter = createComponent('WebShooter', {
-  side: { type: Types.Int8, default: 0 },
-});
-
 /**
  * Marks one pooled strand. The live numbers live in TypedArrays on the system;
  * these mirror just enough for `ecs_find_entities` / `ecs_query_entity` to show
@@ -138,103 +117,6 @@ export const WebStrand = createComponent('WebStrand', {
   /** @see StrandState */
   state: { type: Types.Int8, default: StrandState.Free },
 });
-
-/** What {@link fitShooterScale} worked out. Caller-owned, so nothing allocates. */
-export interface ShooterFit {
-  /** Uniform scale to apply to the model. */
-  scale: number;
-  /** Axis the band's hole runs along: 0 = x, 1 = y, 2 = z. */
-  bandAxis: number;
-  /** Diameter, in model units, that `scale` was fitted against. */
-  bandSpan: number;
-  /** True when the length cap bound the result instead of the band target. */
-  cappedByLength: boolean;
-}
-
-/** A zero-filled ShooterFit to hand to {@link fitShooterScale}. */
-export function createShooterFit(): ShooterFit {
-  return { scale: 1, bandAxis: 0, bandSpan: 0, cappedByLength: false };
-}
-
-/**
- * Work out how much to shrink a web-shooter model, by finding its band.
- *
- * Round 4 fitted the model's **longest** axis to a target length, on the
- * assumption that a shooter is longer than it is wide. That is the wrong
- * measurement for a thing you wear: a wrist is a fixed size, so what decides
- * whether a cuff looks right is the diameter of its band, and the longest axis
- * of an arbitrary model is whatever happens to stick out furthest.
- *
- * Finding the band needs no metadata, only the bounding box. A band is a ring,
- * and a ring's bounding box has **two roughly equal large extents** — the plane
- * the ring lies in — and one smaller one along the hole. So: take the pair of
- * axes whose extents are closest in ratio, call the plane they span the band,
- * and call the leftover axis the hole. On the shipped GLB (0.73 x 1.85 x 1.90)
- * that picks y/z as the band and x as the hole, which is exactly right.
- *
- * `lengthMeters` is then a cap rather than the target: art that is genuinely
- * long and thin — a barrel, a gauntlet — would be scaled up absurdly by a band
- * fit, so if band-fitting would push the longest axis past the cap, the model
- * is length-fitted instead and `cappedByLength` says so.
- *
- * Pure apart from writing `out`, and free of IWSDK, so both branches are swept
- * in tests without a model.
- */
-export function fitShooterScale(
-  sizeX: number,
-  sizeY: number,
-  sizeZ: number,
-  bandMeters: number,
-  lengthMeters: number,
-  out: ShooterFit,
-): void {
-  const sx = Math.abs(sizeX) || 0;
-  const sy = Math.abs(sizeY) || 0;
-  const sz = Math.abs(sizeZ) || 0;
-  const longest = Math.max(sx, sy, sz);
-
-  // A degenerate model (a single point, an empty scene) has no band and no
-  // length; leave it alone rather than dividing by zero.
-  if (longest <= 0) {
-    out.scale = 1;
-    out.bandAxis = 0;
-    out.bandSpan = 0;
-    out.cappedByLength = false;
-    return;
-  }
-
-  // Ratio of the smaller extent to the larger, per pair — 1 means "these two
-  // are equal", which is what a ring's two in-plane extents look like.
-  const ratio = (a: number, b: number) => {
-    const hi = Math.max(a, b);
-    return hi > 0 ? Math.min(a, b) / hi : 0;
-  };
-  const yz = ratio(sy, sz);
-  const xz = ratio(sx, sz);
-  const xy = ratio(sx, sy);
-
-  let bandAxis: number;
-  let bandSpan: number;
-  if (yz >= xz && yz >= xy) {
-    bandAxis = 0;
-    bandSpan = Math.max(sy, sz);
-  } else if (xz >= xy) {
-    bandAxis = 1;
-    bandSpan = Math.max(sx, sz);
-  } else {
-    bandAxis = 2;
-    bandSpan = Math.max(sx, sy);
-  }
-
-  const bandScale = bandSpan > 0 ? bandMeters / bandSpan : lengthMeters / longest;
-  const lengthScale = lengthMeters / longest;
-  const capped = bandScale > lengthScale;
-
-  out.scale = capped ? lengthScale : bandScale;
-  out.bandAxis = bandAxis;
-  out.bandSpan = bandSpan;
-  out.cappedByLength = capped;
-}
 
 /** The four fingertip-to-wrist distances a thwip is judged on, in metres. */
 export interface ThwipPose {
@@ -421,23 +303,31 @@ export function forwardSpeed(
  *   pinky out;
  * - a **thrust**: shoving the hand forward along its own pointing axis.
  *
- * Plus the shooters themselves, the wrist sub-mode selector hanging off the
- * left one, and the strand pool. Strands are attached by watching Ball entities
- * appear rather than by the firing code asking for one — see the `webBalls`
- * query — so a web thrown by the trigger, the thwip or the thrust all trail
- * exactly the same thread, and BallSpawnSystem never has to import this system
- * back.
+ * Plus the wrist sub-mode selector and the strand pool. Strands are attached
+ * by watching Ball entities appear rather than by the firing code asking for
+ * one — see the `webBalls` query — so a web thrown by the trigger, the thwip
+ * or the thrust all trail exactly the same thread, and BallSpawnSystem never
+ * has to import this system back.
  *
- * Runs at priority 9 — after WristPaletteSystem (8), before BallSpawnSystem
- * (10). It must sit well above IWSDK's InputSystem (priority -4), which is what
- * refreshes the hand joint transforms this system classifies: at a lower
- * priority the gesture would be judged on last frame's fingers.
+ * ### What round 8 moved out
  *
- * Zero allocations in update(): the shooters, the strand pool, the per-hand
- * gates and every vector are built once in init().
+ * The hardware and the pose. GauntletSystem now owns both arms' WristPose,
+ * the smoothed aim frame, and every model (bracer, paint barrel, spinneret,
+ * hand plate) across the three blaster modes. This system reads the palm, the
+ * aim and the nozzle back through GauntletSystem's public API, and parents
+ * its selector pads into the left spinneret entity, so the pads ride the
+ * spinneret's deploy animation and hide with it.
+ *
+ * Runs at priority 10 — after GauntletSystem (9, which poses this frame's
+ * wrists), before BallSpawnSystem (11). It must sit well above IWSDK's
+ * InputSystem (priority -4), which is what refreshes the hand joint
+ * transforms this system classifies: at a lower priority the gesture would be
+ * judged on last frame's fingers.
+ *
+ * Zero allocations in update(): the strand pool, the per-hand gates and every
+ * vector are built once in init().
  */
 export class WebShooterSystem extends createSystem({
-  shooters: { required: [WebShooter] },
   strands: { required: [WebStrand] },
   // Every ball, so a web ball can be given its strand the instant it exists —
   // and so ANY shot from a hand can let go of whatever that hand was reeling.
@@ -449,17 +339,16 @@ export class WebShooterSystem extends createSystem({
   private events!: GameEventBuffer;
   private spawner?: BallSpawnSystem;
   private targets?: TargetSystem;
+  /** Pose, aim and nozzle source (round 8). Resolved lazily. */
+  private gauntlet?: GauntletSystem;
+  /** True once the selector pads hang off the left spinneret. */
+  private selectorBuilt = false;
 
   /**
-   * The two shooter entities and the strand pool. Fixed-length, built once,
-   * reused forever — object pools, not the ad-hoc entity tracking the ECS
-   * guidance warns about, and the same exception TargetSystem's robot pool
-   * makes.
+   * The strand pool. Fixed-length, built once, reused forever — an object
+   * pool, not the ad-hoc entity tracking the ECS guidance warns about, and the
+   * same exception TargetSystem's robot pool makes.
    */
-  private readonly shooterEntities: Array<Entity | undefined> = [
-    undefined,
-    undefined,
-  ];
   private readonly strandEntities: Entity[] = [];
   private readonly strandMaterials: MeshBasicMaterial[] = [];
   /** The web ball each busy strand is chasing. Cleared when the slot frees. */
@@ -558,33 +447,13 @@ export class WebShooterSystem extends createSystem({
   /** False until the anchor holds a real sample, per hand. */
   private thrustPrimed!: Uint8Array;
 
-  /**
-   * Round 7: each wrist's pose, rebuilt every frame from the wrist joint (hands)
-   * or the grip and target ray (controllers). See `src/wrist-pose.ts` for why
-   * the raw grip space is never used as a mount frame any more.
-   */
-  private wrists!: [WristPose, WristPose];
-  /**
-   * The shooter pose actually shown, per hand — the smoothed version of the
-   * wrist pose. Webs fire along the -Z of this, so the shot leaves along the
-   * barrel the player can see.
-   */
-  private shownPos!: [Vector3, Vector3];
-  private shownQ!: [Quaternion, Quaternion];
-  /** False until shown* holds a real pose for that hand (or after it was lost). */
-  private shownPrimed!: Uint8Array;
-  /**
-   * The cartridge window's material, shared by both gauntlets: it glows in the
-   * colour of whatever is loaded, which is the at-a-glance ammo readout on the
-   * device itself.
-   */
-  private cartridgeMaterial?: MeshStandardMaterial;
-
   // Scratch — reused every frame, never reallocated.
   /** This hand's palm position (the grip origin), written by stepHand. */
   private gripPosition!: Vector3;
-  private localOffset!: Vector3;
-  private targetPosition!: Vector3;
+  /**
+   * The direction every shot from this wrist takes: the shown barrel's -Z,
+   * read from GauntletSystem's smoothed aim frame.
+   */
   private forward!: Vector3;
   private muzzle!: Vector3;
   private ballPosition!: Vector3;
@@ -592,11 +461,6 @@ export class WebShooterSystem extends createSystem({
   private strandMidpoint!: Vector3;
   private strandOrientation!: Quaternion;
   private strandUp!: Vector3;
-  private measureBox!: Box3;
-  private measureSize!: Vector3;
-  private measureCentre!: Vector3;
-  /** Where the nozzle is, in world space. Written by {@link muzzleWorld}. */
-  private nozzle!: Vector3;
   /** Reel target: this hand's grip, rebuilt from `handPos` each frame. */
   private reelTarget!: Vector3;
   /** The tethered robot's current position. */
@@ -640,36 +504,26 @@ export class WebShooterSystem extends createSystem({
     this.thrustElapsed = new Float32Array(2);
     this.thrustPrimed = new Uint8Array(2);
 
-    this.wrists = [new WristPose('left'), new WristPose('right')];
-    this.shownPos = [new Vector3(), new Vector3()];
-    this.shownQ = [new Quaternion(), new Quaternion()];
-    this.shownPrimed = new Uint8Array(2);
-
     this.gripPosition = new Vector3();
-    this.localOffset = new Vector3();
-    this.targetPosition = new Vector3();
-    this.forward = new Vector3();
+    this.forward = new Vector3(0, 0, -1);
     this.muzzle = new Vector3();
     this.ballPosition = new Vector3();
     this.strandDirection = new Vector3();
     this.strandMidpoint = new Vector3();
     this.strandOrientation = new Quaternion();
     this.strandUp = new Vector3(0, 1, 0);
-    this.measureBox = new Box3();
-    this.measureSize = new Vector3();
-    this.measureCentre = new Vector3();
-    this.nozzle = new Vector3();
     this.reelTarget = new Vector3();
     this.tetherAnchor = new Vector3();
     this.headPosition = new Vector3();
 
-    this.buildShooters();
+    // GauntletSystem is registered first, so its spinnerets exist by now; if
+    // they do not (a different registration order), update() retries.
+    this.ensureSelector();
     this.buildStrandPool();
 
     this.cleanupFuncs.push(
       this.gamePhase.subscribe(() => this.applyArmedState()),
       this.activeStyle.subscribe(() => this.applyArmedState()),
-      this.webSubMode.subscribe(() => this.applyCartridgeGlow()),
       // Any ball, however it was fired, lets go of whatever that hand was
       // reeling — "the same hand fires again" is one of the five ways a tether
       // ends, and keying it off the ball appearing catches the trigger, the
@@ -691,9 +545,9 @@ export class WebShooterSystem extends createSystem({
 
     // Round 6 moved this gate from "is web ammo loaded" to "may anything be
     // fired at all". The gestures are a second trigger now, not a web feature,
-    // so they have to be read whatever the palette says — and the shooter
-    // holders have to keep tracking the wrist even while the models are hidden,
-    // because a paint thwip still fires from the same grip muzzle.
+    // so they have to be read whatever the palette says. (The hardware tracks
+    // the wrist in every phase; GauntletSystem owns that since round 8.)
+    if (!this.selectorBuilt) this.ensureSelector();
     if (!this.canFire()) return;
 
     const nowMs = performance.now();
@@ -733,7 +587,6 @@ export class WebShooterSystem extends createSystem({
     for (let hand = 0; hand < 2; hand++) {
       this.thrustPrimed[hand] = 0;
       this.handPrimed[hand] = 0;
-      this.shownPrimed[hand] = 0;
       this.reelQueue[hand] = 0;
     }
     return true;
@@ -753,9 +606,9 @@ export class WebShooterSystem extends createSystem({
   /**
    * Is web ammo loaded, in a phase that allows firing?
    *
-   * Narrower than {@link canFire}, and it governs only *hardware*: the wrist
-   * shooters and the selector gadget are web equipment, so they appear exactly
-   * when webbing is loaded. A paint thwip fires from the same invisible muzzle.
+   * Narrower than {@link canFire}. Since round 8 it no longer governs the
+   * hardware (GauntletSystem shows the spinneret by blaster mode); it decides
+   * whether strands and tethers may stay alive.
    */
   private armed(): boolean {
     return this.activeStyle.peek() === BallStyle.Web && this.canFire();
@@ -778,31 +631,27 @@ export class WebShooterSystem extends createSystem({
     nowMs: number,
     delta: number,
   ): void {
-    const wrist = this.wrists[hand];
-    // A disconnected controller or a hand that lost tracking leaves no pose;
-    // parking the shooter at its last pose beats snapping it to the world
-    // origin. Same guard WristPaletteSystem makes.
-    if (!wrist.update(this.player, this.input, WEB)) {
-      // Drop the thrust anchor, the velocity sample and the smoothing with it.
-      // A hand that loses tracking here and reappears somewhere else would
-      // otherwise be measured as having crossed that whole gap inside one
-      // sample window — metres per second of pure fiction, a web thrown at
-      // nothing and a robot hauled halfway across the room — and the shooter
-      // would visibly glide from the old pose to the new one.
+    const gauntlet = this.resolveGauntlet();
+    // A disconnected controller or a hand that lost tracking leaves no pose
+    // (GauntletSystem parks the hardware at its last one).
+    if (!gauntlet || !gauntlet.isPosed(hand)) {
+      // Drop the thrust anchor and the velocity sample. A hand that loses
+      // tracking here and reappears somewhere else would otherwise be measured
+      // as having crossed that whole gap inside one sample window — metres per
+      // second of pure fiction, a web thrown at nothing and a robot hauled
+      // halfway across the room.
       this.thrustPrimed[hand] = 0;
       this.handPrimed[hand] = 0;
       this.handTracked[hand] = 0;
-      this.shownPrimed[hand] = 0;
       return;
     }
 
-    this.gripPosition.copy(wrist.palm);
+    gauntlet.palmInto(hand, this.gripPosition);
     this.sampleHandMotion(hand, delta);
-    this.poseShooter(hand, delta);
     // The direction every shot from this wrist takes is the *shown* barrel's
     // -Z — smoothed, and identical to what the player sees. Round 6 used the
     // raw grip -Z, which on a tracked hand points at the thumb.
-    this.forward.set(0, 0, -1).applyQuaternion(this.shownQ[hand]);
+    gauntlet.aimInto(hand, this.forward);
 
     // The trigger is deliberately absent. It belongs to BallSpawnSystem, which
     // fires whatever the palette has loaded through the one firing path that
@@ -851,7 +700,6 @@ export class WebShooterSystem extends createSystem({
       if (jx * jx + jy * jy + jz * jz > jump * jump) {
         this.handPrimed[hand] = 0;
         this.thrustPrimed[hand] = 0;
-        this.shownPrimed[hand] = 0;
       }
     }
     if (this.handPrimed[hand] && delta > 0) {
@@ -871,48 +719,6 @@ export class WebShooterSystem extends createSystem({
     this.handPos[base + 2] = this.gripPosition.z;
     this.handPrimed[hand] = 1;
     this.handTracked[hand] = 1;
-  }
-
-  /**
-   * Pose this hand's shooter holder in the aim frame, smoothed.
-   *
-   * The holder's -Z **is** the aim (see {@link WristPose.aimQ}); the gauntlet
-   * is built along it, so the device lies down the forearm and its nozzle
-   * points exactly where webs go. The holder sits {@link WEB.shooterOffsetY}
-   * toward the palm side and {@link WEB.shooterOffsetZ} up the forearm from
-   * the wrist anchor. X mirrors per hand, as every X in this project does.
-   *
-   * Smoothing is a frame-rate-independent exponential with time constant
-   * {@link WEB.shooterSmoothingSec}: enough to kill hand-tracking shimmer, not
-   * enough to feel late. The first frame after (re)acquiring a hand snaps.
-   */
-  private poseShooter(hand: number, delta: number): void {
-    const wrist = this.wrists[hand];
-    this.localOffset
-      .set(
-        handMirror(hand) * WEB.shooterOffsetX,
-        WEB.shooterOffsetY,
-        WEB.shooterOffsetZ,
-      )
-      .applyQuaternion(wrist.aimQ);
-    this.targetPosition.copy(wrist.anchor).add(this.localOffset);
-
-    const shownPos = this.shownPos[hand];
-    const shownQ = this.shownQ[hand];
-    if (!this.shownPrimed[hand]) {
-      shownPos.copy(this.targetPosition);
-      shownQ.copy(wrist.aimQ);
-      this.shownPrimed[hand] = 1;
-    } else {
-      const alpha = smoothingAlpha(delta, WEB.shooterSmoothingSec);
-      shownPos.lerp(this.targetPosition, alpha);
-      shownQ.slerp(wrist.aimQ, alpha);
-    }
-
-    const object3D = this.shooterEntities[hand]?.object3D;
-    if (!object3D) return;
-    setWorldPosition(object3D, shownPos);
-    setWorldQuaternion(object3D, shownQ);
   }
 
   /**
@@ -1131,34 +937,27 @@ export class WebShooterSystem extends createSystem({
   }
 
   /**
-   * The nozzle in world space, written into `out`.
-   *
-   * {@link WEB.muzzleLocal} is a point in the holder's own frame, and the
-   * holder is aim-aligned (-Z = where webs go), so this is one matrix multiply. It has to be the
-   * holder's matrix rather than its world *position*: round 4 spawned webs at
-   * the shooter's origin, which was fine while the model was a symmetric block
-   * and wrong the moment a mount rotation moved the nozzle off-centre.
+   * Where a gesture shot is born (round 8): out of whichever launcher the
+   * blaster mode shows — the paint barrel in BLASTER, the spinneret nozzle
+   * otherwise (HAND mode fires from the same, invisible, nozzle round 7 did)
+   * — plus that launcher's clearance along the aim. Falls back to the palm.
    */
-  private muzzleWorld(hand: number, out: Vector3): boolean {
-    const object3D = this.shooterEntities[hand]?.object3D;
-    if (!object3D) return false;
-    const mirror = handMirror(hand);
-    out.set(
-      mirror * WEB.muzzleLocal[0],
-      WEB.muzzleLocal[1],
-      WEB.muzzleLocal[2],
-    );
-    object3D.updateWorldMatrix(true, false);
-    out.applyMatrix4(object3D.matrixWorld);
-    return true;
+  private muzzleFor(hand: number): void {
+    const gauntlet = this.resolveGauntlet();
+    if (gauntlet?.isPosed(hand)) {
+      gauntlet.shotOriginInto(hand, this.muzzle);
+      return;
+    }
+    this.muzzle
+      .copy(this.gripPosition)
+      .addScaledVector(this.forward, WEB.muzzleOffset);
   }
 
-  /** Where the web is born: out of the nozzle, then clear of the hand. */
-  private muzzleFor(hand: number): void {
-    if (!this.muzzleWorld(hand, this.muzzle)) {
-      this.muzzle.copy(this.gripPosition);
+  private resolveGauntlet(): GauntletSystem | undefined {
+    if (!this.gauntlet) {
+      this.gauntlet = this.world.getSystem(GauntletSystem);
     }
-    this.muzzle.addScaledVector(this.forward, WEB.muzzleOffset);
+    return this.gauntlet;
   }
 
   private resolveSpawner(): BallSpawnSystem | undefined {
@@ -1608,8 +1407,10 @@ export class WebShooterSystem extends createSystem({
     const side = hand === 0 ? 'left' : 'right';
     const grip = this.player?.gripSpaces?.[side];
 
-    if (this.muzzleWorld(hand, this.strandMidpoint)) {
-      // Nozzle found; nothing else to do.
+    const gauntlet = this.resolveGauntlet();
+    if (gauntlet) {
+      // The spinneret nozzle; parked at its last pose while tracking is lost.
+      gauntlet.nozzleInto(hand, this.strandMidpoint);
     } else if (grip) {
       grip.getWorldPosition(this.strandMidpoint);
     } else {
@@ -1671,18 +1472,16 @@ export class WebShooterSystem extends createSystem({
   // ---- Lifecycle -----------------------------------------------------------
 
   /**
-   * Shooters, the selector gadget and strands exist exactly while web ammo is
-   * loaded and firing is allowed. Both signals feed this, because either can
-   * turn it off: swapping to a paint chip, or the round ending under you.
+   * Strands and tethers exist exactly while web ammo is loaded and firing is
+   * allowed. Both signals feed this, because either can turn it off: swapping
+   * to a paint chip, or the round ending under you.
    *
-   * The shooter **holders** keep tracking the wrist either way — round 6's
-   * gestures fire paint from the same muzzle — so this only hides the models.
-   * Hiding the holder is how that is done, since the pads and the model hang
-   * off it and `updateWorldMatrix` works perfectly well on an invisible object.
+   * Since round 8 this no longer touches the hardware: GauntletSystem shows
+   * the spinneret (and the selector pads parented into it) by blaster mode.
    *
-   * Unloading also drops every tether and every strand immediately rather than
-   * letting them fade: a line hanging in mid-air off a wrist that no longer has
-   * a shooter on it is a bug the player can see.
+   * Unloading drops every tether and every strand immediately rather than
+   * letting them fade: a line hanging in mid-air off a wrist whose spinneret
+   * is stowing is a bug the player can see.
    *
    * Note the gesture *latches* are cold-started here but the gestures
    * themselves are not disabled — with paint loaded a thwip still fires paint.
@@ -1690,13 +1489,7 @@ export class WebShooterSystem extends createSystem({
    * from before the swap throwing a shot the player did not ask for.
    */
   private applyArmedState(): void {
-    const armed = this.armed();
-
-    for (const entity of this.queries.shooters.entities) {
-      if (entity.object3D) entity.object3D.visible = armed;
-    }
-
-    if (!armed) {
+    if (!this.armed()) {
       this.breakAllTethers();
       this.releaseAllStrands();
       for (let hand = 0; hand < 2; hand++) {
@@ -1710,77 +1503,32 @@ export class WebShooterSystem extends createSystem({
   // ---- Construction --------------------------------------------------------
 
   /**
-   * One shooter per forearm, hidden until web ammo is loaded.
+   * Hang the sub-mode selector off the LEFT spinneret, once GauntletSystem
+   * has built it.
    *
-   * Two nested groups, and the nesting is load-bearing. The **outer** holder is
-   * the entity, and {@link poseShooter} keeps it exactly aim-aligned (-Z is
-   * where webs go, +Y is the back of the hand), which is what makes
-   * {@link WEB.muzzleLocal} a point in a frame a tuner can picture. The
-   * **inner** mount carries the optional model rotation and the model's own
-   * re-seating, so re-hanging an imported GLB never moves the frame the muzzle
-   * is measured in.
-   *
-   * Round 7 ships the code-built gauntlet ({@link buildGauntlet}) by default.
-   * It is authored along -Z, so the mount angles are all zero and the device
-   * lies down the forearm by construction — the fix for "perpendicular to the
-   * wrist instead of parallel to the forearm". The GLB path stays behind
-   * {@link WEB.shooterUseGlb} for a future modelled replacement.
+   * One gadget, not two: it is a setting, and two of them would raise the
+   * question of what happens when they disagree. Left because that is already
+   * the arm the palette is strapped to, so "look at your left arm to change
+   * what you are firing" stays one habit rather than two.
    */
-  private buildShooters(): void {
-    for (let hand = 0; hand < 2; hand++) {
-      const holder = new Group();
-      holder.name = hand === 0 ? 'WebShooterLeft' : 'WebShooterRight';
-      holder.visible = false;
-
-      const mount = new Group();
-      mount.name = 'WebShooterMount';
-      // Order 'ZXY' composes as R = Rz * Rx * Ry, i.e. yaw first (in the
-      // model's own frame) and roll last (about the holder's Z, i.e. the
-      // forearm), which is what makes roll the knob that spins the device
-      // round the arm without disturbing anything else.
-      //
-      // The left hand is the right hand mirrored across x = 0, and reflecting
-      // a rotation through that plane negates the components about Y and Z and
-      // leaves the one about X alone. Hence: yaw and roll flip, pitch does not.
-      const mirror = handMirror(hand);
-      mount.rotation.set(
-        WEB.shooterPitchDeg * DEG_TO_RAD,
-        mirror * WEB.shooterYawDeg * DEG_TO_RAD,
-        mirror * WEB.shooterRollDeg * DEG_TO_RAD,
-        'ZXY',
-      );
-      const model =
-        (WEB.shooterUseGlb ? this.buildShooterModel() : undefined) ??
-        this.buildGauntlet();
-      mount.add(model);
-      holder.add(mount);
-
-      const entity = this.world
-        .createTransformEntity(holder, {
-          parent: this.world.sceneEntity,
-          persistent: true,
-        })
-        .addComponent(WebShooter, { side: hand });
-      this.shooterEntities[hand] = entity;
-
-      // The sub-mode selector rides the LEFT forearm only. One gadget, not
-      // two: it is a setting, and two of them would raise the question of what
-      // happens when they disagree. Left because that is already the arm the
-      // palette is strapped to, so "look at your left arm to change what you
-      // are firing" stays one habit rather than two.
-      if (hand === 0) this.buildModeSelector(entity);
-    }
+  private ensureSelector(): void {
+    if (this.selectorBuilt) return;
+    const spinneret = this.resolveGauntlet()?.spinneretEntity(0);
+    if (!spinneret) return;
+    this.buildModeSelector(spinneret);
+    this.selectorBuilt = true;
   }
 
   /**
-   * The wrist gadget: two mini pads floating just off the left cuff, one per
-   * {@link WebSubMode}.
+   * The wrist gadget: two mini pads floating just off the left spinneret, one
+   * per {@link WebSubMode}.
    *
-   * Parented **into the shooter holder**, so it inherits the forearm pose for
-   * free and hides with the shooter when paint is loaded — there is no
-   * sub-mode to choose without webbing on. It sits on the gauntlet's palm-side
-   * face, a little proud of it (see {@link WEB.selectorOffsetY}), which a
-   * supinated forearm turns straight toward the player's face.
+   * Parented **into the spinneret entity** (GauntletSystem's, round 8), so it
+   * inherits the forearm pose for free, rides the spinneret's deploy
+   * animation, and hides with it outside WEB mode — there is no sub-mode to
+   * choose without webbing on. It sits on the palm-side face, a little proud
+   * of it (see {@link WEB.selectorOffsetY}), which a supinated forearm turns
+   * straight toward the player's face.
    *
    * Each pad wears the same three pointer tags as a palette chip —
    * RayInteractable, PokeInteractable, OneHandGrabbable — so a fingertip poke,
@@ -1839,196 +1587,6 @@ export class WebShooterSystem extends createSystem({
       entity.addComponent(OneHandGrabbable, { rotate: false, translate: false });
       entity.addComponent(WebModePad, { mode });
     }
-  }
-
-  /**
-   * The `webShooter` GLB, measured and rescaled — the measure-the-art trick
-   * TargetSystem uses on the robot, so swapping the model never needs a code
-   * change.
-   *
-   * Round 4 fitted the **longest** axis to WEB.shooterLengthMeters and the
-   * field said the result was too small. {@link fitShooterScale} fits the
-   * **band** instead, because a wrist is a fixed size and the band is the part
-   * that has to go round it; length survives as a cap for art shaped nothing
-   * like a cuff. Returns undefined when no such asset is registered, which
-   * leaves the primitive block-and-nozzle in its place.
-   */
-  private buildShooterModel(): Object3D | undefined {
-    let source: Object3D | undefined;
-    try {
-      source = AssetManager.getGLTF(WEB_SHOOTER_ASSET_KEY)?.scene;
-    } catch {
-      // AssetManager not initialised, or the key is absent.
-      return undefined;
-    }
-    if (!source) return undefined;
-
-    const model = source.clone(true);
-    this.measureBox.setFromObject(model);
-    this.measureBox.getSize(this.measureSize);
-    this.measureBox.getCenter(this.measureCentre);
-
-    const measured = createShooterFit();
-    fitShooterScale(
-      this.measureSize.x,
-      this.measureSize.y,
-      this.measureSize.z,
-      WEB.shooterBandMeters,
-      WEB.shooterLengthMeters,
-      measured,
-    );
-    const fit = measured.scale;
-    model.scale.setScalar(fit);
-    // Re-seat the art so its centre is the mount's origin, whatever origin the
-    // exporter happened to choose — the mount rotation then spins it about its
-    // own middle rather than swinging it round on an arm.
-    model.position.set(
-      -this.measureCentre.x * fit,
-      -this.measureCentre.y * fit,
-      -this.measureCentre.z * fit,
-    );
-
-    const holder = new Group();
-    holder.name = 'WebShooterModel';
-    holder.add(model);
-    return holder;
-  }
-
-  /**
-   * The code-built shooter: a forearm gauntlet, authored in the holder's
-   * aim-aligned frame (round 7).
-   *
-   * Everything is laid along **-Z**, the direction webs fly, so the device
-   * cannot help but lie down the forearm and point where it shoots — the
-   * opposite of the round 4-6 ring cuff, whose hole had to be yawed onto an
-   * axis the hand-tracking grip did not even have. Parts, back to front:
-   *
-   * - two **straps**, rings sized to {@link WEB.shooterBandMeters} round the
-   *   forearm's axis (which, because the holder sits
-   *   {@link WEB.shooterOffsetY} toward the palm, is +|offsetY| above the
-   *   holder's origin) — what makes it read as *worn* rather than floating;
-   * - a graphite **body**, a capsule flattened against the arm;
-   * - a glowing **cartridge** window on its palm-side face, tinted by the
-   *   web sub-mode (white = splat, sky = tether), so the device itself says
-   *   what it will fire;
-   * - a tapered **nozzle** with a coral collar and a glowing tip ring — the
-   *   one part the player needs to find, and the exact end
-   *   {@link WEB.muzzleLocal} points at.
-   *
-   * Every material is lit PBR except the two glow parts, which share
-   * {@link cartridgeMaterial} so one write recolours both gauntlets.
-   * Geometries are built per call (twice at startup), never per frame.
-   */
-  private buildGauntlet(): Object3D {
-    const group = new Group();
-    group.name = 'WebShooterGauntlet';
-
-    const bodyRadius = 0.015;
-    const bodyStraight = Math.max(0.02, WEB.shooterLengthMeters - 0.04);
-    const bodyHalf = bodyStraight / 2 + bodyRadius;
-    const armAxisY = -WEB.shooterOffsetY;
-
-    const bodyMaterial = new MeshStandardMaterial({
-      color: new Color(SHOOTER_BODY_COLOR),
-      roughness: 0.32,
-      metalness: 0.55,
-    });
-    const strapMaterial = new MeshStandardMaterial({
-      color: new Color(SHOOTER_STRAP_COLOR),
-      roughness: 0.8,
-      metalness: 0.05,
-    });
-    const accentMaterial = new MeshStandardMaterial({
-      color: new Color(SHOOTER_ACCENT_COLOR),
-      roughness: 0.35,
-      metalness: 0.2,
-      emissive: new Color(SHOOTER_ACCENT_COLOR),
-      emissiveIntensity: 0.25,
-    });
-    if (!this.cartridgeMaterial) {
-      this.cartridgeMaterial = new MeshStandardMaterial({
-        color: new Color('#ffffff'),
-        roughness: 0.2,
-        metalness: 0,
-        emissive: new Color(SHOOTER_WEB_GLOW),
-        emissiveIntensity: 1.1,
-      });
-    }
-
-    // Body: a capsule (authored along +Y) laid along Z, flattened so it sits
-    // on the arm like a device rather than a pipe.
-    const bodyGeometry = new CapsuleGeometry(bodyRadius, bodyStraight, 4, 14);
-    bodyGeometry.rotateX(Math.PI / 2);
-    bodyGeometry.scale(1.25, 0.8, 1);
-    group.add(new Mesh(bodyGeometry, bodyMaterial));
-
-    // Cartridge window on the palm-side (-Y) face.
-    const cartridgeGeometry = new CapsuleGeometry(
-      0.0055,
-      bodyStraight * 0.55,
-      3,
-      10,
-    );
-    cartridgeGeometry.rotateX(Math.PI / 2);
-    const cartridge = new Mesh(cartridgeGeometry, this.cartridgeMaterial);
-    cartridge.position.set(0, -bodyRadius * 0.62, bodyStraight * 0.08);
-    group.add(cartridge);
-
-    // Nozzle: a cylinder (authored along +Y, narrow end up) tipped onto -Z.
-    const nozzleLength = 0.024;
-    const nozzleGeometry = new CylinderGeometry(0.0062, 0.0105, nozzleLength, 14);
-    nozzleGeometry.rotateX(-Math.PI / 2);
-    const nozzle = new Mesh(nozzleGeometry, bodyMaterial);
-    const nozzleCentreZ = -bodyHalf - nozzleLength / 2 + 0.003;
-    nozzle.position.set(0, 0, nozzleCentreZ);
-    group.add(nozzle);
-
-    // Coral collar where the nozzle meets the body, and a glowing ring at the
-    // tip. TorusGeometry lies in XY with its hole along Z, which is already
-    // the barrel's axis.
-    const collar = new Mesh(
-      new TorusGeometry(0.0118, 0.0024, 8, 24),
-      accentMaterial,
-    );
-    collar.position.set(0, 0, -bodyHalf + 0.002);
-    group.add(collar);
-
-    const tip = new Mesh(
-      new TorusGeometry(0.0062, 0.0016, 6, 20),
-      this.cartridgeMaterial,
-    );
-    tip.position.set(0, 0, nozzleCentreZ - nozzleLength / 2);
-    group.add(tip);
-
-    // Straps round the forearm's axis, one near each end of the body.
-    const strapGeometry = new TorusGeometry(
-      WEB.shooterBandMeters / 2,
-      0.004,
-      8,
-      40,
-    );
-    for (const z of [bodyHalf * 0.62, -bodyHalf * 0.5]) {
-      const strap = new Mesh(strapGeometry, strapMaterial);
-      strap.position.set(0, armAxisY, z);
-      group.add(strap);
-    }
-
-    return group;
-  }
-
-  /**
-   * Recolour the cartridge glow for the loaded web sub-mode. One shared
-   * material, so this is a single write for both gauntlets; called on a
-   * sub-mode change, never per frame.
-   */
-  private applyCartridgeGlow(): void {
-    const material = this.cartridgeMaterial;
-    if (!material) return;
-    material.emissive.set(
-      this.webSubMode.peek() === WebSubMode.Tether
-        ? SELECTOR_TETHER_COLOR
-        : SHOOTER_WEB_GLOW,
-    );
   }
 
   /**

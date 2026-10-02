@@ -57,11 +57,11 @@ import { EventFlushSystem } from './systems/EventFlushSystem';
 import { WorldCollisionSystem } from './systems/WorldCollisionSystem';
 import { FloorGuard, FloorGuardSystem } from './systems/FloorGuardSystem';
 import {
-  WebShooter,
   WebShooterSystem,
   WebStrand,
   WEB_SHOOTER_ASSET_KEY,
 } from './systems/WebShooterSystem';
+import { Gauntlet, GauntletSystem } from './systems/GauntletSystem';
 import { Target, TargetSystem, ROBOT_ASSET_KEY } from './systems/TargetSystem';
 import { GameStateSystem } from './systems/GameStateSystem';
 import { HudSystem } from './systems/HudSystem';
@@ -852,7 +852,7 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
     .registerComponent(Target)
     .registerComponent(Easel)
     .registerComponent(FloorGuard)
-    .registerComponent(WebShooter)
+    .registerComponent(Gauntlet)
     .registerComponent(WebStrand);
 
   // Signals first: registerSystem runs each System.init() synchronously, and
@@ -881,8 +881,13 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
     .registerSystem(FloorGuardSystem, { priority: 6 })
     .registerSystem(SceneScanSystem, { priority: 7 })
     .registerSystem(WristPaletteSystem, { priority: 8 })
-    .registerSystem(WebShooterSystem, { priority: 9 })
-    .registerSystem(BallSpawnSystem, { priority: 10 })
+    // Round 8: the gauntlets pose both arms first (9) and publish this frame's
+    // muzzles; gestures/strands (10) and the trigger (11) read them. Gauntlet
+    // must also be REGISTERED before WebShooter: its init builds the spinneret
+    // the web selector pads are parented into.
+    .registerSystem(GauntletSystem, { priority: 9 })
+    .registerSystem(WebShooterSystem, { priority: 10 })
+    .registerSystem(BallSpawnSystem, { priority: 11 })
     .registerSystem(BallFlightSystem, { priority: 12 })
     .registerSystem(TargetSystem, { priority: 14 })
     .registerSystem(SplatterSystem, { priority: 15 })

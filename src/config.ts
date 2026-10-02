@@ -926,11 +926,11 @@ export const WEB = {
   shooterOffsetZ: 0.05,
   /**
    * The nozzle tip, in the shooter holder's own (aim-aligned) frame, metres.
-   * Both the web's spawn point and the strand's near end come from here. On
-   * the gauntlet the tip is half a body length plus the nozzle forward of the
-   * device centre, on its axis.
+   * Both the web's spawn point and the strand's near end come from here.
+   * Round 8: the spinneret (GauntletSystem) puts its chrome needle's tip here
+   * — housing, collar, glowing cartridge, needle, all on this axis.
    */
-  muzzleLocal: [0, 0, -0.072] as [number, number, number],
+  muzzleLocal: [0, 0, -0.082] as [number, number, number],
   /** Metres past the nozzle that a web ball is born, so it clears the hand. */
   muzzleOffset: 0.09,
 
@@ -1569,5 +1569,76 @@ export const BLASTER = {
     { name: 'CHROME ICE', accent: '#48dbfb', trim: '#ffffff', shell: '#d7dde3' },
     { name: 'GOLD RUSH', accent: '#ffd23f', trim: '#ff7a3d', shell: '#2a2c33' },
   ] as ReadonlyArray<BlasterSkin>,
+
+  // ---- The hardware (round 8, GauntletSystem) ------------------------------
+  //
+  // Two pieces per arm. A forearm BRACER posed in the aim frame (-Z = where
+  // shots go, +Y = back of the hand, origin at the wrist joint) carrying the
+  // paint barrel + canister on top (BLASTER mode) or the web spinneret
+  // underneath (WEB mode; its offsets are WEB.shooterOffset*). And a
+  // back-of-hand PLATE posed in the hand's own wrist frame, so it rides the
+  // hand while the fingers stay free. HAND mode shows neither.
+  //
+  // X values are declared for the RIGHT hand and mirrored for the left.
+  /**
+   * Seconds for the gauntlet to deploy or stow when the mode changes. The
+   * panels slide, unfold and scale in over this; shots are never blocked by it.
+   */
+  transitionSec: 0.3,
+  /**
+   * BLASTER perk: hold the trigger / pinch to keep firing, one ball per this
+   * many milliseconds, in every phase where firing is allowed. (Chill already
+   * sprays; the shorter of the two cooldowns wins there.) Ball speed is still
+   * FIRE.speed — the wall-tunnelling cap (gotcha 22) does not move.
+   */
+  autoFireCooldownMs: 150,
+  /**
+   * The paint barrel's muzzle, metres, in the aim frame at the wrist joint
+   * (+Y = over the back of the wrist, -Z = toward the fingers). Trigger,
+   * pinch, thwip and thrust shots in BLASTER mode all leave from here.
+   */
+  muzzleLocal: [0, 0.058, -0.014] as [number, number, number],
+  /**
+   * Metres past the muzzle that a paint ball is born, so it clears the barrel
+   * and the knuckles. Smaller than FIRE.muzzleOffset because the barrel
+   * already sits forward of the hand.
+   */
+  muzzleOffset: 0.05,
+  /**
+   * The back-of-hand plate's centre in the WRIST-JOINT frame (tracked hands):
+   * +Y out of the back of the hand, -Z toward the knuckles.
+   */
+  plateOffsetHand: [0, 0.021, -0.048] as [number, number, number],
+  /**
+   * The same for controllers, whose "wrist" is assumed WEB.controllerWristBack
+   * behind the grip: the plate sits over the back of the hand holding it.
+   */
+  plateOffsetController: [0, 0.036, -0.062] as [number, number, number],
+  /**
+   * Controllers are held thumb-up, so the anatomical back of the hand faces
+   * outward and a barrel "over the wrist" would stick out sideways. Rolls the
+   * controller hardware (bracer, barrel, spinneret — not the hand plate) about
+   * the forearm by this many degrees (right hand; mirrored for the left). 90
+   * brings the barrel up over the thumb side and the spinneret underneath;
+   * 0 keeps it anatomical (barrel pointing out sideways).
+   */
+  controllerRollDeg: 90,
+  /** Metres the barrel kicks back up the forearm on each shot. */
+  recoilMeters: 0.012,
+  /** Degrees the barrel tips up on each shot. */
+  recoilPitchDeg: 6,
+  /** Time constant, seconds, of the recoil settling back. */
+  recoilDecaySec: 0.07,
+  /** Peak size multiplier of the muzzle glow pulse on a shot. */
+  muzzleFlashScale: 1,
+  /** Canister swirl, revolutions per second at rest (doubles briefly per shot). */
+  canisterSwirlHz: 0.35,
+  /** Canister glow breathing, Hz. Cheap: one shared-material write per frame. */
+  canisterPulseHz: 0.6,
+  /** Volume of the mode-change cue (deploying reuses the chime, stowing the UI click). */
+  modeSwitchVolume: 0.32,
+  /** Haptic pulse on both hands when the mode changes. */
+  modeSwitchHapticIntensity: 0.35,
+  modeSwitchHapticMs: 45,
 } as const;
 
