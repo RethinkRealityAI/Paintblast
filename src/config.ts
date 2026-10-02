@@ -345,7 +345,9 @@ export const HUD = {
    * would be compensated away and change nothing on screen.
    */
   baseWidth: 0.55,
-  baseHeight: 0.4,
+  // Round 8: 0.46 (was 0.4) - the techno-paint title is a two-column card
+  // that is nearly square, so height is what limits its size.
+  baseHeight: 0.46,
 
   /** Offset from the head, metres, in Idle / Countdown / GameOver. */
   menuOffset: [0, -0.02, -1.05],
@@ -642,7 +644,9 @@ export const PALETTE = {
   // with its dab edge pointing the way your fingers do. Readable in every
   // pose; reachable by the other index finger.
   /** Metres straight up (world +Y) from the left wrist joint to the board centre. */
-  handLift: 0.06,
+  // Round 8: 0.08 (was 0.06) so the board clears the gauntlet, which rides
+  // the palm side of the forearm and so faces up at the board when palm-up.
+  handLift: 0.08,
   /**
    * Metres along the forearm toward the fingers from the wrist joint. Out over
    * the hand rather than the wrist, so the board never covers the gauntlet's
