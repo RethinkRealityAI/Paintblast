@@ -467,6 +467,21 @@ export const PALETTE = {
    */
   grabSelectRadius: 0.09,
 
+  // ---- Launcher mode pads (round 8) -----------------------------------------
+  /** Radius of one HAND / BLASTER / WEB pad, metres. 2.6 cm across: a fingertip target. */
+  modePadRadius: 0.013,
+  /** Pad thickness, metres. */
+  modePadHeight: 0.006,
+  /** Centre-to-centre spacing of the three pads, metres. */
+  modePadSpacing: 0.036,
+  /**
+   * Where the pad row sits along the board's near-far axis (+ = near edge).
+   * Between the dab arc and the chip labels.
+   */
+  modePadRowOffset: -0.014,
+  /** Identity colours, HAND / BLASTER / WEB. */
+  modePadColors: ['#b8c2cc', '#ff4fb8', '#48dbfb'] as readonly string[],
+
   // ---- Hand tracking (round 7) ----------------------------------------------
   //
   // The four offsets and the tilt above were tuned on controllers, in the grip

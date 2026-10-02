@@ -23,6 +23,10 @@ import {
   unpackImpactRgb,
   unpackImpactStyle,
   srgbToLinear,
+  syncBlasterMode,
+  BlasterMode,
+  BLASTER_MODE_ORDER,
+  BLASTER_MODE_LABELS,
 } from '../../src/types';
 
 describe('BallKind', () => {
@@ -337,6 +341,41 @@ describe('srgbToLinear', () => {
         const v = colour[c];
         if (v > 0 && v < 1) expect(srgbToLinear(v)).toBeLessThan(v);
       }
+    }
+  });
+});
+
+describe('syncBlasterMode', () => {
+  it('web style always means web mode', () => {
+    expect(syncBlasterMode(BlasterMode.Hand, true, BlasterMode.Hand)).toBe(
+      BlasterMode.Web,
+    );
+  });
+
+  it('leaving web returns to the remembered paint mode', () => {
+    expect(syncBlasterMode(BlasterMode.Web, false, BlasterMode.Hand)).toBe(
+      BlasterMode.Hand,
+    );
+    expect(syncBlasterMode(BlasterMode.Web, false, BlasterMode.Paint)).toBe(
+      BlasterMode.Paint,
+    );
+  });
+
+  it('never returns to web as a paint mode', () => {
+    expect(syncBlasterMode(BlasterMode.Web, false, BlasterMode.Web)).toBe(
+      BlasterMode.Paint,
+    );
+  });
+
+  it('leaves a paint mode alone while style stays paint', () => {
+    expect(syncBlasterMode(BlasterMode.Hand, false, BlasterMode.Paint)).toBe(
+      BlasterMode.Hand,
+    );
+  });
+
+  it('has an ASCII label per mode, in pad order', () => {
+    for (const mode of BLASTER_MODE_ORDER) {
+      expect(/^[A-Z]+$/.test(BLASTER_MODE_LABELS[mode])).toBe(true);
     }
   });
 });

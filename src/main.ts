@@ -48,6 +48,7 @@ import {
   PaintDab,
   KindChip,
   WebModePad,
+  BlasterModePad,
   BallSpawnSystem,
   SELECTED_SLOT_SCALE,
 } from './systems/BallSpawnSystem';
@@ -88,10 +89,27 @@ import {
   GameEventBuffer,
   WebSubMode,
   AimTargets,
+  BlasterMode,
+  BLASTER_MODE_LABELS,
+  BLASTER_MODE_ORDER,
 } from './types';
 import type { PaletteChipSpec } from './types';
 
 const DEG_TO_RAD = Math.PI / 180;
+
+/** localStorage key for the gauntlet skin index (round 8). */
+export const BLASTER_SKIN_STORAGE_KEY = 'paintblast.blasterSkin';
+
+/** The stored skin index, or 0. Never throws (private mode, blocked storage). */
+function readStoredSkin(): number {
+  try {
+    const raw = window.localStorage.getItem(BLASTER_SKIN_STORAGE_KEY);
+    const n = raw === null ? 0 : Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
 
 /**
  * Seeds every world.globals signal the game reads.
@@ -132,6 +150,14 @@ function seedGlobals(world: World) {
   // activeStyle is Web, chosen on the two-pad selector above the left shooter
   // or with the right controller's B button. BallSpawnSystem owns every write.
   globals.webSubMode = signal<WebSubMode>(INITIAL_PALETTE_SELECTION.subMode);
+  // Round 8: which launcher the gauntlets are in (HAND / BLASTER / WEB), and
+  // which cosmetic skin they wear. BallSpawnSystem keeps blasterMode and
+  // activeStyle in sync (Web <=> Web); the skin is picked in the Armory and
+  // persisted per device.
+  globals.blasterMode = signal<BlasterMode>(
+    INITIAL_PALETTE_SELECTION.blasterMode,
+  );
+  globals.blasterSkin = signal<number>(readStoredSkin());
 
   // Bitmask of hands currently holding a tether: bit 0 left, bit 1 right.
   // TargetSystem owns the writes (it owns the tether); BallSpawnSystem reads it
@@ -523,6 +549,53 @@ function seedWristPalette(world: World) {
       rootGroup.add(label);
     }
   }
+
+  // ---- Launcher mode pads (round 8): HAND / BLASTER / WEB -------------------
+  //
+  // Three pads across the middle of the board, between the dab arc and the
+  // chip labels. Same three pointer tags as everything else on the palette;
+  // BallSpawnSystem selects and relights them from globals.blasterMode.
+  const modeCount = BLASTER_MODE_ORDER.length;
+  const modeGeometry = new CylinderGeometry(
+    PALETTE.modePadRadius,
+    PALETTE.modePadRadius,
+    PALETTE.modePadHeight,
+    24,
+  );
+  for (let i = 0; i < modeCount; i++) {
+    const mode = BLASTER_MODE_ORDER[i];
+    const accent = new Color(PALETTE.modePadColors[i]);
+    const mesh = new Mesh(
+      modeGeometry,
+      new MeshStandardMaterial({
+        color: accent,
+        roughness: 0.3,
+        metalness: 0.2,
+        emissive: accent.clone(),
+        emissiveIntensity: 0,
+      }),
+    );
+    const x = (i - (modeCount - 1) / 2) * PALETTE.modePadSpacing;
+    mesh.position.set(
+      x,
+      PALETTE.boardThickness / 2 + PALETTE.modePadHeight / 2,
+      PALETTE.modePadRowOffset,
+    );
+    makePressable(mesh).addComponent(BlasterModePad, { mode });
+
+    const label = buildChipLabel(BLASTER_MODE_LABELS[mode]);
+    if (label) {
+      label.position.set(
+        x,
+        PALETTE.boardThickness / 2 + PALETTE.chipLabelLift,
+        PALETTE.modePadRowOffset +
+          PALETTE.modePadRadius +
+          PALETTE.chipLabelGap +
+          PALETTE.chipLabelHeight / 2,
+      );
+      rootGroup.add(label);
+    }
+  }
 }
 
 /**
@@ -776,6 +849,7 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
     // Built by WebShooterSystem.init() during registerSystem below, so it has
     // to be known to the ECS before that runs.
     .registerComponent(WebModePad)
+    .registerComponent(BlasterModePad)
     .registerComponent(PaletteRoot)
     .registerComponent(SplatterField)
     .registerComponent(Target)

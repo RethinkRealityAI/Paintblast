@@ -67,6 +67,65 @@ export const WebSubMode = {
 export type WebSubMode = typeof WebSubMode[keyof typeof WebSubMode];
 
 /**
+ * Which launcher the player's gauntlets are in (round 8). The fourth loadout
+ * axis, chosen on the palette's mode pads (HAND / BLASTER / WEB) and in the
+ * Armory.
+ *
+ * - **Hand**: no hardware. Paint flies from the bare hand along the pointer —
+ *   the original game, kept for players who want nothing on their arms.
+ * - **Paint**: the paint-blaster gauntlet. Same paint, a visible launcher with
+ *   a canister glowing in the loaded colour, and hold-to-auto-fire.
+ * - **Web**: the web gauntlet. Exactly equivalent to `activeStyle === Web`;
+ *   BallSpawnSystem keeps the two in sync whichever one is written.
+ */
+export const BlasterMode = {
+  Hand: 0,
+  Paint: 1,
+  Web: 2,
+} as const;
+
+export type BlasterMode = typeof BlasterMode[keyof typeof BlasterMode];
+
+/** Labels for the mode pads and the HUD. ASCII caps (gotcha 24). */
+export const BLASTER_MODE_LABELS: Readonly<Record<BlasterMode, string>> = {
+  [BlasterMode.Hand]: 'HAND',
+  [BlasterMode.Paint]: 'BLASTER',
+  [BlasterMode.Web]: 'WEB',
+};
+
+/** Mode pads on the palette, left to right. */
+export const BLASTER_MODE_ORDER: ReadonlyArray<BlasterMode> = [
+  BlasterMode.Hand,
+  BlasterMode.Paint,
+  BlasterMode.Web,
+];
+
+/**
+ * Where a palette/HUD/style change leaves the blaster mode and the paint
+ * style — the single rule every writer goes through, so the two axes can
+ * never disagree.
+ *
+ * - Picking WEB (pad, chip or the title button) means Web style.
+ * - Picking HAND or BLASTER means Paint style, and remembers it as the mode
+ *   to return to.
+ * - Going back to paint any other way (a dab, a paint chip) returns to the
+ *   remembered paint mode, never to Hand by surprise.
+ *
+ * Pure and exported for tests.
+ */
+export function syncBlasterMode(
+  mode: BlasterMode,
+  styleIsWeb: boolean,
+  lastPaintMode: BlasterMode,
+): BlasterMode {
+  if (styleIsWeb) return BlasterMode.Web;
+  if (mode === BlasterMode.Web) {
+    return lastPaintMode === BlasterMode.Web ? BlasterMode.Paint : lastPaintMode;
+  }
+  return mode;
+}
+
+/**
  * The other sub-mode. The B button and the two selector pads both come down to
  * this, so "what does the toggle do" has exactly one answer.
  *
@@ -254,6 +313,8 @@ export const INITIAL_PALETTE_SELECTION = {
    * be a decision, not an ambush the first time you load the WEB chip.
    */
   subMode: WebSubMode.Splat,
+  /** Round 8: the paint blaster is what people came for. */
+  blasterMode: BlasterMode.Paint as BlasterMode,
 } as const;
 
 // Round state machine. Stored as a signal on world.globals.gamePhase and read

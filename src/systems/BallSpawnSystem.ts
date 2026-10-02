@@ -38,8 +38,11 @@ import {
 } from '../config';
 import { pickAssistedAim } from '../wrist-frame';
 import type { AimAssistConfig } from '../wrist-frame';
+import { signal } from '@preact/signals-core';
 import {
   AimTargets,
+  BlasterMode,
+  syncBlasterMode,
   BallKind,
   BallStyle,
   GameEvent,
@@ -166,6 +169,16 @@ export const KindChip = createComponent('KindChip', {
 export const WebModePad = createComponent('WebModePad', {
   /** @see WebSubMode */
   mode: { type: Types.Int8, default: WebSubMode.Splat },
+});
+
+/**
+ * One of the palette's three launcher pads — HAND / BLASTER / WEB (round 8).
+ * Built in main.ts's `seedWristPalette`; pressed, proximity-selected and
+ * relit here with the dabs and chips, through the same paths.
+ */
+export const BlasterModePad = createComponent('BlasterModePad', {
+  /** @see BlasterMode */
+  mode: { type: Types.Int8, default: BlasterMode.Paint },
 });
 
 /** Scale applied to the currently selected paint dab / ammo chip. */
@@ -371,6 +384,8 @@ export class BallSpawnSystem extends createSystem({
   // landed it.
   pads: { required: [WebModePad] },
   pressedPads: { required: [WebModePad, Pressed] },
+  modePads: { required: [BlasterModePad] },
+  pressedModePads: { required: [BlasterModePad, Pressed] },
   // Anything under a pointer that is not a ball or part of the palette blocks
   // the trigger, so clicking UI never also fires.
   //
@@ -386,7 +401,7 @@ export class BallSpawnSystem extends createSystem({
   // it would lock BOTH triggers for the whole session.
   hoveredUI: {
     required: [Interactable, Hovered],
-    excluded: [Ball, PaintDab, KindChip, WebModePad],
+    excluded: [Ball, PaintDab, KindChip, WebModePad, BlasterModePad],
   },
   // PanelUI panels run their own pointer pipeline and never receive the
   // Hovered tag, so pointing at the HUD is tested geometrically per shot
@@ -409,6 +424,10 @@ export class BallSpawnSystem extends createSystem({
   private activeStyle!: Signal<BallStyle>;
   private activeColor!: Signal<readonly [number, number, number, number]>;
   private webSubMode!: Signal<WebSubMode>;
+  /** Round 8: HAND / BLASTER / WEB, kept in sync with activeStyle here. */
+  private blasterMode!: Signal<BlasterMode>;
+  /** The paint mode (Hand or Paint) to return to when leaving Web. */
+  private lastPaintMode: BlasterMode = BlasterMode.Paint;
   /**
    * Bitmask of hands currently holding a tether: bit 0 left, bit 1 right.
    * Written by TargetSystem, read here only to keep a reeling squeeze from
@@ -465,6 +484,9 @@ export class BallSpawnSystem extends createSystem({
       readonly [number, number, number, number]
     >;
     this.webSubMode = this.globals.webSubMode as Signal<WebSubMode>;
+    this.blasterMode =
+      (this.globals.blasterMode as Signal<BlasterMode> | undefined) ??
+      signal<BlasterMode>(BlasterMode.Paint);
     this.tetheredHands = this.globals.tetheredHands as Signal<number>;
     this.gamePhase = this.globals.gamePhase as Signal<GamePhase>;
     this.events = this.globals.gameEvents as GameEventBuffer;
@@ -510,6 +532,32 @@ export class BallSpawnSystem extends createSystem({
       this.queries.pressedChips.subscribe('qualify', (chip) => {
         this.consumeActivePinches();
         this.selectChip(chip);
+      }),
+      this.queries.modePads.subscribe('qualify', () =>
+        this.applyModePadHighlight(),
+      ),
+      this.queries.pressedModePads.subscribe('qualify', (pad) => {
+        this.consumeActivePinches();
+        this.selectBlasterMode(
+          (pad.getValue(BlasterModePad, 'mode') ??
+            BlasterMode.Paint) as BlasterMode,
+        );
+      }),
+      // The two axes stay in sync whoever writes either: the palette's WEB
+      // chip, the HUD's WEB MODE button and a dab all write activeStyle; the
+      // mode pads and the Armory write blasterMode. @see syncBlasterMode
+      this.activeStyle.subscribe((style) => {
+        const next = syncBlasterMode(
+          this.blasterMode.peek(),
+          style === BallStyle.Web,
+          this.lastPaintMode,
+        );
+        if (next !== this.blasterMode.peek()) this.blasterMode.value = next;
+      }),
+      this.blasterMode.subscribe((mode) => {
+        if (mode !== BlasterMode.Web) this.lastPaintMode = mode;
+        this.loadStyle(mode === BlasterMode.Web ? BallStyle.Web : BallStyle.Paint);
+        this.applyModePadHighlight();
       }),
       this.queries.pressedPads.subscribe('qualify', (pad) => {
         this.consumeActivePinches();
@@ -710,6 +758,25 @@ export class BallSpawnSystem extends createSystem({
         bestDab = undefined;
         bestChip = undefined;
       }
+    }
+
+    let bestModePad: Entity | undefined;
+    for (const pad of this.queries.modePads.entities) {
+      const object3D = pad.object3D;
+      if (!object3D || !visibleInWorld(object3D)) continue;
+      object3D.getWorldPosition(this.scratchElementPosition);
+      const distSq = this.scratchElementPosition.distanceToSquared(point);
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        bestModePad = pad;
+      }
+    }
+    if (bestModePad) {
+      this.selectBlasterMode(
+        (bestModePad.getValue(BlasterModePad, 'mode') ??
+          BlasterMode.Paint) as BlasterMode,
+      );
+      return true;
     }
 
     if (bestDab) this.selectColor(bestDab);
@@ -1212,6 +1279,27 @@ export class BallSpawnSystem extends createSystem({
         (chipStyle !== BallStyle.Paint ||
           chip.getValue(KindChip, 'kind') === kind);
       paintChipSelection(chip.object3D, selected);
+    }
+  }
+
+  /**
+   * Load a launcher mode from a pad or the Armory. Writes only on a change
+   * (the activeStyle sync rides the subscription) and always clicks, like the
+   * other palette presses.
+   */
+  selectBlasterMode(mode: BlasterMode): void {
+    if (this.blasterMode.peek() !== mode) this.blasterMode.value = mode;
+    this.events.emit(GameEvent.AmmoSelected, 0, 0, 0, this.activeKind.peek());
+  }
+
+  /** Relight the three mode pads from `blasterMode`. Derived, like the chips. */
+  private applyModePadHighlight(): void {
+    const mode = this.blasterMode.peek();
+    for (const pad of this.queries.modePads.entities) {
+      paintChipSelection(
+        pad.object3D,
+        (pad.getValue(BlasterModePad, 'mode') ?? -1) === mode,
+      );
     }
   }
 
