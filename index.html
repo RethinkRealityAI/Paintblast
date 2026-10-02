@@ -6,22 +6,42 @@
       name="viewport"
       content="width=device-width, initial-scale=1, shrink-to-fit=no"
     />
-    <title>PaintBlast MR — your room is the arena</title>
+    <title>PaintBlast MR | Blast rogue robots with paint in your real room</title>
     <meta
       name="description"
-      content="Mixed-reality paintball for Meta Quest 3. Rogue robots invade your room; blast them with paint that sticks to your real walls. Nothing to install — play in the browser."
+      content="Mixed-reality paint blaster for Meta Quest 3 and 3S. Rogue cleaning robots invade your room; pinch to blast them with neon paint that sticks to your real walls. Seated, hands-first, nothing to install."
     />
-    <meta property="og:title" content="PaintBlast MR" />
-    <meta property="og:description" content="Your room is the arena. Mixed-reality paintball for Quest 3 — play instantly in the browser." />
-    <meta property="og:image" content="/landing/hero.png" />
+    <meta name="theme-color" content="#07070c" />
+    <link rel="icon" type="image/png" href="/brand/logo-512.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="PaintBlast MR" />
+    <meta property="og:url" content="https://paintblast-mr.netlify.app/" />
+    <meta property="og:title" content="PaintBlast MR | Your room is the arena" />
+    <meta
+      property="og:description"
+      content="Rogue cleaning robots hate mess. Pinch to blast neon paint across your real walls on Meta Quest 3 / 3S. Play instantly in the browser."
+    />
+    <meta property="og:image" content="https://paintblast-mr.netlify.app/brand/og.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="PaintBlast: cleaning robots splattered with neon paint in a living room" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="PaintBlast MR | Your room is the arena" />
+    <meta
+      name="twitter:description"
+      content="Mixed-reality paint blaster for Meta Quest 3 / 3S. Seated, hands-first, nothing to install."
+    />
+    <meta name="twitter:image" content="https://paintblast-mr.netlify.app/brand/og.jpg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=Rubik:wght@400;500;700;900&display=swap"
       rel="stylesheet"
     />
+    <link rel="preload" as="image" href="/landing/keyart-1920.webp" media="(min-width: 901px)" />
+    <link rel="preload" as="image" href="/landing/keyart-1100.webp" media="(max-width: 900px)" />
   </head>
-  <body style="margin: 0; background: #0b0b10">
+  <body style="margin: 0; background: #07070c">
     <div id="scene-container"></div>
     <div id="landing-root"></div>
     <script type="module" src="/src/main.ts"></script>
