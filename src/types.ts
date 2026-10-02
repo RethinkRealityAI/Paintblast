@@ -394,6 +394,21 @@ export const GameEvent = {
    * by hand deserves. `data` is {@link packTetherData}.
    */
   TetherPopped: 14,
+
+  // ---- Splotbots (round 8) -------------------------------------------------
+  //
+  // Numbered from 20 so parallel round-8 streams adding events of their own
+  // (15+) cannot collide with these in a merge.
+  /**
+   * A Squeegee's shield bounced a ball away with no damage. Position = the
+   * shield, `data` = pool slot. The ball keeps flying (deflected).
+   */
+  ShieldDeflected: 20,
+  /**
+   * Duster Duke has started his entrance drop. Position = his landing spot,
+   * `data` = pool slot. A cue for an announcer bark / boss music sting.
+   */
+  BossEntered: 21,
 } as const;
 
 export type GameEvent = typeof GameEvent[keyof typeof GameEvent];
@@ -621,4 +636,55 @@ export class AimTargets {
   clear(): void {
     this.active.fill(0);
   }
+}
+
+/**
+ * The Splotbot cast members TargetSystem spawns (round 8). Pip is not here:
+ * the mascot is never a target. Order matches the wave weight triples in
+ * `SPLOTBOTS.waves` (mopsy, squeegee, peekaboo); the boss comes last.
+ */
+export const Splotbot = {
+  Mopsy: 0,
+  Squeegee: 1,
+  Peekaboo: 2,
+  DusterDuke: 3,
+} as const;
+
+export type Splotbot = typeof Splotbot[keyof typeof Splotbot];
+
+/** Number of Splotbot archetypes. */
+export const SPLOTBOT_COUNT = 4;
+
+/**
+ * Pack a TargetPopped event's `data` word (round 8): pool slot in the low
+ * byte — exactly what the word held before, so any reader of the slot is
+ * unchanged — the archetype in bits 8..11, and the robot's base points in
+ * bits 12..30.
+ *
+ * Points ride on the event so GameStateSystem can score a boss pop higher
+ * without importing TargetSystem or the archetype table. A word with 0 points
+ * (anything emitted by older code) scores the classic `GAME.scoreTargetHit`.
+ */
+export function packPopData(
+  slot: number,
+  archetype: number,
+  points: number,
+): number {
+  const pts = Math.max(0, Math.min(0x7ffff, Math.round(points)));
+  return (slot & 0xff) | ((archetype & 0xf) << 8) | (pts << 12);
+}
+
+/** Pool slot out of a {@link packPopData} word. */
+export function unpackPopSlot(data: number): number {
+  return data & 0xff;
+}
+
+/** Archetype ({@link Splotbot}) out of a {@link packPopData} word. */
+export function unpackPopArchetype(data: number): number {
+  return (data >> 8) & 0xf;
+}
+
+/** Base points out of a {@link packPopData} word; 0 = "use the default". */
+export function unpackPopPoints(data: number): number {
+  return (data >>> 12) & 0x7ffff;
 }

@@ -218,9 +218,9 @@ export const TARGETS = {
   /** Highest spawn height, metres above the floor. */
   heightMax: 2.0,
   /**
-   * Finished robot height, metres. robot.gltf is authored in centimetre-ish
-   * units (~53 × 68 × 35), so TargetSystem measures the model and rescales it
-   * to this — retexturing or swapping the art never needs a code change.
+   * Legacy (rounds 1-7) robot height, metres. Round 8 sizes every robot from
+   * its archetype's `SPLOTBOTS.archetypes.*.heightMeters` instead — the
+   * robot.gltf fallback too — so this no longer changes anything.
    */
   heightMeters: 0.35,
   /** Floor under the derived hit sphere, metres — keeps small art hittable. */
@@ -230,19 +230,41 @@ export const TARGETS = {
    * of one slice. 0 = perfectly regular ring, 1 = slices may touch.
    */
   spawnAngleJitter: 0.4,
-  /** Pooled robot instances allocated up front and reused. */
-  poolSize: 8,
-  /** How many robots may be alive at once. */
-  maxConcurrent: 4,
-  /** Hits required to pop a robot. */
+  /**
+   * Pooled robot instances allocated up front and reused. Round 8: must equal
+   * the sum of every Splotbot archetype's `pool` (SPLOTBOTS.archetypes), since
+   * each slot is built once as one specific character; a unit test pins it.
+   * It also sizes the aim-assist table.
+   */
+  poolSize: 14,
+  /**
+   * Hard ceiling on robots alive at once, whatever a wave asks for. Round 8's
+   * waves (SPLOTBOTS.waves) set the real number per phase of the round; this
+   * only stops a mistuned wave from flooding a seated player's view. The
+   * boss's two split Mopsys are allowed past it for a moment.
+   */
+  maxConcurrent: 5,
+  /**
+   * Default hits to pop, for the Target component's schema only. Round 8:
+   * each archetype's `SPLOTBOTS.archetypes.*.hp` is what a spawn really gets.
+   */
   baseHp: 1,
-  /** Seconds between a pop and the next spawn taking its slot. */
+  /**
+   * Seconds after a pop before the spawn director may fill the gap (and
+   * before that pool slot can be reused).
+   */
   respawnDelaySec: 1.5,
-  /** Vertical hover amplitude, metres. */
+  /**
+   * Legacy hover amplitude, metres. Round 8: per archetype
+   * (`SPLOTBOTS.archetypes.*.bobAmplitude`); unused.
+   */
   bobAmplitude: 0.08,
-  /** Hover cycles per second. */
+  /** Hover cycles per second, shared by every Splotbot's bob. */
   bobHz: 0.5,
-  /** Yaw drift, degrees per second — keeps robots from looking frozen. */
+  /**
+   * Legacy yaw drift, degrees per second. Round 8 robots turn to *face you*
+   * instead (`SPLOTBOTS.archetypes.*.faceRate`); unused.
+   */
   turnDegPerSec: 25,
   /**
    * Closest a tethered robot may be reeled to the hand holding the line,
@@ -254,12 +276,20 @@ export const TARGETS = {
    * would still not have fired. 30 cm keeps it in front of the fist.
    */
   tetherMinReach: 0.3,
-  /** Seconds a non-lethal hit keeps the robot puffed up. */
+  /**
+   * Seconds a hit keeps the robot puffed up and flashing white (round 8: the
+   * flash brightness is SPLOTBOTS.anim.hitFlashIntensity; the squash-and-
+   * stretch rings on for SPLOTBOTS.anim.hitSec).
+   */
   hitFlashSec: 0.12,
   /** Peak scale multiplier at the instant of a non-lethal hit. */
   hitFlashScale: 1.18,
-  /** Seconds the shrink-to-nothing pop animation takes. */
-  popDurationSec: 0.15,
+  /**
+   * Seconds the pop animation takes: a quick squash, then a spinning shrink
+   * to nothing. Round 8 lengthened it from 0.15 so the squash actually reads;
+   * the robot stops being shootable the instant it starts.
+   */
+  popDurationSec: 0.32,
   /**
    * Width of the arc robots spawn in, degrees, centred on the way the player
    * is facing at the moment the round starts.
@@ -1570,4 +1600,298 @@ export const BLASTER = {
     { name: 'GOLD RUSH', accent: '#ffd23f', trim: '#ff7a3d', shell: '#2a2c33' },
   ] as ReadonlyArray<BlasterSkin>,
 } as const;
+
+/**
+ * One Splotbot character's tuning (round 8). Every archetype in
+ * SPLOTBOTS.archetypes has the same shape so TargetSystem can treat the cast
+ * as data: which art, how big, how tough, what it is worth, and how it idles.
+ */
+export interface SplotbotArchetypeConfig {
+  /** AssetManifest key for this character's GLB (main.ts registers it). */
+  readonly assetKey: string;
+  /**
+   * Model URL. Background-loaded: until it arrives (or if it is missing) the
+   * slot wears robot.gltf, and the next Countdown swaps the real art in — so
+   * dropping a new GLB at this path never needs a code change.
+   */
+  readonly url: string;
+  /** How many pool slots are built as this character. Sum = TARGETS.poolSize. */
+  readonly pool: number;
+  /** Finished height, metres. The GLB is measured and rescaled to this. */
+  readonly heightMeters: number;
+  /** Hit-sphere radius as a fraction of the model's largest half-extent. */
+  readonly hitRadiusScale: number;
+  /** Hits to pop. */
+  readonly hp: number;
+  /** Base points for a pop, before the combo multiplier. */
+  readonly points: number;
+  /**
+   * Degrees to turn the model so its face screen looks down the robot's +Z
+   * (which TargetSystem then aims at the player). Meshy's facing is not
+   * fixed: 0 if the GLB faces +Z, 180 if it faces -Z, +/-90 if sideways.
+   */
+  readonly yawOffsetDeg: number;
+  /** How fast it turns to face you, 1/s (exponential ease). 0 = never turns. */
+  readonly faceRate: number;
+  /** Vertical hover amplitude, metres (the shared TARGETS.bobHz bob). */
+  readonly bobAmplitude: number;
+  /** Idle sway (rock about the facing axis), radians peak. */
+  readonly swayRad: number;
+  /** Idle sway cycles per second. */
+  readonly swayHz: number;
+}
+
+/**
+ * The Splotbots (round 8): the cast of cleaning robots that replaced the
+ * generic robot. Roles and behaviours are the art bible's
+ * (docs/COMPETITION_PLAN.md section 6):
+ *
+ * - **Mopsy**: the basic hover target, most common. Skirt-sway bob.
+ * - **Squeegee**: carries a wiper-blade shield and always turns to face you.
+ *   A shot into its front cone pings off with no damage unless the ball has
+ *   already bounced off something (BOUNCY off a wall), is a TETHER web, or is
+ *   SPLASH ammo. Flank it, bank it, or hook it.
+ * - **Peekaboo**: hides behind your real furniture (bounded scene meshes on
+ *   the far side from you) and periscopes up for a moment; only hittable while
+ *   up. With no furniture scanned it peeks up from low spawn heights.
+ * - **Duster Duke**: the boss. Drops in for the last stretch of a round,
+ *   takes six hits, stomps and sways, and splits into two Mopsys when popped.
+ *   A tether haul takes `boss.tetherDamage` HP off instead of killing him.
+ * - **Pip**: the palette-drone mascot. Never shot; hovers beside the HUD in
+ *   menus and flies off while you play (PipSystem).
+ */
+export const SPLOTBOTS = {
+  archetypes: {
+    mopsy: {
+      assetKey: 'splotbotMopsy',
+      url: '/gltf/splotbots/mopsy.glb',
+      pool: 7,
+      heightMeters: 0.32,
+      hitRadiusScale: 1.0,
+      hp: 1,
+      points: 100,
+      yawOffsetDeg: 0,
+      faceRate: 3,
+      bobAmplitude: 0.08,
+      swayRad: 0.12,
+      swayHz: 0.9,
+    },
+    squeegee: {
+      assetKey: 'splotbotSqueegee',
+      url: '/gltf/splotbots/squeegee.glb',
+      pool: 3,
+      heightMeters: 0.42,
+      hitRadiusScale: 0.95,
+      hp: 1,
+      points: 150,
+      yawOffsetDeg: 0,
+      // Snappy: the shield has to be in your face to be a puzzle.
+      faceRate: 6,
+      bobAmplitude: 0.05,
+      swayRad: 0.05,
+      swayHz: 0.6,
+    },
+    peekaboo: {
+      assetKey: 'splotbotPeekaboo',
+      url: '/gltf/splotbots/peekaboo.glb',
+      pool: 3,
+      heightMeters: 0.55,
+      hitRadiusScale: 0.85,
+      hp: 1,
+      points: 200,
+      yawOffsetDeg: 0,
+      faceRate: 4,
+      bobAmplitude: 0.02,
+      swayRad: 0.1,
+      swayHz: 1.3,
+    },
+    duke: {
+      assetKey: 'splotbotDuke',
+      url: '/gltf/splotbots/duster-duke.glb',
+      pool: 1,
+      heightMeters: 0.75,
+      hitRadiusScale: 0.8,
+      hp: 6,
+      points: 600,
+      yawOffsetDeg: 0,
+      // Heavy: turns like a wardrobe on castors.
+      faceRate: 1.5,
+      bobAmplitude: 0,
+      swayRad: 0.09,
+      swayHz: 0.45,
+    },
+  } satisfies Record<string, SplotbotArchetypeConfig>,
+
+  /**
+   * Robot "lanes" across TARGETS.spawnArcDeg. Each spawn takes the emptiest
+   * lane, so the cast stays spread across the arc whatever mix is alive.
+   * More lanes = finer spread; fewer than a wave's maxAlive bunches robots.
+   */
+  lanes: 5,
+  /** Seconds between two spawns when several slots are free at once. */
+  spawnStaggerSec: 0.45,
+
+  /**
+   * Wave composition by round time. Each wave starts `startSec` seconds into
+   * the round and lasts until the next one; `weights` is the chance of each
+   * new spawn being [mopsy, squeegee, peekaboo] (any scale, normalised).
+   * `maxAlive` is how many robots it keeps up (capped by TARGETS.maxConcurrent).
+   */
+  waves: [
+    // Warm-up: only Mopsys, so the first thing anyone learns is "point, pinch, pop".
+    { startSec: 0, maxAlive: 3, weights: [1, 0, 0] },
+    // The cast arrives: shields and peekers join.
+    { startSec: 22, maxAlive: 4, weights: [0.55, 0.25, 0.2] },
+    // Mixed pressure until the boss.
+    { startSec: 48, maxAlive: 4, weights: [0.4, 0.3, 0.3] },
+  ] as ReadonlyArray<SplotbotWave>,
+
+  boss: {
+    /**
+     * Duster Duke drops in when this many seconds are left on the round
+     * clock (once per round). 0 disables the boss.
+     */
+    enterAtSecLeft: 20,
+    /** Other robots kept alive alongside the boss (his split Mopsys excluded). */
+    companionsMax: 2,
+    /** Metres from the player's head the Duke lands, down the arc's middle. */
+    distance: 2.0,
+    /**
+     * Height of the Duke's centre above the floor once landed, metres. Half
+     * his height = feet on the floor; raise it to float him over a coffee table.
+     */
+    standHeight: 0.4,
+    /** Metres above its landing spot the entrance drop starts from. */
+    dropHeight: 1.6,
+    /** Seconds the drop takes (ease-in, like falling). Not hittable meanwhile. */
+    dropSec: 0.55,
+    /** Landing squash: peak vertical compression (0.3 = 30% shorter). */
+    landSquash: 0.3,
+    /** Footstep stomps per second while idling. */
+    stompHz: 1.1,
+    /** Height of each stomp hop, metres. */
+    stompLift: 0.035,
+    /** HP a tether haul takes off the Duke instead of popping him. */
+    tetherDamage: 2,
+    /** Seconds the Duke takes to stomp back to his spot after a haul. */
+    returnSec: 1.2,
+    /** Sideways distance between the two Mopsys he splits into, metres. */
+    splitSpread: 0.55,
+  },
+
+  shield: {
+    /**
+     * Full width of Squeegee's blocking cone, degrees, around the way it
+     * faces. A shot arriving inside it is deflected. 140 = most frontal shots;
+     * lower it to make flanking easier.
+     */
+    coneDeg: 140,
+    /** Fraction of the incoming speed a deflected ball keeps. */
+    deflectRestitution: 0.55,
+    /** Upward kick added to a deflected ball, m/s, so the ping visibly arcs. */
+    deflectLift: 1.2,
+    /** Seconds the same ball is ignored by the shield it just bounced off. */
+    immunitySec: 0.4,
+    /** Seconds of the shield's cyan "ping" flash. */
+    flashSec: 0.22,
+    /** Recoil tilt of a deflecting Squeegee, radians. */
+    recoilRad: 0.35,
+    /** Guard-stance lean of the whole body toward you, radians. */
+    guardTiltRad: 0.08,
+  },
+
+  peek: {
+    /** Seconds hidden before each peek. */
+    hiddenSec: 1.6,
+    /** Random extra hidden time, 0..this, so peekers do not sync up. */
+    hiddenJitterSec: 1.2,
+    /** Seconds a peek holds at the top. The art bible's tell: ~1.5 s. */
+    upSec: 1.5,
+    /** Seconds to rise (and to duck back down). */
+    riseSec: 0.28,
+    /** Lift fraction (0 hidden .. 1 up) above which it can be hit. */
+    hittableLift: 0.6,
+    /** How far above the furniture's top a peek raises its centre, metres. */
+    peekAbove: 0.18,
+    /** Metres behind the furniture's far face the hiding spot sits. */
+    behindMargin: 0.22,
+    /** Furniture whose top is lower than this (metres) is ignored (rugs). */
+    furnitureMinTop: 0.35,
+    /** Furniture whose top is higher than this is ignored (wardrobes). */
+    furnitureMaxTop: 1.4,
+    /** Hidden centre height with no furniture to hide behind, metres. */
+    lowHideY: 0.3,
+    /** Rise of a no-furniture peek, metres. */
+    lowPeekRise: 0.5,
+    /** Periscope wobble while up, radians peak. */
+    wobbleRad: 0.14,
+  },
+
+  anim: {
+    /** Seconds of the spawn pop-in (overshoot scale + spin). */
+    spawnSec: 0.45,
+    /** Overshoot of the pop-in (easeOutBack's s). 1.7 = classic, higher = boingier. */
+    spawnOvershoot: 2.2,
+    /** Full turns the pop-in spins through. */
+    spawnSpinTurns: 1,
+    /** Seconds a hit squash-and-stretch rings for. */
+    hitSec: 0.4,
+    /** Peak vertical squash of a hit (0.28 = 28% shorter, wider to match). */
+    hitSquash: 0.28,
+    /** Squash wobble cycles per second. */
+    hitWobbleHz: 7,
+    /** Peak brightness of the white hit flash (added emissive, linear). */
+    hitFlashIntensity: 1.6,
+    /** Pop: fraction of TARGETS.popDurationSec spent squashing before the shrink. */
+    popSquashFrac: 0.35,
+    /** Pop: full turns spun through the shrink. */
+    popSpinTurns: 1.25,
+  },
+
+  /** Pip, the mascot drone (PipSystem). Never shot, never blocks shots. */
+  pip: {
+    assetKey: 'splotbotPip',
+    url: '/gltf/splotbots/pip.glb',
+    /** Pip's size (largest dimension), metres. */
+    sizeMeters: 0.22,
+    /** Same meaning as the archetypes' yawOffsetDeg: turns the face to +Z. */
+    yawOffsetDeg: 0,
+    /** Metres from the HUD panel's left edge out to Pip's centre. */
+    besidePanel: 0.1,
+    /** Metres above the panel's centre line. */
+    abovePanel: 0.1,
+    /** Metres toward you from the panel's plane. */
+    towardViewer: 0.06,
+    /** Follow stiffness, 1/s. Higher = sticks to the HUD more tightly. */
+    followRate: 5,
+    /** Hover bob, metres peak. */
+    bobAmplitude: 0.015,
+    /** Hover bob cycles per second. */
+    bobHz: 0.7,
+    /** Max lean toward your head, radians (it tilts in to look at you). */
+    lookTiltRad: 0.25,
+    /** Seconds of the new-best-score happy spin. */
+    happySpinSec: 1.3,
+    /** Full turns of the happy spin. */
+    happySpinTurns: 2,
+    /** Hop height during the happy spin, metres. */
+    happyHop: 0.08,
+    /** Seconds to fly off when a round starts (and to fly back in). */
+    flySec: 0.6,
+    /** Metres Pip climbs while flying off. */
+    flyRise: 0.5,
+    /** Propeller spin, turns per second (procedural fallback model only). */
+    rotorHz: 9,
+  },
+} as const;
+
+/** One wave of SPLOTBOTS.waves. */
+export interface SplotbotWave {
+  /** Seconds into the round this wave starts. */
+  readonly startSec: number;
+  /** Robots it keeps alive (capped by TARGETS.maxConcurrent). */
+  readonly maxAlive: number;
+  /** Spawn weights for [mopsy, squeegee, peekaboo]. */
+  readonly weights: readonly [number, number, number];
+}
 
