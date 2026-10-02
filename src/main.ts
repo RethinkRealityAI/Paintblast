@@ -76,7 +76,7 @@ import { Easel, EaselSystem, EASEL_ASSET_KEY } from './systems/EaselSystem';
 import { SceneScanSystem } from './systems/SceneScanSystem';
 import { VfxSystem } from './systems/VfxSystem';
 import { initLanding } from './landing/landing';
-import { AUDIO, GAME, HUD, PALETTE, RENDER, TARGETS, WEB } from './config';
+import { AUDIO, BLASTER, GAME, HUD, PALETTE, RENDER, TARGETS, WEB } from './config';
 import type { ToneMappingName } from './config';
 import {
   BallKind,
@@ -97,15 +97,12 @@ import type { PaletteChipSpec } from './types';
 
 const DEG_TO_RAD = Math.PI / 180;
 
-/** localStorage key for the gauntlet skin index (round 8). */
-export const BLASTER_SKIN_STORAGE_KEY = 'paintblast.blasterSkin';
-
 /** The stored skin index, or 0. Never throws (private mode, blocked storage). */
 function readStoredSkin(): number {
   try {
-    const raw = window.localStorage.getItem(BLASTER_SKIN_STORAGE_KEY);
+    const raw = window.localStorage.getItem(BLASTER.skinStorageKey);
     const n = raw === null ? 0 : Number.parseInt(raw, 10);
-    return Number.isFinite(n) && n >= 0 ? n : 0;
+    return Number.isFinite(n) && n >= 0 && n < BLASTER.skins.length ? n : 0;
   } catch {
     return 0;
   }

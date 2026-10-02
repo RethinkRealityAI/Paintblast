@@ -1541,3 +1541,33 @@ export const VFX = {
     shape: 'blob',
   } satisfies VfxBurstConfig,
 } as const;
+
+/**
+ * Gauntlet blasters (round 8): the skins the Armory offers. The gauntlet
+ * system tints its trim, glow seams and canister rim from the selected entry;
+ * the Armory lists `name`. Order is the stored index — append, never reorder,
+ * or players' saved choice changes under them.
+ */
+export interface BlasterSkin {
+  /** ASCII caps, shown in the Armory (gotcha 24). */
+  readonly name: string;
+  /** Glow seams, nozzle ring and canister rim, `#rrggbb` (sRGB). */
+  readonly accent: string;
+  /** Secondary trim, `#rrggbb`. */
+  readonly trim: string;
+  /** Shell panels, `#rrggbb`. */
+  readonly shell: string;
+}
+
+export const BLASTER = {
+  /** localStorage key holding the selected skin index. */
+  skinStorageKey: 'paintblast.blasterSkin',
+  skins: [
+    { name: 'NEON CORAL', accent: '#ff4f81', trim: '#ffb347', shell: '#ecebe6' },
+    { name: 'CYBER LIME', accent: '#b6ff3b', trim: '#3bf0ff', shell: '#e6ece6' },
+    { name: 'ULTRAVIOLET', accent: '#b84dff', trim: '#ff4fd8', shell: '#e9e6ef' },
+    { name: 'CHROME ICE', accent: '#48dbfb', trim: '#ffffff', shell: '#d7dde3' },
+    { name: 'GOLD RUSH', accent: '#ffd23f', trim: '#ff7a3d', shell: '#2a2c33' },
+  ] as ReadonlyArray<BlasterSkin>,
+} as const;
+
