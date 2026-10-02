@@ -1428,8 +1428,9 @@ export class TargetSystem extends createSystem({
     const boss = SPLOTBOTS.boss;
 
     if (bossDue(timeLeft, boss.enterAtSecLeft, this.bossSpawned)) {
-      this.bossSpawned = true;
-      this.spawnArchetype(Splotbot.DusterDuke, nowSec);
+      // Only spent on success: a failed spawn retries next frame rather than
+      // silently losing the boss for the round.
+      this.bossSpawned = this.spawnArchetype(Splotbot.DusterDuke, nowSec) >= 0;
     }
 
     const waves = SPLOTBOTS.waves;
@@ -2259,7 +2260,7 @@ export class TargetSystem extends createSystem({
     // anyway so a tuned-up lift cannot make a wall-tunnelling ball.
     const out = this.poseScratch;
     const speed = Math.sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
-    const maxSpeed = 9;
+    const maxSpeed = shield.maxDeflectSpeed;
     if (speed > maxSpeed) {
       const k = maxSpeed / speed;
       out[0] *= k;

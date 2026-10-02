@@ -290,8 +290,22 @@ export class WristPaletteSystem extends createSystem({
     if (!this.computeTarget()) {
       // Lost hand: hold the pose, and after a grace period hide the board so
       // it never hangs frozen in mid-air (IWSDK leaves a lost hand's spaces
-      // where they were). Never while parked under a poking finger.
+      // where they were). Never while parked under a poking finger — but
+      // the lock is stepped here too, as if the finger had left: otherwise a
+      // lock engaged just before the left hand dropped would never release
+      // (it is only stepped on tracked frames) and pin the board in mid-air.
       this.lostSec += delta;
+      if (
+        stepPaletteLock(
+          this.lock,
+          Infinity,
+          performance.now() / 1000,
+          PALETTE.lockRadius,
+          PALETTE.lockReleaseSec,
+        )
+      ) {
+        this.gliding = true;
+      }
       if (this.shown && !this.lock.locked && this.lostSec >= PALETTE.hideAfterLostSec) {
         this.setShown(false);
       }

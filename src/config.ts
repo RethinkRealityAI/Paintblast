@@ -2065,6 +2065,12 @@ export const SPLOTBOTS = {
     deflectRestitution: 0.55,
     /** Upward kick added to a deflected ball, m/s, so the ping visibly arcs. */
     deflectLift: 1.2,
+    /**
+     * Hard cap on a deflected ball's speed, m/s. Must stay under 72 x 14 cm
+     * (~10 m/s) or a bounced ball tunnels walls (CLAUDE.md gotcha 22); a test
+     * pins it.
+     */
+    maxDeflectSpeed: 9,
     /** Seconds the same ball is ignored by the shield it just bounced off. */
     immunitySec: 0.4,
     /** Seconds of the shield's cyan "ping" flash. */

@@ -382,14 +382,14 @@ export class HudSystem extends createSystem({
   openArmory(): void {
     if (this.gamePhase.peek() !== GamePhase.Idle) return;
     this.armoryOpen = true;
-    this.applyPhase(GamePhase.Idle);
+    this.applyPhase(GamePhase.Idle, false);
   }
 
   /** Back from the Armory to the title screen. */
   closeArmory(): void {
     if (!this.armoryOpen) return;
     this.armoryOpen = false;
-    this.applyPhase(this.gamePhase.peek());
+    this.applyPhase(this.gamePhase.peek(), false);
   }
 
   /** Load a launcher. BallSpawnSystem keeps activeStyle in step. */
@@ -780,8 +780,14 @@ export class HudSystem extends createSystem({
     this.setText(this.chillStatusText, status);
   }
 
-  /** Exactly one section is visible; the footer never hides. */
-  private applyPhase(phase: GamePhase): void {
+  /**
+   * Exactly one section is visible; the footer never hides.
+   *
+   * @param redock false for a section swap inside the same phase (Armory open
+   *   or close): re-docking forces a Follower position sync, which snaps the
+   *   panel to the head-locked offset instead of leaving it where it floats.
+   */
+  private applyPhase(phase: GamePhase, redock = true): void {
     if (phase !== GamePhase.Idle) this.armoryOpen = false;
     if (phase === GamePhase.Countdown) {
       this.bestAtRoundStart = this.bestScore.peek();
@@ -804,7 +810,7 @@ export class HudSystem extends createSystem({
     this.applyPaused();
     this.applyNewBest();
     this.applyTimerUrgency();
-    this.applyDock(phase);
+    if (redock) this.applyDock(phase);
   }
 
   /**

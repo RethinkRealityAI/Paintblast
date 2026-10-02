@@ -475,6 +475,8 @@ export class BallSpawnSystem extends createSystem({
   private webSubMode!: Signal<WebSubMode>;
   /** Round 8: HAND / BLASTER / WEB, kept in sync with activeStyle here. */
   private blasterMode!: Signal<BlasterMode>;
+  /** PauseClock's flag; optional so a test world without it never pauses. */
+  private pausedSignal?: Signal<boolean>;
   /** The paint mode (Hand or Paint) to return to when leaving Web. */
   private lastPaintMode: BlasterMode = BlasterMode.Paint;
   /**
@@ -544,6 +546,7 @@ export class BallSpawnSystem extends createSystem({
       (this.globals.blasterMode as Signal<BlasterMode> | undefined) ??
       signal<BlasterMode>(BlasterMode.Paint);
     this.tetheredHands = this.globals.tetheredHands as Signal<number>;
+    this.pausedSignal = this.globals.paused as Signal<boolean> | undefined;
     this.gamePhase = this.globals.gamePhase as Signal<GamePhase>;
     this.events = this.globals.gameEvents as GameEventBuffer;
     this.loadout = createShotLoadout();
@@ -660,6 +663,11 @@ export class BallSpawnSystem extends createSystem({
     // the trigger out of here whenever the (now deleted) Web phase was running,
     // because WebShooterSystem also claimed it and one pull threw two balls.
     if (!canFireInPhase(phase, FIRE.sandboxFireInIdle)) return;
+    // Paused (Quest menu, headset off): never fire. BLASTER auto-fire is
+    // level-triggered, and GauntletSystem leaves its muzzles at the last
+    // (stale) pose while paused — a trigger reported held across a blur
+    // would otherwise keep spraying from where the arm used to be.
+    if (this.pausedSignal?.peek()) return;
 
     // The controller shortcut for the wrist selector. Checked before the UI
     // gate on purpose: pointing at the menu is a reason not to *shoot*, never a

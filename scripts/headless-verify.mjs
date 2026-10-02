@@ -80,6 +80,10 @@ const browser = await chromium.launch({
   ],
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+// SwiftShader discards every uikit panel and glyph without this (see the file).
+await page.addInitScript({
+  path: new URL('./swiftshader-smoothstep-patch.js', import.meta.url).pathname,
+});
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => {
@@ -103,6 +107,31 @@ await page.evaluate((mode) => {
   d.grantOfferedSession();
 }, inputMode);
 await page.waitForTimeout(3000);
+
+// Let the round-8 enter-AR intro finish (~4 s of game time, ~8 s at headless
+// frame rates) so the first shots show the title, not the logo burst. Phase 3
+// = Finished; a missing IntroSystem (or INTRO.enabled false) passes at once.
+await page.waitForFunction(
+  () => {
+    const s = window.__PB_WORLD.getSystems?.().find(
+      (x) => x.constructor?.name === 'IntroSystem',
+    );
+    return !s || s.phase === 0 || s.phase === 3;
+  },
+  null,
+  { timeout: 30000 },
+).catch(() => console.warn('intro did not finish within 30 s'));
+
+// IWSDK's pointer cursor eases with lerp(a, b, 30 * delta), which diverges
+// once frames take > ~66 ms — i.e. always at SwiftShader's ~5 fps — and
+// grows into a screen-filling white disc. Harmless at 72 Hz; hide it here.
+await page.evaluate(() => {
+  const w = window.__PB_WORLD;
+  // material.visible, not object.visible: IWSDK rewrites the latter itself.
+  for (const c of w.player.children) {
+    if (c.isMesh && c.geometry?.type === 'CircleGeometry') c.material.visible = false;
+  }
+});
 
 // The emulator's hand meshes stream from a CDN that may be unreachable, so
 // draw the tracked joints ourselves (skin-coloured dots) plus a forearm proxy:
