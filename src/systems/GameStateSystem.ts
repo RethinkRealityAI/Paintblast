@@ -7,7 +7,22 @@ import {
   GameEventBuffer,
   GamePhase,
   INITIAL_HUD_STATE,
+  unpackPopPoints,
 } from '../types';
+
+/**
+ * Base points a TargetPopped event is worth before the combo multiplier.
+ *
+ * Round 8: the Splotbots are worth different amounts (Duster Duke far more
+ * than a Mopsy), and TargetSystem packs each pop's points into the event's
+ * `data` word ({@link packPopData}). A word carrying no points — any producer
+ * that predates the cast — falls back to the classic `GAME.scoreTargetHit`.
+ * Pure and exported for tests.
+ */
+export function popBasePoints(data: number): number {
+  const packed = unpackPopPoints(data);
+  return packed > 0 ? packed : GAME.scoreTargetHit;
+}
 
 /** localStorage key holding the all-time best score. */
 export const BEST_SCORE_STORAGE_KEY = 'paintblast.bestScore';
@@ -645,7 +660,7 @@ export class GameStateSystem extends createSystem({}) {
 
         case GameEvent.TargetPopped: {
           const multiplier = this.comboTracker.hit(this.gameNowSec());
-          gained += GAME.scoreTargetHit * multiplier;
+          gained += popBasePoints(events.dataAt(i)) * multiplier;
           if (this.comboTracker.current !== this.combo.peek()) {
             this.combo.value = this.comboTracker.current;
             // data = the new multiplier.

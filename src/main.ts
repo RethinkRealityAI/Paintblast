@@ -76,8 +76,9 @@ import { Easel, EaselSystem, EASEL_ASSET_KEY } from './systems/EaselSystem';
 import { SceneScanSystem } from './systems/SceneScanSystem';
 import { VfxSystem } from './systems/VfxSystem';
 import { IntroSystem, INTRO_LOGO_KEY } from './systems/IntroSystem';
+import { PipSystem } from './systems/PipSystem';
 import { initLanding } from './landing/landing';
-import { AUDIO, BLASTER, GAME, HUD, PALETTE, RENDER, TARGETS, WEB } from './config';
+import { AUDIO, BLASTER, GAME, HUD, PALETTE, RENDER, SPLOTBOTS, TARGETS, WEB } from './config';
 import type { ToneMappingName } from './config';
 import {
   BallKind,
@@ -776,6 +777,23 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
       type: AssetType.Texture,
       priority: 'background',
     },
+    // ROUND8-SPLOTBOTS — the Meshy-generated cast (unrigged, one textured
+    // PBR mesh each, WebP textures). Background: TargetSystem builds its pool
+    // from robot.gltf at registerSystem and swaps each archetype's real art in
+    // at the next Countdown once it has streamed (PipSystem polls for Pip), so
+    // they never block boot and a missing file only logs a warning.
+    ...Object.fromEntries(
+      [
+        SPLOTBOTS.archetypes.mopsy,
+        SPLOTBOTS.archetypes.squeegee,
+        SPLOTBOTS.archetypes.peekaboo,
+        SPLOTBOTS.archetypes.duke,
+        SPLOTBOTS.pip,
+      ].map((bot) => [
+        bot.assetKey,
+        { url: bot.url, type: AssetType.GLTF, priority: 'background' as const },
+      ]),
+    ),
     // ROUND2-EASEL-ASSET — a Higgsfield-generated easel (image_to_3d). Must be
     // an EMPTY easel: round 2's model was generated from a photo of an easel
     // holding a canvas, which baked a second, unpaintable board into the stand.
@@ -913,6 +931,9 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
     // it runs after HudSystem (35) has written the panel this frame and
     // before the event flush. Emits no events.
     .registerSystem(IntroSystem, { priority: 38 })
+    // Round 8: Pip the mascot. Reads the HUD panel's pose (moved by its
+    // Follower) and the phase; writes nothing anyone else reads.
+    .registerSystem(PipSystem, { priority: 39 })
     .registerSystem(EventFlushSystem, { priority: 90 });
 
   seedWristPalette(world);
