@@ -65,7 +65,7 @@ export const SPLOTBOTS = [
     role: 'Your guide',
     accent: '#b84dff',
     blurb:
-      'A palette drone with brush arms. Shows you the ropes and cheers every splat. Pip is on your side. Do not paint Pip.',
+      'A palette drone with brush arms. Hovers by your menu, shows you the ropes and spins for joy at every new high score. Pip is on your side. Do not paint Pip.',
   },
 ] as const;
 

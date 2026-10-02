@@ -47,6 +47,8 @@ specs: `docs/superpowers/specs/`.
 25. Text via `setProperties({ text })`; show/hide via `display`; hover with `pointerenter/leave` (`pointerover/out` flicker); there is **no** `backgroundOpacity` — alpha rides in `rgba()` strings; no gradients.
 26. Panel resize goes through `PanelUI.maxWidth/maxHeight` (PanelUISystem cancels object3D scale). Docked follower uses behavior `'face-target'` — `pivot-y` **discards Y offsets**.
 27. Edit `ui/hud.uikitml` only; `public/ui/hud.json` is generated (dev server and build both recompile it).
+28. Headless SwiftShader renders **no uikit panel or glyph** (`smoothstep(e, e, x)` returns 0, and uikit clips with `smoothstep(-fwidth, fwidth, d)`) — `scripts/headless-verify.mjs` injects `scripts/swiftshader-smoothstep-patch.js`; any new Playwright harness must too.
+29. IWSDK's pointer cursor eases with `lerp(a, b, 30 * delta)` (`xr-input/dist/pointer/cursor-visual.js`), which diverges once frames exceed ~66 ms — a screen-filling white disc in headless runs is that, not game art. Harmless at 72 Hz; the harness hides it via `material.visible`.
 
 ## Build / test / troubleshoot workflow
 
