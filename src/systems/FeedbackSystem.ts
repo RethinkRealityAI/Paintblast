@@ -291,6 +291,18 @@ export class FeedbackSystem extends createSystem({}) {
           );
           break;
 
+        // Round 8 Splotbots. The deflected ball still lands (BallImpact
+        // carries the splat); this adds the shield's own tick at the blade so
+        // the player hears *why* it did not count.
+        case GameEvent.ShieldDeflected:
+          this.playCueAt(this.uiClickCue, i, AUDIO_VOLUME.shieldPing);
+          break;
+
+        case GameEvent.BossEntered:
+          this.playCue(this.countdownCue, AUDIO_VOLUME.bossEnter);
+          this.pulseBoth(HAPTICS.hitIntensity, HAPTICS.hitMs);
+          break;
+
         default:
           break;
       }

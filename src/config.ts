@@ -215,8 +215,12 @@ export const TARGETS = {
   ringMaxR: 3.0,
   /** Lowest spawn height, metres above the floor. */
   heightMin: 0.7,
-  /** Highest spawn height, metres above the floor. */
-  heightMax: 2.0,
+  /**
+   * Highest spawn height, metres above the floor. 1.7 keeps the nearest ring
+   * (1.2 m) within ~23 degrees above a seated (1.2 m) eye line — VRCs ask for
+   * play inside a comfortable +/-30 degree vertical band. Was 2.0 (~34 deg).
+   */
+  heightMax: 1.7,
   /**
    * Legacy (rounds 1-7) robot height, metres. Round 8 sizes every robot from
    * its archetype's `SPLOTBOTS.archetypes.*.heightMeters` instead — the
@@ -1212,6 +1216,16 @@ export const AUDIO_VOLUME = {
   thwip: 0.55,
   /** Webbing landing. Level with the paint splat it replaces. */
   webHit: 0.5,
+  /**
+   * Round 8: a Squeegee's shield bouncing a shot (the UI tick, positional at
+   * the blade). Quiet — it is a "nope", not a reward.
+   */
+  shieldPing: 0.45,
+  /**
+   * Round 8: Duster Duke starts his entrance drop (the countdown blip, as a
+   * "heads up"). Non-positional so it is heard wherever you are looking.
+   */
+  bossEnter: 0.75,
 } as const;
 
 /** Shared 3D-audio settings for the two positional cues (splat and pop). */

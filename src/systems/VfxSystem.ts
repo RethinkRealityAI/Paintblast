@@ -613,6 +613,24 @@ export class VfxSystem extends createSystem({}) {
           break;
         }
 
+        case GameEvent.ShieldDeflected: {
+          // Round 8: a cyan spark spray off the Squeegee's blade, matching
+          // its shield flash — the tether burst's streaks, recoloured.
+          this.setRgb(0.35, 0.95, 1);
+          this.burst(
+            pool,
+            VFX.tether,
+            events.xAt(i),
+            events.yAt(i),
+            events.zAt(i),
+            0,
+            1,
+            0,
+            ColorMode.Fixed,
+          );
+          break;
+        }
+
         case GameEvent.BallFired: {
           if (VFX.muzzle.count <= 0) break;
           if (!headKnown) headKnown = this.readHead();
