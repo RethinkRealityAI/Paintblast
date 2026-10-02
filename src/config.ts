@@ -1571,3 +1571,78 @@ export const BLASTER = {
   ] as ReadonlyArray<BlasterSkin>,
 } as const;
 
+/**
+ * The enter-AR intro (round 8): the first time a session becomes visible, the
+ * PAINTBLAST logo bursts out of a paint splat ~1.5 m in front of you, a ring of
+ * neon splats flies out, the tagline lands, then the whole thing lifts away
+ * and the title HUD takes over. Any pinch or trigger skips it. Times are
+ * seconds from the moment it starts.
+ */
+export const INTRO = {
+  /** Master switch. false = no intro, the title HUD shows immediately. */
+  enabled: true,
+  /** Seconds after the session turns visible before it starts (tracking settles). */
+  startDelaySec: 0.45,
+  /** Metres in front of the head, along the floor-level gaze direction. */
+  distance: 1.5,
+  /** Metres above eye height of the logo centre. Slightly up reads as a title. */
+  heightOffset: 0.06,
+  /** Logo width, metres (height follows the texture's aspect). */
+  logoWidth: 1.15,
+  /** Width of the paint splat the logo bursts out of, metres. */
+  splatWidth: 1.6,
+  /** Opacity of the three neon splat layers (the dark ink layer behind the logo is fixed). */
+  splatOpacity: 0.85,
+  /** Splat reveal: starts at 0, full size after this long. */
+  splatInSec: 0.32,
+  /** When the logo starts popping in, and how long the pop takes. */
+  logoStartSec: 0.1,
+  logoInSec: 0.55,
+  /** easeOutBack overshoot of the logo pop. 0 = no bounce; 2+ = cartoon. */
+  logoOvershoot: 2.2,
+  /** Tagline under the logo: when it fades up, and how long that takes. */
+  taglineStartSec: 0.8,
+  taglineInSec: 0.4,
+  /** ASCII; drawn into a texture at runtime. */
+  tagline: 'YOUR ROOM IS THE ARENA',
+  /** When the exit starts on its own (the hold ends). */
+  exitStartSec: 2.7,
+  /** Exit length when it plays out, and when a pinch / trigger skips it. */
+  exitSec: 0.75,
+  skipExitSec: 0.35,
+  /** Ignore skips this early, so a pinch already in flight cannot eat the reveal. */
+  skipLockSec: 0.25,
+  /** Metres the logo rises while it fades out, and the scale it shrinks to. */
+  exitRise: 0.45,
+  exitScale: 0.55,
+  /** Shockwave ring: final radius (metres) and how long it lasts. */
+  ringRadius: 0.95,
+  ringSec: 0.6,
+  /** Neon splats flung out of the burst. 0 = none. */
+  particleCount: 56,
+  particleSpeedMin: 0.9,
+  particleSpeedMax: 2.3,
+  /** Splat sizes, metres. */
+  particleSizeMin: 0.035,
+  particleSizeMax: 0.09,
+  particleLifeMin: 0.8,
+  particleLifeMax: 1.4,
+  /** Linear drag, 1/s: the burst decelerates instead of flying off forever. */
+  particleDrag: 2.4,
+  /** Downward pull, m/s^2, so the splats arc like paint. */
+  particleGravity: 0.9,
+  /** Burst colours (sRGB hex): coral, amber, cyan, lime, violet. */
+  colors: ['#ff4f81', '#ffd23f', '#48dbfb', '#b6ff3b', '#b84dff'] as readonly string[],
+  /** Hide the title HUD while the logo is up (both sit straight ahead). */
+  hideHud: true,
+  /** Fraction of the exit after which the HUD reappears. */
+  hudRevealAt: 0.4,
+  /** Sounds (existing files) and their volumes. 0 mutes one. */
+  whooshSrc: '/audio/fire.mp3',
+  whooshVolume: 0.55,
+  splatSrc: '/audio/splat.mp3',
+  splatVolume: 0.9,
+  chimeSrc: '/audio/chime.mp3',
+  chimeVolume: 0.5,
+} as const;
+

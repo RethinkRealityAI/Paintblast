@@ -75,6 +75,7 @@ import {
 import { Easel, EaselSystem, EASEL_ASSET_KEY } from './systems/EaselSystem';
 import { SceneScanSystem } from './systems/SceneScanSystem';
 import { VfxSystem } from './systems/VfxSystem';
+import { IntroSystem, INTRO_LOGO_KEY } from './systems/IntroSystem';
 import { initLanding } from './landing/landing';
 import { AUDIO, BLASTER, GAME, HUD, PALETTE, RENDER, TARGETS, WEB } from './config';
 import type { ToneMappingName } from './config';
@@ -767,6 +768,14 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
       type: AssetType.Audio,
       priority: 'background',
     },
+    // Round 8 enter-AR intro. Background: IntroSystem only reads it when the
+    // session first turns visible, by which time it has long streamed in (and
+    // the intro still plays its splat + tagline if it somehow has not).
+    [INTRO_LOGO_KEY]: {
+      url: '/brand/logo.png',
+      type: AssetType.Texture,
+      priority: 'background',
+    },
     // ROUND2-EASEL-ASSET — a Higgsfield-generated easel (image_to_3d). Must be
     // an EMPTY easel: round 2's model was generated from a photo of an easel
     // holding a canvas, which baked a second, unpaintable board into the stand.
@@ -893,6 +902,12 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
     // Round 7 particle juice: another read-only event consumer, so it sits in
     // the same consumer band, after the sound it decorates and before the flush.
     .registerSystem(VfxSystem, { priority: 37 })
+    // Round 8 enter-AR intro. A pure consumer like the trio above: it reads
+    // input edge state (pinch/trigger = skip) and the visibility signal, and
+    // only ever toggles the HUD's visibility — never its state or input — so
+    // it runs after HudSystem (35) has written the panel this frame and
+    // before the event flush. Emits no events.
+    .registerSystem(IntroSystem, { priority: 38 })
     .registerSystem(EventFlushSystem, { priority: 90 });
 
   seedWristPalette(world);
