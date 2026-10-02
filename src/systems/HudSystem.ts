@@ -9,17 +9,29 @@ import {
 import type { Entity, UIKitDocument } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
-import { CHILL, HUD, ROOM } from '../config';
+import { BLASTER, CHILL, HUD, ROOM } from '../config';
 import {
   BallKind,
   BallStyle,
+  BlasterMode,
+  BLASTER_MODE_DESCRIPTIONS,
+  BLASTER_MODE_LABELS,
   GameEvent,
   GameEventBuffer,
   GamePhase,
   WEB_BALL_COLOR,
   WebSubMode,
   ammoLabel,
+  botsLabel,
+  clampIndex,
+  cycleIndex,
+  formatScore,
+  hexToInt,
+  isNewBest,
+  skinCounterLabel,
+  writeSkin,
 } from '../types';
+import type { SkinStorage } from '../types';
 import { EaselSystem } from './EaselSystem';
 import { GameStateSystem, isTimedPhase } from './GameStateSystem';
 import { SceneScanSystem } from './SceneScanSystem';
@@ -29,26 +41,29 @@ import { SplatterSystem } from './SplatterSystem';
 const HUD_CONFIG_PATH = './ui/hud.json';
 
 /**
- * The four paint colours the markup uses, as 0xRRGGBB. Kept here as well as in
- * CSS because two things repaint at runtime: the combo pill climbs through
- * them, and every button derives its hover / pressed shades from its own
- * accent (see {@link filledStates} / {@link outlineStates}).
+ * The techno-paint accents, as 0xRRGGBB. Kept here as well as in the markup
+ * because several things repaint at runtime: the combo pill climbs through
+ * them, every button derives its hover / pressed shades from its own accent,
+ * and the Armory lights whichever launcher and skin are loaded.
  */
-const ACCENT_CORAL = 0xff6b6b;
-const ACCENT_AMBER = 0xffca57;
-const ACCENT_SKY = 0x48dbfb;
-const ACCENT_LIME = 0x4dcc85;
+const ACCENT_CORAL = 0xff4f81;
+const ACCENT_AMBER = 0xffd23f;
+const ACCENT_CYAN = 0x48dbfb;
+const ACCENT_LIME = 0xb6ff3b;
+const ACCENT_VIOLET = 0xb84dff;
 const ACCENT_WHITE = 0xffffff;
+/** HAND mode's identity: the bare-metal silver of the palette's HAND pad. */
+const ACCENT_SILVER = 0xc9d2dc;
 
-/**
- * Milliseconds a button stays in its pressed colour after a press.
- *
- * Field feedback: "buttons don't highlight, there's no indication you clicked".
- * A trigger pull on Quest is often only two or three frames long, so painting
- * the pressed state for exactly as long as the button is held is invisible.
- * This holds it long enough to register as a flash without feeling laggy.
- */
-const PRESS_FLASH_MS = 120;
+/** How many skin dots the markup declares (btn-skin-0 .. btn-skin-N-1). */
+const SKIN_DOT_COUNT = 5;
+
+/** Armory launcher cards, in markup order. */
+const MODE_CARDS: ReadonlyArray<{ id: string; mode: BlasterMode }> = [
+  { id: 'btn-mode-hand', mode: BlasterMode.Hand },
+  { id: 'btn-mode-blaster', mode: BlasterMode.Paint },
+  { id: 'btn-mode-web', mode: BlasterMode.Web },
+];
 
 /**
  * The slice of the UIKit element API this system uses.
@@ -60,8 +75,8 @@ const PRESS_FLASH_MS = 120;
  * `setProperties({ text })` is how a UIKitML element's text is replaced — the
  * compiler turns a text node into a Text child whose content is bound to the
  * *parent* container's `text` property, so writing it on the element that
- * carries the id is correct. `setProperties({ display })` is the show/hide
- * idiom used by IWSDK's own panel examples.
+ * carries the id is correct. `setProperties` merges into the element's current
+ * properties, so each call only has to name what changed.
  *
  * A uikit `Component` extends three's `Mesh`, and @pmndrs/pointer-events
  * dispatches straight onto an object's three listener map, so every name in
@@ -81,11 +96,21 @@ interface HudElement {
   setProperties(properties: Record<string, unknown>): void;
 }
 
-/** The three background values one button cycles through. */
+/** The three looks one button cycles through. Border is optional. */
 interface ButtonStates {
   base: number | string;
   hover: number | string;
   active: number | string;
+  border?: { base: number | string; hover: number | string; active: number | string };
+}
+
+/** One wired button: what it is, how to paint it, and where its pointer is. */
+interface ButtonRecord {
+  element: HudElement;
+  /** Re-evaluated on every paint, so a selected card repaints as selected. */
+  states: () => ButtonStates;
+  hovering: boolean;
+  timer: ReturnType<typeof setTimeout> | undefined;
 }
 
 /** RGBA floats → a 0xRRGGBB int, which is what uikit's colour props accept. */
@@ -107,9 +132,7 @@ function shade(color: number, factor: number): number {
  *
  * uikit has no separate background-opacity property — its panel material takes
  * the alpha straight out of the background colour, and its parser accepts
- * exactly this `rgba(r, g, b, a)` form (integers 0-255, float alpha). Which is
- * also the form the UIKITML already declares outline pills in, so raising the
- * tint on hover is a like-for-like swap.
+ * exactly this `rgba(r, g, b, a)` form (integers 0-255, float alpha).
  */
 function tint(color: number, alpha: number): string {
   return `rgba(${(color >> 16) & 0xff}, ${(color >> 8) & 0xff}, ${color & 0xff}, ${alpha})`;
@@ -120,7 +143,7 @@ function filledStates(accent: number): ButtonStates {
   return {
     base: accent,
     hover: shade(accent, 1.12),
-    active: shade(accent, 0.9),
+    active: shade(accent, 0.82),
   };
 }
 
@@ -128,24 +151,65 @@ function filledStates(accent: number): ButtonStates {
 function outlineStates(accent: number): ButtonStates {
   return {
     base: tint(accent, 0.08),
-    hover: tint(accent, 0.2),
-    active: tint(accent, 0.35),
+    hover: tint(accent, 0.24),
+    active: tint(accent, 0.42),
+    border: { base: accent, hover: shade(accent, 1.25), active: ACCENT_WHITE },
   };
+}
+
+/** Neutral glass pill (CLEAR PAINT, BACK). */
+function glassStates(): ButtonStates {
+  return {
+    base: tint(ACCENT_WHITE, 0.06),
+    hover: tint(ACCENT_WHITE, 0.16),
+    active: tint(ACCENT_WHITE, 0.3),
+    border: {
+      base: tint(ACCENT_WHITE, 0.24),
+      hover: tint(ACCENT_WHITE, 0.6),
+      active: ACCENT_WHITE,
+    },
+  };
+}
+
+/** The colour a launcher wears on the HUD. BLASTER wears the gauntlet skin. */
+function modeAccent(mode: BlasterMode, skinAccent: number): number {
+  if (mode === BlasterMode.Web) return ACCENT_CYAN;
+  if (mode === BlasterMode.Hand) return ACCENT_SILVER;
+  return skinAccent;
+}
+
+/** `window.localStorage`, or undefined where touching it throws. */
+function safeLocalStorage(): SkinStorage | undefined {
+  try {
+    return typeof window === 'undefined' ? undefined : window.localStorage;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
  * Binds the game's signals to the spatial HUD panel and wires its buttons.
  *
- * Everything here is subscription-driven: nothing is recomputed per frame, and
- * this system has no update() at all. Number-to-string work only happens
- * inside a subscription callback, i.e. when a value actually changed, which is
- * event-rate rather than 90 Hz.
+ * Everything that shows state is subscription-driven: number-to-string work
+ * only happens inside a subscription callback, i.e. when a value actually
+ * changed. The one per-frame job is the section cross-fade, and update()
+ * returns on its first line whenever no fade is running.
  *
- * Element references are cached as fields — a fixed dozen, resolved once when
+ * Element references are cached as fields — a fixed set, resolved once when
  * the panel document qualifies. Subscriptions are registered before the panel
- * exists and are written to tolerate that (`?.` everywhere), so a slow-loading
- * document never drops an update: the qualify handler paints the current state
- * of every signal as soon as the elements appear.
+ * exists and tolerate that (`?.` everywhere), so a slow-loading document never
+ * drops an update: the qualify handler paints the current state of every
+ * signal as soon as the elements appear.
+ *
+ * ### Round 8: techno-paint + the Armory
+ *
+ * The title screen gained a sub-screen, the ARMORY (BLASTERS button): pick
+ * the launcher (HAND / BLASTER / WEB, i.e. `globals.blasterMode`, which
+ * BallSpawnSystem keeps in sync with the paint style) and the gauntlet skin
+ * (`globals.blasterSkin`, persisted to localStorage under
+ * `BLASTER.skinStorageKey`). It is not a phase — it is the Idle phase showing a
+ * different section — so starting a round or leaving Idle any other way simply
+ * closes it.
  */
 export class HudSystem extends createSystem({
   hudPanel: {
@@ -157,41 +221,66 @@ export class HudSystem extends createSystem({
   private hudScore!: Signal<number>;
   private hudTimer!: Signal<string>;
   private hudStatus!: Signal<string>;
+  private score!: Signal<number>;
   private bestScore!: Signal<number>;
   private combo!: Signal<number>;
   private targetsAlive!: Signal<number>;
+  private timeLeft!: Signal<number>;
   private activeKind!: Signal<BallKind>;
   private activeStyle!: Signal<BallStyle>;
   private webSubMode!: Signal<WebSubMode>;
   private activeColor!: Signal<readonly [number, number, number, number]>;
+  private blasterMode!: Signal<BlasterMode>;
+  private blasterSkin!: Signal<number>;
   private sceneScanMissing!: Signal<boolean>;
   /** Session out of focus. Written by GameStateSystem. @see applyPaused */
   private paused!: Signal<boolean>;
   private events!: GameEventBuffer;
 
-  /**
-   * Live press-flash timers, so a system teardown never leaves a setTimeout
-   * holding a reference to a disposed panel element.
-   */
-  private readonly flashTimers = new Set<ReturnType<typeof setTimeout>>();
+  /** Every wired button, so a selection change can repaint the affected ones. */
+  private readonly buttons = new Map<string, ButtonRecord>();
+
+  /** True while the Idle phase is showing the Armory instead of the title. */
+  private armoryOpen = false;
+  /** Best score when the current round started; NEW BEST compares against it. */
+  private bestAtRoundStart = 0;
+  /** Last urgency painted on the timer, so the per-tick subscription is a compare. */
+  private timerUrgent = false;
+
+  /** The section currently fading in, and how far through it is (seconds). */
+  private fadingSection: HudElement | undefined;
+  private fadeElapsed = 0;
 
   // Cached element handles — one fixed set, never grows.
   private sectionIdle?: HudElement;
+  private sectionArmory?: HudElement;
   private sectionPlaying?: HudElement;
   private sectionGameOver?: HudElement;
   private sectionChill?: HudElement;
+  private shownSection?: HudElement;
   private scanNotice?: HudElement;
   private scanNoticeText?: HudElement;
   private scoreText?: HudElement;
   private timerText?: HudElement;
+  private timerBar?: HudElement;
   private comboPill?: HudElement;
   private targetsText?: HudElement;
   private statusText?: HudElement;
   private chillStatusText?: HudElement;
   private finalText?: HudElement;
   private bestText?: HudElement;
+  private newBestBadge?: HudElement;
   private ammoText?: HudElement;
   private ammoSwatch?: HudElement;
+  private modeChip?: HudElement;
+  private loadoutMode?: HudElement;
+  private loadoutSkin?: HudElement;
+  private loadoutSwatch?: HudElement;
+  private armoryModeDesc?: HudElement;
+  private armorySkinCard?: HudElement;
+  private armorySkinSwatch?: HudElement;
+  private armorySkinName?: HudElement;
+  private armorySkinIndex?: HudElement;
   private pausedBanner?: HudElement;
 
   init() {
@@ -199,22 +288,28 @@ export class HudSystem extends createSystem({
     this.hudScore = this.globals.hudScore as Signal<number>;
     this.hudTimer = this.globals.hudTimer as Signal<string>;
     this.hudStatus = this.globals.hudStatus as Signal<string>;
+    this.score = this.globals.score as Signal<number>;
     this.bestScore = this.globals.bestScore as Signal<number>;
     this.combo = this.globals.combo as Signal<number>;
     this.targetsAlive = this.globals.targetsAlive as Signal<number>;
+    this.timeLeft = this.globals.timeLeft as Signal<number>;
     this.activeKind = this.globals.activeKind as Signal<BallKind>;
     this.activeStyle = this.globals.activeStyle as Signal<BallStyle>;
     this.webSubMode = this.globals.webSubMode as Signal<WebSubMode>;
     this.activeColor = this.globals.activeColor as Signal<
       readonly [number, number, number, number]
     >;
+    this.blasterMode = this.globals.blasterMode as Signal<BlasterMode>;
+    this.blasterSkin = this.globals.blasterSkin as Signal<number>;
     this.sceneScanMissing = this.globals.sceneScanMissing as Signal<boolean>;
     this.paused = this.globals.paused as Signal<boolean>;
     this.events = this.globals.gameEvents as GameEventBuffer;
 
     this.cleanupFuncs.push(() => {
-      for (const timer of this.flashTimers) clearTimeout(timer);
-      this.flashTimers.clear();
+      for (const record of this.buttons.values()) {
+        if (record.timer !== undefined) clearTimeout(record.timer);
+      }
+      this.buttons.clear();
     });
 
     this.cleanupFuncs.push(
@@ -237,26 +332,84 @@ export class HudSystem extends createSystem({
       this.gamePhase.subscribe((phase) => this.applyPhase(phase)),
       this.hudScore.subscribe((score) => this.applyScore(score)),
       this.hudTimer.subscribe((timer) => this.setText(this.timerText, timer)),
+      this.timeLeft.subscribe(() => this.applyTimerUrgency()),
       this.hudStatus.subscribe((status) => this.applyStatus(status)),
-      this.bestScore.subscribe((best) =>
-        this.setText(this.bestText, `Best ${best}`),
-      ),
+      this.score.subscribe(() => this.applyNewBest()),
+      this.bestScore.subscribe((best) => {
+        this.setText(this.bestText, `BEST ${formatScore(best)}`);
+        this.applyNewBest();
+      }),
       this.combo.subscribe((combo) => this.applyCombo(combo)),
       this.targetsAlive.subscribe((alive) =>
-        this.setText(this.targetsText, alive === 1 ? '1 bot' : `${alive} bots`),
+        this.setText(this.targetsText, botsLabel(alive)),
       ),
       this.activeKind.subscribe(() => this.applyAmmo()),
       this.activeStyle.subscribe(() => this.applyAmmo()),
       this.webSubMode.subscribe(() => this.applyAmmo()),
       this.activeColor.subscribe(() => this.applyAmmo()),
+      this.blasterMode.subscribe(() => this.applyLoadout()),
+      this.blasterSkin.subscribe(() => this.applyLoadout()),
       this.sceneScanMissing.subscribe(() => this.applyScanNotice()),
       this.paused.subscribe(() => this.applyPaused()),
     );
   }
 
+  /**
+   * The section cross-fade: the newly shown section rises into place and
+   * fades up over HUD.sectionFadeSec. A handful of frames per phase change;
+   * every other frame this returns immediately.
+   */
+  update(delta: number) {
+    const section = this.fadingSection;
+    if (!section) return;
+    this.fadeElapsed += delta;
+    const t = HUD.sectionFadeSec > 0 ? this.fadeElapsed / HUD.sectionFadeSec : 1;
+    if (t >= 1) {
+      section.setProperties({ opacity: 1, transformTranslateY: 0 });
+      this.fadingSection = undefined;
+      return;
+    }
+    const eased = 1 - (1 - t) * (1 - t) * (1 - t);
+    section.setProperties({
+      opacity: eased,
+      transformTranslateY: (1 - eased) * HUD.sectionRiseCm,
+    });
+  }
+
+  // ---- Public API (harness + future callers) -------------------------------
+
+  /** Show the Armory over the title screen. A no-op outside Idle. */
+  openArmory(): void {
+    if (this.gamePhase.peek() !== GamePhase.Idle) return;
+    this.armoryOpen = true;
+    this.applyPhase(GamePhase.Idle);
+  }
+
+  /** Back from the Armory to the title screen. */
+  closeArmory(): void {
+    if (!this.armoryOpen) return;
+    this.armoryOpen = false;
+    this.applyPhase(this.gamePhase.peek());
+  }
+
+  /** Load a launcher. BallSpawnSystem keeps activeStyle in step. */
+  selectMode(mode: BlasterMode): void {
+    if (this.blasterMode.peek() !== mode) this.blasterMode.value = mode;
+  }
+
+  /** Wear skin `index` (clamped) and remember it on this device. */
+  selectSkin(index: number): void {
+    const next = clampIndex(index, BLASTER.skins.length);
+    if (this.blasterSkin.peek() !== next) this.blasterSkin.value = next;
+    writeSkin(safeLocalStorage(), BLASTER.skinStorageKey, next);
+  }
+
+  // ---- Binding -------------------------------------------------------------
+
   /** Resolve every id the markup declares. Missing ids stay undefined. */
   private bindElements(document: UIKitDocument): void {
     this.sectionIdle = element(document, 'section-idle');
+    this.sectionArmory = element(document, 'section-armory');
     this.sectionPlaying = element(document, 'section-playing');
     this.sectionGameOver = element(document, 'section-gameover');
     this.sectionChill = element(document, 'section-chill');
@@ -264,19 +417,38 @@ export class HudSystem extends createSystem({
     this.scanNoticeText = element(document, 'scan-notice-text');
     this.scoreText = element(document, 'hud-score');
     this.timerText = element(document, 'hud-timer');
+    this.timerBar = element(document, 'hud-timer-bar');
     this.comboPill = element(document, 'hud-combo');
     this.targetsText = element(document, 'hud-targets');
     this.statusText = element(document, 'hud-status');
     this.chillStatusText = element(document, 'hud-chill-status');
     this.finalText = element(document, 'hud-final');
     this.bestText = element(document, 'hud-best');
+    this.newBestBadge = element(document, 'hud-newbest');
     this.ammoText = element(document, 'hud-ammo');
     this.ammoSwatch = element(document, 'hud-ammo-swatch');
+    this.modeChip = element(document, 'hud-mode');
+    this.loadoutMode = element(document, 'hud-loadout-mode');
+    this.loadoutSkin = element(document, 'hud-loadout-skin');
+    this.loadoutSwatch = element(document, 'hud-loadout-swatch');
+    this.armoryModeDesc = element(document, 'armory-mode-desc');
+    this.armorySkinCard = element(document, 'armory-skin-card');
+    this.armorySkinSwatch = element(document, 'armory-skin-swatch');
+    this.armorySkinName = element(document, 'armory-skin-name');
+    this.armorySkinIndex = element(document, 'armory-skin-index');
     this.pausedBanner = element(document, 'hud-paused');
+    this.shownSection = undefined;
   }
 
   private releaseElements(): void {
+    for (const record of this.buttons.values()) {
+      if (record.timer !== undefined) clearTimeout(record.timer);
+    }
+    this.buttons.clear();
+    this.fadingSection = undefined;
+    this.shownSection = undefined;
     this.sectionIdle = undefined;
+    this.sectionArmory = undefined;
     this.sectionPlaying = undefined;
     this.sectionGameOver = undefined;
     this.sectionChill = undefined;
@@ -284,103 +456,158 @@ export class HudSystem extends createSystem({
     this.scanNoticeText = undefined;
     this.scoreText = undefined;
     this.timerText = undefined;
+    this.timerBar = undefined;
     this.comboPill = undefined;
     this.targetsText = undefined;
     this.statusText = undefined;
     this.chillStatusText = undefined;
     this.finalText = undefined;
     this.bestText = undefined;
+    this.newBestBadge = undefined;
     this.ammoText = undefined;
     this.ammoSwatch = undefined;
+    this.modeChip = undefined;
+    this.loadoutMode = undefined;
+    this.loadoutSkin = undefined;
+    this.loadoutSwatch = undefined;
+    this.armoryModeDesc = undefined;
+    this.armorySkinCard = undefined;
+    this.armorySkinSwatch = undefined;
+    this.armorySkinName = undefined;
+    this.armorySkinIndex = undefined;
     this.pausedBanner = undefined;
   }
 
-  /** START / CHILL MODE / PLAY AGAIN / SCAN ROOM / EXIT / paint buttons. */
+  /** Every button on the panel, each through the one press affordance. */
   private wireButtons(document: UIKitDocument): void {
-    const start = () => this.world.getSystem(GameStateSystem)?.startGame();
+    const game = () => this.world.getSystem(GameStateSystem);
+    const start = () => {
+      this.armoryOpen = false;
+      game()?.startGame();
+    };
 
-    this.wireInteractiveButton(document, 'btn-start', ACCENT_AMBER, start);
-    this.wireInteractiveButton(document, 'btn-restart', ACCENT_LIME, start);
-    this.wireInteractiveButton(document, 'btn-chill', ACCENT_SKY, () => {
-      this.world.getSystem(GameStateSystem)?.startChill();
-    });
+    // ---- Title -------------------------------------------------------------
+    this.wireInteractiveButton(document, 'btn-start', () => filledStates(ACCENT_AMBER), start);
+    this.wireInteractiveButton(document, 'btn-chill', () => outlineStates(ACCENT_CYAN), () =>
+      game()?.startChill(),
+    );
     // WEB MODE is a shortcut, not a phase. @see startWebMode
-    this.wireInteractiveButton(
-      document,
-      'btn-web',
-      ACCENT_CORAL,
-      () => this.startWebMode(),
-      // Glass base rather than the coral wash the other outline pills use: the
-      // markup declares it white-tinted with a coral border, and hover/press
-      // bring the coral up from behind it.
-      (accent) => ({
-        base: tint(ACCENT_WHITE, 0.1),
-        hover: tint(accent, 0.22),
-        active: tint(accent, 0.38),
-      }),
+    this.wireInteractiveButton(document, 'btn-web', () => outlineStates(ACCENT_CORAL), () =>
+      this.startWebMode(),
+    );
+    this.wireInteractiveButton(document, 'btn-armory', () => outlineStates(ACCENT_VIOLET), () =>
+      this.openArmory(),
     );
     // The only thing in the game that ever calls initiateRoomCapture, and it
-    // does so from inside a click handler — a user gesture by construction,
-    // which is the whole difference between this and round 2's timer.
-    this.wireInteractiveButton(
-      document,
-      'btn-scan-room',
-      ACCENT_AMBER,
-      () => this.requestRoomScan(),
-      outlineStates,
+    // does so from inside a click handler — a user gesture by construction.
+    this.wireInteractiveButton(document, 'btn-scan-room', () => outlineStates(ACCENT_AMBER), () =>
+      this.requestRoomScan(),
+    );
+
+    // ---- Round over ----------------------------------------------------------
+    this.wireInteractiveButton(document, 'btn-restart', () => filledStates(ACCENT_LIME), start);
+
+    // ---- Chill ---------------------------------------------------------------
+    this.wireInteractiveButton(document, 'btn-exit-chill', () => outlineStates(ACCENT_CORAL), () =>
+      game()?.exitChill(),
+    );
+    this.wireInteractiveButton(document, 'btn-save-painting', () => outlineStates(ACCENT_AMBER), () =>
+      this.world.getSystem(EaselSystem)?.savePainting(),
+    );
+    this.wireInteractiveButton(document, 'btn-new-canvas', () => outlineStates(ACCENT_CYAN), () =>
+      this.world.getSystem(EaselSystem)?.newCanvas(),
+    );
+    this.wireInteractiveButton(document, 'btn-orientation', () => outlineStates(ACCENT_LIME), () =>
+      this.rotateCanvas(),
+    );
+
+    // ---- Footer --------------------------------------------------------------
+    this.wireInteractiveButton(document, 'btn-clear', glassStates, () =>
+      this.world.getSystem(SplatterSystem)?.clearAll(),
+    );
+
+    // ---- Armory --------------------------------------------------------------
+    this.wireInteractiveButton(document, 'btn-armory-back', glassStates, () =>
+      this.closeArmory(),
     );
     this.wireInteractiveButton(
       document,
-      'btn-exit-chill',
-      ACCENT_CORAL,
-      () => this.world.getSystem(GameStateSystem)?.exitChill(),
-      outlineStates,
+      'btn-armory-play',
+      () => filledStates(ACCENT_AMBER),
+      start,
     );
-    this.wireInteractiveButton(
-      document,
-      'btn-save-painting',
-      ACCENT_AMBER,
-      () => this.world.getSystem(EaselSystem)?.savePainting(),
-      outlineStates,
-    );
-    this.wireInteractiveButton(
-      document,
-      'btn-new-canvas',
-      ACCENT_SKY,
-      () => this.world.getSystem(EaselSystem)?.newCanvas(),
-      outlineStates,
-    );
-    this.wireInteractiveButton(
-      document,
-      'btn-orientation',
-      ACCENT_LIME,
-      () => this.rotateCanvas(),
-      outlineStates,
-    );
-    // The glass footer pill is white-tinted rather than accented, but wears
-    // the same three-state treatment so nothing on the panel feels dead.
-    this.wireInteractiveButton(
-      document,
-      'btn-clear',
-      ACCENT_WHITE,
-      () => this.world.getSystem(SplatterSystem)?.clearAll(),
-      (accent) => ({
-        base: tint(accent, 0.07),
-        hover: tint(accent, 0.16),
-        active: tint(accent, 0.28),
-      }),
-    );
+    for (const card of MODE_CARDS) {
+      this.wireInteractiveButton(
+        document,
+        card.id,
+        () => this.modeCardStates(card.mode),
+        () => this.selectMode(card.mode),
+      );
+    }
+    const step = (delta: number) => () =>
+      this.selectSkin(cycleIndex(this.blasterSkin.peek(), delta, BLASTER.skins.length));
+    this.wireInteractiveButton(document, 'btn-skin-prev', () => outlineStates(ACCENT_VIOLET), step(-1));
+    this.wireInteractiveButton(document, 'btn-skin-next', () => outlineStates(ACCENT_VIOLET), step(1));
+    for (let i = 0; i < SKIN_DOT_COUNT; i++) {
+      const id = `btn-skin-${i}`;
+      if (i >= BLASTER.skins.length) {
+        // Fewer skins than dots: hide the spare dots instead of wiring them.
+        element(document, id)?.setProperties({ display: 'none' });
+        continue;
+      }
+      this.wireInteractiveButton(
+        document,
+        id,
+        () => this.skinDotStates(i),
+        () => this.selectSkin(i),
+        HUD.skinDotHoverScale,
+      );
+    }
+  }
+
+  /** Launcher card: lit in its own colour when loaded, glass otherwise. */
+  private modeCardStates(mode: BlasterMode): ButtonStates {
+    const accent = modeAccent(mode, this.skinAccent());
+    const selected = this.blasterMode.peek() === mode;
+    return {
+      base: selected ? tint(accent, 0.2) : tint(ACCENT_WHITE, 0.04),
+      hover: selected ? tint(accent, 0.3) : tint(accent, 0.12),
+      active: tint(accent, 0.42),
+      border: {
+        base: selected ? accent : tint(ACCENT_WHITE, 0.18),
+        hover: accent,
+        active: ACCENT_WHITE,
+      },
+    };
+  }
+
+  /** Skin dot: always its own accent; the worn one wears a white ring. */
+  private skinDotStates(index: number): ButtonStates {
+    const skin = BLASTER.skins[index];
+    const accent = hexToInt(skin?.accent ?? '#ffffff');
+    const selected = this.blasterSkin.peek() === index;
+    return {
+      base: accent,
+      hover: shade(accent, 1.15),
+      active: shade(accent, 0.8),
+      border: {
+        base: selected ? ACCENT_WHITE : tint(ACCENT_WHITE, 0.15),
+        hover: selected ? ACCENT_WHITE : tint(ACCENT_WHITE, 0.6),
+        active: ACCENT_WHITE,
+      },
+    };
   }
 
   /**
-   * Give one button the full press affordance: hover tint, a timed pressed
-   * flash, a click cue, and its action.
+   * Give one button the full press affordance: hover tint + swell, a timed
+   * pressed flash + squash, a click cue, and its action.
    *
-   * Every button on the panel goes through here, which is the point — round 2
-   * shipped bare `click` handlers and players could not tell a press had
-   * landed. A ray click in XR gives no tactile feedback at all, so the panel
-   * has to do the confirming: the colour moves under the cursor, snaps darker
-   * on the press, and FeedbackSystem puts a tick under it off `UiClick`.
+   * Every button on the panel goes through here — round 2 shipped bare
+   * `click` handlers and players could not tell a press had landed. A ray
+   * click in XR gives no tactile feedback at all, so the panel does the
+   * confirming: the colour moves and the pill swells under the cursor, snaps
+   * darker and squashes on the press, and FeedbackSystem puts a tick under it
+   * off `UiClick`.
    *
    * The flash timer and the hover flag interact: the timer restores whichever
    * state the pointer is actually in when it fires, so releasing outside the
@@ -389,41 +616,37 @@ export class HudSystem extends createSystem({
   private wireInteractiveButton(
     document: UIKitDocument,
     id: string,
-    accent: number,
+    states: () => ButtonStates,
     action: () => void,
-    states: (accent: number) => ButtonStates = filledStates,
+    hoverScale: number = HUD.buttonHoverScale,
   ): void {
     const button = element(document, id);
     if (!button) return;
 
-    const { base, hover, active } = states(accent);
-    let hovering = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const paint = (background: number | string) =>
-      button.setProperties({ backgroundColor: background });
+    const record: ButtonRecord = {
+      element: button,
+      states,
+      hovering: false,
+      timer: undefined,
+    };
+    this.buttons.set(id, record);
 
     const flash = () => {
-      paint(active);
-      if (timer !== undefined) {
-        clearTimeout(timer);
-        this.flashTimers.delete(timer);
-      }
-      timer = setTimeout(() => {
-        if (timer !== undefined) this.flashTimers.delete(timer);
-        timer = undefined;
-        paint(hovering ? hover : base);
-      }, PRESS_FLASH_MS);
-      this.flashTimers.add(timer);
+      this.paintButton(record, 'active');
+      if (record.timer !== undefined) clearTimeout(record.timer);
+      record.timer = setTimeout(() => {
+        record.timer = undefined;
+        this.paintButton(record, record.hovering ? 'hover' : 'base', hoverScale);
+      }, HUD.pressFlashMs);
     };
 
     button.addEventListener('pointerenter', () => {
-      hovering = true;
-      if (timer === undefined) paint(hover);
+      record.hovering = true;
+      if (record.timer === undefined) this.paintButton(record, 'hover', hoverScale);
     });
     button.addEventListener('pointerleave', () => {
-      hovering = false;
-      if (timer === undefined) paint(base);
+      record.hovering = false;
+      if (record.timer === undefined) this.paintButton(record, 'base');
     });
     // Flash on the press itself rather than waiting for the release, so the
     // confirmation is immediate even on a long hold.
@@ -435,7 +658,40 @@ export class HudSystem extends createSystem({
       this.events.emit(GameEvent.UiClick, 0, 0, 0, 0);
       action();
     });
+
+    this.paintButton(record, 'base');
   }
+
+  /** Paint one button in one of its three states. */
+  private paintButton(
+    record: ButtonRecord,
+    state: 'base' | 'hover' | 'active',
+    hoverScale: number = HUD.buttonHoverScale,
+  ): void {
+    const looks = record.states();
+    const scale =
+      state === 'active'
+        ? HUD.buttonPressScale
+        : state === 'hover'
+          ? hoverScale
+          : 1;
+    const properties: Record<string, unknown> = {
+      backgroundColor: looks[state],
+      transformScaleX: scale,
+      transformScaleY: scale,
+    };
+    if (looks.border) properties.borderColor = looks.border[state];
+    record.element.setProperties(properties);
+  }
+
+  /** Repaint a wired button in whatever state its pointer leaves it in. */
+  private refreshButton(id: string): void {
+    const record = this.buttons.get(id);
+    if (!record || record.timer !== undefined) return;
+    this.paintButton(record, record.hovering ? 'hover' : 'base');
+  }
+
+  // ---- Actions ---------------------------------------------------------------
 
   /**
    * The title screen's WEB MODE button: drop into the chill sandbox with web
@@ -443,57 +699,35 @@ export class HudSystem extends createSystem({
    *
    * ### Why this is a shortcut and not a phase
    *
-   * Round 4 shipped a real `GamePhase.Web` — a separate sandbox with the
-   * palette hidden — and round 5 deleted it, because a mode you have to leave
-   * cannot give you "web mode AND chill mode". That deletion was right and is
-   * not being undone. But it also removed the only *signpost*: webbing became
-   * something you had to already know about to find, one chip in a row of five
-   * on your own wrist. Round 6's field note was exactly that — "I want web on
-   * the title screen as well".
-   *
-   * So the button is two existing things done together, and nothing else:
-   * `startChill()` plus `activeStyle = Web`. The player lands in the ordinary
-   * chill sandbox with shooters on both wrists, EXIT CHILL leaves the way it
-   * always did, and touching any paint dab or chip switches ammo the way it
-   * always did. Nothing about it is exclusive, so there is nothing to get
-   * stuck in.
-   *
-   * The sub-mode is deliberately left alone: whichever of splat or tether the
-   * player last chose is what they get, because it is a preference and not part
-   * of what this button means.
+   * Round 4 shipped a real `GamePhase.Web` and round 5 deleted it, because a
+   * mode you have to leave cannot give you "web mode AND chill mode". Round 6's
+   * field note was "I want web on the title screen as well", so the button is
+   * two existing things done together, and nothing else: `startChill()` plus
+   * `activeStyle = Web`. EXIT CHILL leaves the way it always did, and touching
+   * any paint dab or chip switches ammo the way it always did.
    */
   private startWebMode(): void {
     const game = this.world.getSystem(GameStateSystem);
     if (!game) return;
     game.startChill();
-    // Written unconditionally rather than through a peek-and-compare: the
-    // signal dedupes identical writes itself, and the point of the button is
-    // that pressing it always leaves you holding webbing.
     this.activeStyle.value = BallStyle.Web;
   }
 
   /**
    * Turn the canvas on its side, and own up to the cost in the status line —
-   * a browser canvas clears whenever its width or height is written, so there
-   * is no rotating a painting in place.
+   * a browser canvas clears whenever its width or height is written.
    */
   private rotateCanvas(): void {
     const easel = this.world.getSystem(EaselSystem);
     if (!easel) return;
     easel.rotateCanvas();
-    // GameStateSystem only rewrites hudStatus on a phase change, and Chill has
-    // none until EXIT CHILL, so this line stays put for the rest of the visit.
     this.hudStatus.value = CHILL.rotatedText;
   }
 
   /**
-   * Ask Quest to run Space Setup, and say what happened.
-   *
-   * Three outcomes, all of which the player has to be told apart, because from
-   * their side "I pressed the button and nothing changed" looks identical:
-   * capture started (go and finish it), no such API (do it from the system
-   * menu), or already asked once this session (Meta documents the call as
-   * once-per-session, so the second press genuinely cannot work).
+   * Ask Quest to run Space Setup, and say what happened: capture started, no
+   * such API, or already asked once this session (Meta documents the call as
+   * once-per-session).
    */
   private requestRoomScan(): void {
     const scanner = this.world.getSystem(SceneScanSystem);
@@ -511,103 +745,139 @@ export class HudSystem extends createSystem({
     );
   }
 
+  // ---- Painters --------------------------------------------------------------
+
   /**
-   * Show the room-scan notice only when there is both something to say and
-   * somewhere to say it: no scene model, and the player standing on the title
-   * screen rather than mid-round. Both gates matter — a notice that appeared
-   * during a round would be an amber strip nobody can act on, and the SCAN
-   * ROOM button drops you out of the session into Space Setup.
+   * Show the room-scan notice only on the title screen with no scene model:
+   * a notice mid-round is a strip nobody can act on, and SCAN ROOM drops you
+   * out of the session into Space Setup.
    */
   private applyScanNotice(): void {
     const show =
-      this.sceneScanMissing.peek() && this.gamePhase.peek() === GamePhase.Idle;
+      this.sceneScanMissing.peek() &&
+      this.gamePhase.peek() === GamePhase.Idle &&
+      !this.armoryOpen;
     this.scanNotice?.setProperties({ display: show ? 'flex' : 'none' });
   }
 
   /** Bring a freshly bound document up to date with every signal at once. */
   private paintEverything(): void {
-    const alive = this.targetsAlive.peek();
     this.applyPhase(this.gamePhase.peek());
     this.applyScore(this.hudScore.peek());
     this.applyCombo(this.combo.peek());
     this.applyAmmo();
+    this.applyLoadout();
+    this.applyTimerUrgency();
     this.setText(this.timerText, this.hudTimer.peek());
     this.applyStatus(this.hudStatus.peek());
-    this.setText(this.bestText, `Best ${this.bestScore.peek()}`);
-    this.setText(this.targetsText, alive === 1 ? '1 bot' : `${alive} bots`);
+    this.setText(this.bestText, `BEST ${formatScore(this.bestScore.peek())}`);
+    this.setText(this.targetsText, botsLabel(this.targetsAlive.peek()));
   }
 
-  /**
-   * One status signal, two places to show it: the live-round line and the chill
-   * panel. Only one of the two is ever on screen, so writing both is cheaper
-   * than deciding which.
-   */
+  /** One status signal, two places to show it (live round and chill). */
   private applyStatus(status: string): void {
     this.setText(this.statusText, status);
     this.setText(this.chillStatusText, status);
   }
 
-  /** Exactly one phase section is visible; the footer never hides. */
+  /** Exactly one section is visible; the footer never hides. */
   private applyPhase(phase: GamePhase): void {
-    this.sectionIdle?.setProperties({
-      display: phase === GamePhase.Idle ? 'flex' : 'none',
-    });
-    // Countdown shares the playing layout so the score/timer do not pop in.
-    this.sectionPlaying?.setProperties({
-      display:
-        phase === GamePhase.Countdown || phase === GamePhase.Playing
-          ? 'flex'
-          : 'none',
-    });
-    this.sectionGameOver?.setProperties({
-      display: phase === GamePhase.GameOver ? 'flex' : 'none',
-    });
-    this.sectionChill?.setProperties({
-      display: phase === GamePhase.Chill ? 'flex' : 'none',
-    });
-    // Lives inside the idle section, so it has to follow the phase as well as
-    // its own signal.
+    if (phase !== GamePhase.Idle) this.armoryOpen = false;
+    if (phase === GamePhase.Countdown) {
+      this.bestAtRoundStart = this.bestScore.peek();
+    }
+
+    const target =
+      phase === GamePhase.Idle
+        ? this.armoryOpen
+          ? this.sectionArmory
+          : this.sectionIdle
+        : phase === GamePhase.Countdown || phase === GamePhase.Playing
+          ? this.sectionPlaying
+          : phase === GamePhase.GameOver
+            ? this.sectionGameOver
+            : this.sectionChill;
+    this.showSection(target);
+
+    // Lives inside the idle section, so it follows the phase too.
     this.applyScanNotice();
-    // Same shape: shown for a phase AND a signal, so it follows both.
     this.applyPaused();
+    this.applyNewBest();
+    this.applyTimerUrgency();
     this.applyDock(phase);
   }
 
   /**
+   * Swap the visible section, and fade the newcomer in. Countdown → Playing
+   * keeps the same section, so the live HUD never re-fades mid-round.
+   */
+  private showSection(target: HudElement | undefined): void {
+    const sections = [
+      this.sectionIdle,
+      this.sectionArmory,
+      this.sectionPlaying,
+      this.sectionGameOver,
+      this.sectionChill,
+    ];
+    for (const section of sections) {
+      if (section && section !== target) section.setProperties({ display: 'none' });
+    }
+    if (!target) return;
+    if (this.shownSection === target) {
+      target.setProperties({ display: 'flex' });
+      return;
+    }
+    this.shownSection = target;
+    if (HUD.sectionFadeSec > 0) {
+      target.setProperties({
+        display: 'flex',
+        opacity: 0,
+        transformTranslateY: HUD.sectionRiseCm,
+      });
+      this.fadingSection = target;
+      this.fadeElapsed = 0;
+    } else {
+      target.setProperties({ display: 'flex', opacity: 1, transformTranslateY: 0 });
+    }
+  }
+
+  /**
    * The PAUSED pill across the top of the panel, up exactly while a timed
-   * phase (Countdown / Playing / GameOver) is frozen for lack of focus.
-   *
-   * A pill rather than only the status line because the status line is not on
-   * every timed screen — ROUND OVER has none — and because on Quest the most
-   * likely way to be looking at a paused HUD is through the dimmed scene
-   * behind the system menu, where a small grey line is easy to miss. Idle and
-   * Chill never show it: nothing in them is frozen, so there is nothing to
-   * announce.
+   * phase is frozen for lack of focus. Idle and Chill never show it.
    */
   private applyPaused(): void {
     const show = this.paused.peek() && isTimedPhase(this.gamePhase.peek());
     this.pausedBanner?.setProperties({ display: show ? 'flex' : 'none' });
   }
 
+  /** NEW BEST badge on the round summary, against the best at round start. */
+  private applyNewBest(): void {
+    const show =
+      this.gamePhase.peek() === GamePhase.GameOver &&
+      isNewBest(this.score.peek(), this.bestAtRoundStart);
+    this.newBestBadge?.setProperties({ display: show ? 'flex' : 'none' });
+  }
+
+  /** The clock turns coral for the last HUD.timerUrgentSec of a round. */
+  private applyTimerUrgency(): void {
+    const urgent =
+      this.gamePhase.peek() === GamePhase.Playing &&
+      this.timeLeft.peek() <= HUD.timerUrgentSec;
+    if (urgent === this.timerUrgent) return;
+    this.timerUrgent = urgent;
+    const color = urgent ? ACCENT_CORAL : ACCENT_CYAN;
+    this.timerText?.setProperties({ color });
+    this.timerBar?.setProperties({ backgroundColor: color });
+  }
+
   /**
    * Move the panel out of the firing line while the player is shooting.
    *
-   * Field feedback: a head-locked panel at chest height, one metre out, is
-   * exactly where paintballs go — players were hitting their own HUD. So
    * Playing and Chill get a low, small, lazy dock (a watch strip at the bottom
    * of your view) and every menu phase gets the comfortable reading placement
-   * back.
-   *
-   * Follower's fields are written two different ways on purpose: `offsetPosition`
-   * is a Vec3, and elics throws on both getValue and setValue for vector types,
-   * so it goes through `getVectorView` and three float writes. The scalars go
-   * through `setValue`. `needsPositionSync` makes the panel snap to the new
-   * placement on the next FollowSystem tick instead of sliding across the room
-   * at the docked (deliberately sluggish) speed.
-   *
-   * The behaviour swap is not cosmetic: `FollowBehavior.PivotY` overwrites the
-   * follow target's Y with the head's own Y, which silently discards the whole
-   * point of a low dock. Face-target following honours the offset.
+   * back. `offsetPosition` is a Vec3 — elics throws on getValue/setValue for
+   * vector types — so it goes through `getVectorView`. `FollowBehavior.PivotY`
+   * discards the Y offset, so the low dock needs face-target following.
    */
   private applyDock(phase: GamePhase): void {
     const docked = phase === GamePhase.Playing || phase === GamePhase.Chill;
@@ -648,16 +918,10 @@ export class HudSystem extends createSystem({
   }
 
   /**
-   * Resize the panel by moving its PanelUI bounds, NOT by scaling its object3D.
-   *
-   * PanelUISystem re-derives the document's target dimensions every frame as
-   * `maxWidth / entity.worldScale.x`, so an object3D scale is divided straight
-   * back out and the rendered panel never changes size. Writing the bounds is
-   * the size control that actually works.
-   *
-   * It also fixes the shot-blocking rectangle for free: BallSpawnSystem's
-   * ray-vs-panel test measures the same maxWidth × maxHeight, so a smaller
-   * panel swallows a proportionally smaller slice of the room.
+   * Resize the panel by moving its PanelUI bounds, NOT by scaling its object3D
+   * (PanelUISystem divides an object3D scale straight back out). It also
+   * shrinks BallSpawnSystem's shot-blocking rectangle, which measures the same
+   * bounds.
    */
   private applyPanelSize(entity: Entity, scale: number): void {
     entity.setValue(PanelUI, 'maxWidth', HUD.baseWidth * scale);
@@ -665,40 +929,31 @@ export class HudSystem extends createSystem({
   }
 
   private applyScore(score: number): void {
-    const text = String(score);
+    const text = formatScore(score);
     this.setText(this.scoreText, text);
     this.setText(this.finalText, text);
   }
 
   /**
-   * The pill only exists visually while the multiplier is actually above ×1,
-   * and it heats up through the palette as the streak climbs.
+   * The pill only exists while the multiplier is above x1, and heats up
+   * through the accents as the streak climbs: amber, coral, violet.
    */
   private applyCombo(combo: number): void {
     const background =
-      combo >= 4 ? ACCENT_SKY : combo === 3 ? ACCENT_CORAL : ACCENT_AMBER;
+      combo >= 4 ? ACCENT_VIOLET : combo === 3 ? ACCENT_CORAL : ACCENT_AMBER;
     this.comboPill?.setProperties({
       display: combo > 1 ? 'flex' : 'none',
-      // 'x', not '×' — the bundled MSDF font has no glyph for U+00D7.
-      text: `x${combo}`,
+      // 'x', not U+00D7 — the bundled MSDF font has no glyph for it.
+      text: `COMBO x${combo}`,
       backgroundColor: background,
     });
   }
 
   /**
-   * The footer says what is loaded, and since round 6 that is a three-axis
-   * question. Web ammo overrides the paint halves — a white swatch — for the
-   * same reason {@link resolveShot} does: the paint choice is still sitting
-   * there waiting, but it is not what would come out of the barrel, and a
-   * footer showing STICKY in red while you throw white webbing would be a lie.
-   *
-   * The sub-mode then overrides the word itself: WEB and TETHER fly
-   * identically and do completely different things on contact, which is
-   * precisely what a one-word footer is for. The swatch stays white for both —
-   * a tether is still webbing.
-   *
-   * The rule lives in {@link ammoLabel} over in types.ts rather than here, so
-   * it can be tested without a panel.
+   * The footer says what is loaded. Web ammo overrides the paint halves — a
+   * white swatch — for the same reason {@link resolveShot} does, and the
+   * sub-mode overrides the word (WEB vs TETHER). The rule lives in
+   * {@link ammoLabel} so it is testable without a panel.
    */
   private applyAmmo(): void {
     const web = this.activeStyle.peek() === BallStyle.Web;
@@ -715,6 +970,48 @@ export class HudSystem extends createSystem({
         web ? WEB_BALL_COLOR : this.activeColor.peek(),
       ),
     });
+  }
+
+  /** The loaded skin's accent as 0xRRGGBB. */
+  private skinAccent(): number {
+    const skin = BLASTER.skins[clampIndex(this.blasterSkin.peek(), BLASTER.skins.length)];
+    return hexToInt(skin?.accent ?? '#ff4f81');
+  }
+
+  /**
+   * Launcher + skin, everywhere they show: the footer chip, the title's
+   * LOADOUT readout, and the Armory's cards, description, skin card and dots.
+   */
+  private applyLoadout(): void {
+    const mode = this.blasterMode.peek();
+    const skinIndex = clampIndex(this.blasterSkin.peek(), BLASTER.skins.length);
+    const skin = BLASTER.skins[skinIndex];
+    const accent = hexToInt(skin?.accent ?? '#ff4f81');
+    const trim = hexToInt(skin?.trim ?? '#ffffff');
+    const label = BLASTER_MODE_LABELS[mode] ?? 'BLASTER';
+    const mAccent = modeAccent(mode, accent);
+
+    this.modeChip?.setProperties({
+      text: label,
+      color: mAccent,
+      borderColor: mAccent,
+      backgroundColor: tint(mAccent, 0.1),
+    });
+    this.setText(this.loadoutMode, label);
+    this.setText(this.loadoutSkin, skin?.name ?? '');
+    this.loadoutSwatch?.setProperties({ backgroundColor: accent, borderColor: trim });
+
+    this.setText(this.armoryModeDesc, BLASTER_MODE_DESCRIPTIONS[mode] ?? '');
+    this.setText(this.armorySkinName, skin?.name ?? '');
+    this.setText(
+      this.armorySkinIndex,
+      skinCounterLabel(skinIndex, BLASTER.skins.length),
+    );
+    this.armorySkinSwatch?.setProperties({ backgroundColor: accent, borderColor: trim });
+    this.armorySkinCard?.setProperties({ borderColor: accent });
+
+    for (const card of MODE_CARDS) this.refreshButton(card.id);
+    for (let i = 0; i < SKIN_DOT_COUNT; i++) this.refreshButton(`btn-skin-${i}`);
   }
 
   private setText(target: HudElement | undefined, text: string): void {

@@ -6,10 +6,53 @@ import {
   setWorldPosition,
   setWorldQuaternion,
 } from '@iwsdk/core';
+import type { Object3D } from '@iwsdk/core';
+import type { Signal } from '@preact/signals-core';
 
 import { PALETTE, WEB } from '../config';
+import { BallKind, BallStyle, BlasterMode, appearFrame } from '../types';
 import { buildFacingBasis, quatFromBasis, smoothingAlpha } from '../wrist-frame';
 import { WristPose, isTracked } from '../wrist-pose';
+
+/** The slice of a three material the palette animates. */
+interface FadeMaterial {
+  opacity: number;
+}
+/** ...and of a lit one, for the paint's inner glow. */
+interface GlowMaterial {
+  emissiveIntensity: number;
+}
+
+/**
+ * Handles to the holo palette's animated decoration, built once by main.ts's
+ * `seedWristPalette` and hung on the palette root's `userData.paletteVisuals`.
+ * Everything here is decoration — never an entity, never pressable — so the
+ * system may fade and pulse it freely without touching selection state, which
+ * BallSpawnSystem owns (dab / chip / pad scale and chip emissive).
+ */
+export interface PaletteVisuals {
+  /** The soft additive halo round the neon edge (shimmers). */
+  edgeGlow?: FadeMaterial;
+  /** The crisp neon line itself (fades in on appear). */
+  edgeLine?: FadeMaterial;
+  /** One per paint dab, in PALETTE_DAB_ORDER. */
+  wells: Array<{
+    color: readonly [number, number, number, number];
+    rim: FadeMaterial;
+    glow: FadeMaterial;
+    paint: GlowMaterial;
+  }>;
+  /** One per ammo chip, in PALETTE_CHIP_ORDER. */
+  chipSockets: Array<{ kind: BallKind; style: BallStyle; rim: FadeMaterial }>;
+  /** One per launcher pad, in BLASTER_MODE_ORDER. */
+  padSockets: Array<{ mode: BlasterMode; rim: FadeMaterial }>;
+}
+
+/** userData key main.ts stores {@link PaletteVisuals} under. */
+export const PALETTE_VISUALS_KEY = 'paletteVisuals';
+
+/** Squared colour distance under which a dab counts as the loaded colour. */
+const SAME_COLOR_EPS = 1e-4;
 
 const DEG_TO_RAD = Math.PI / 180;
 
@@ -51,6 +94,11 @@ export function thinnestAxis(sizeX: number, sizeY: number, sizeZ: number): numbe
   const z = Math.abs(sizeZ);
   if (y <= x && y <= z) return 1;
   return z <= x ? 2 : 0;
+}
+
+/** The holo visuals main.ts hung on a palette root, if any. */
+function paletteVisualsOf(object3D: Object3D | undefined): PaletteVisuals | undefined {
+  return object3D?.userData?.[PALETTE_VISUALS_KEY] as PaletteVisuals | undefined;
 }
 
 /** The latch {@link stepPaletteLock} drives. Caller-owned; stepping allocates nothing. */
@@ -180,6 +228,22 @@ export class WristPaletteSystem extends createSystem({
   private lock!: PaletteLock;
   private fingertip!: Vector3;
 
+  // ---- Round 8: visibility, appear pop and idle shimmer ---------------------
+  /** Seconds since the left hand was last tracked (0 while tracked). */
+  private lostSec = 0;
+  /** Whether the palette is currently shown. Starts hidden until first tracked. */
+  private shown = false;
+  /** Seconds into the current appear animation; >= appearSec when settled. */
+  private appearElapsed = Number.POSITIVE_INFINITY;
+  /** Scratch out-param for appearFrame. */
+  private readonly appear = { scale: 1, glow: 1 };
+  /** Shimmer clock, seconds. */
+  private shimmerSec = 0;
+  private activeColor?: Signal<readonly [number, number, number, number]>;
+  private activeKind?: Signal<BallKind>;
+  private activeStyle?: Signal<BallStyle>;
+  private blasterMode?: Signal<BlasterMode>;
+
   init() {
     this.gripPosition = new Vector3();
     this.gripOrientation = new Quaternion();
@@ -201,10 +265,41 @@ export class WristPaletteSystem extends createSystem({
     this.sideways = new Vector3();
     this.basis = new Float32Array(9);
     this.quat = new Float32Array(4);
+
+    // Read-only views of the loadout, for lighting the loaded well / socket.
+    // Optional: a test world without them simply never lights one.
+    const globals = this.globals as Record<string, unknown>;
+    this.activeColor = globals.activeColor as typeof this.activeColor;
+    this.activeKind = globals.activeKind as typeof this.activeKind;
+    this.activeStyle = globals.activeStyle as typeof this.activeStyle;
+    this.blasterMode = globals.blasterMode as typeof this.blasterMode;
+
+    // A new palette starts hidden; the first tracked frame pops it in.
+    this.cleanupFuncs.push(
+      this.queries.roots.subscribe('qualify', (root) => {
+        const object3D = root.object3D;
+        if (!object3D || this.shown) return;
+        object3D.visible = false;
+        object3D.scale.setScalar(1e-4);
+      }),
+    );
   }
 
   update(delta: number) {
-    if (!this.computeTarget()) return;
+    this.shimmerSec += delta;
+    if (!this.computeTarget()) {
+      // Lost hand: hold the pose, and after a grace period hide the board so
+      // it never hangs frozen in mid-air (IWSDK leaves a lost hand's spaces
+      // where they were). Never while parked under a poking finger.
+      this.lostSec += delta;
+      if (this.shown && !this.lock.locked && this.lostSec >= PALETTE.hideAfterLostSec) {
+        this.setShown(false);
+      }
+      this.animateVisuals(delta);
+      return;
+    }
+    this.lostSec = 0;
+    if (!this.shown) this.setShown(true);
 
     const nowSec = performance.now() / 1000;
     const released = stepPaletteLock(
@@ -244,6 +339,103 @@ export class WristPaletteSystem extends createSystem({
       if (!object3D) continue;
       setWorldPosition(object3D, this.shownPosition);
       setWorldQuaternion(object3D, this.shownOrientation);
+    }
+    this.animateVisuals(delta);
+  }
+
+  /** Show or hide the whole palette; showing restarts the appear pop. */
+  private setShown(shown: boolean): void {
+    this.shown = shown;
+    if (shown) this.appearElapsed = 0;
+    for (const root of this.queries.roots.entities) {
+      const object3D = root.object3D;
+      if (!object3D) continue;
+      object3D.visible = shown;
+      // Collapsed as well as invisible, so a hidden board also has no reach
+      // for a stray fingertip or squeeze.
+      if (!shown) object3D.scale.setScalar(1e-4);
+    }
+  }
+
+  /**
+   * Appear pop + idle shimmer + loaded-slot lighting. Scalars only: no
+   * allocation, a handful of material writes per frame.
+   */
+  private animateVisuals(delta: number): void {
+    if (!this.shown) return;
+    let glow = 1;
+    if (this.appearElapsed < PALETTE.appearSec) {
+      this.appearElapsed += delta;
+      appearFrame(
+        this.appearElapsed,
+        PALETTE.appearSec,
+        PALETTE.appearFromScale,
+        this.appear,
+      );
+      glow = this.appear.glow;
+      for (const root of this.queries.roots.entities) {
+        root.object3D?.scale.setScalar(this.appear.scale);
+      }
+    } else if (this.appearElapsed !== Number.POSITIVE_INFINITY) {
+      // Settle exactly on 1 once, then stop touching the scale.
+      this.appearElapsed = Number.POSITIVE_INFINITY;
+      for (const root of this.queries.roots.entities) {
+        root.object3D?.scale.setScalar(1);
+      }
+    }
+
+    for (const root of this.queries.roots.entities) {
+      const visuals = paletteVisualsOf(root.object3D);
+      if (visuals) this.paintVisuals(visuals, glow);
+    }
+  }
+
+  private paintVisuals(visuals: PaletteVisuals, glow: number): void {
+    const phase = this.shimmerSec * PALETTE.shimmerHz * Math.PI * 2;
+    const wave = Math.sin(phase);
+
+    if (visuals.edgeLine) visuals.edgeLine.opacity = glow;
+    if (visuals.edgeGlow) {
+      visuals.edgeGlow.opacity =
+        PALETTE.holoGlowOpacity * (1 + PALETTE.shimmerEdgeAmp * wave) * glow;
+    }
+
+    const color = this.activeColor?.peek();
+    for (let i = 0; i < visuals.wells.length; i++) {
+      const well = visuals.wells[i];
+      const selected =
+        !!color &&
+        (well.color[0] - color[0]) ** 2 +
+          (well.color[1] - color[1]) ** 2 +
+          (well.color[2] - color[2]) ** 2 <
+          SAME_COLOR_EPS;
+      well.rim.opacity =
+        (selected ? PALETTE.wellRimSelectedOpacity : PALETTE.wellRimOpacity) * glow;
+      well.glow.opacity =
+        (selected ? PALETTE.wellGlowSelectedOpacity : PALETTE.wellGlowOpacity) * glow;
+      // Each dab breathes a little out of step with its neighbours.
+      well.paint.emissiveIntensity =
+        PALETTE.dabEmissive +
+        PALETTE.dabPulseAmp * (0.5 + 0.5 * Math.sin(phase + i * 1.3));
+    }
+
+    const style = this.activeStyle?.peek() ?? BallStyle.Paint;
+    const kind = this.activeKind?.peek() ?? BallKind.Normal;
+    for (const socket of visuals.chipSockets) {
+      // Same rule as BallSpawnSystem's chip highlight: a web chip is selected
+      // on style alone, a paint chip also has to be the loaded kind.
+      const selected =
+        socket.style === style &&
+        (socket.style !== BallStyle.Paint || socket.kind === kind);
+      socket.rim.opacity =
+        (selected ? PALETTE.socketRimSelectedOpacity : PALETTE.socketRimOpacity) * glow;
+    }
+    const mode = this.blasterMode?.peek();
+    for (const socket of visuals.padSockets) {
+      socket.rim.opacity =
+        (socket.mode === mode
+          ? PALETTE.socketRimSelectedOpacity
+          : PALETTE.socketRimOpacity) * glow;
     }
   }
 

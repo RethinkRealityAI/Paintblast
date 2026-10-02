@@ -372,6 +372,30 @@ export const HUD = {
   playMaxAngle: 55,
   /** Tilts the docked panel up toward your eyes; required for the low dock. */
   playFaceTarget: true,
+
+  // ---- Round 8: techno-paint micro-interactions ------------------------------
+  /**
+   * Seconds a newly shown section takes to fade up and rise into place (title
+   * -> Armory, round -> summary...). 0 swaps instantly. Keep it short: this is
+   * confirmation, not choreography.
+   */
+  sectionFadeSec: 0.22,
+  /** How far below its resting place a section starts its rise, panel cm. */
+  sectionRiseCm: -1.2,
+  /** A button swells to this under the pointer (1 = no swell). */
+  buttonHoverScale: 1.04,
+  /** ...and squashes to this for the press flash. */
+  buttonPressScale: 0.93,
+  /** The Armory's small skin dots swell more, so the hovered one is obvious. */
+  skinDotHoverScale: 1.18,
+  /**
+   * Milliseconds a button stays in its pressed look after a press. A Quest
+   * trigger pull is often two or three frames long, so painting the pressed
+   * state for exactly as long as it is held is invisible.
+   */
+  pressFlashMs: 140,
+  /** Seconds left in a round at which the clock turns coral. */
+  timerUrgentSec: 10,
 } as const;
 
 /**
@@ -406,6 +430,89 @@ export const PALETTE = {
   boardColor: '#8a6a48',
   /** Board roughness — matte, unlike the glossy dabs sitting on it. */
   boardRoughness: 0.6,
+
+  // ---- Round 8: the techno-paint holo board ---------------------------------
+  //
+  // The wooden kidney became a dark glass slab with a glowing neon edge, glossy
+  // liquid paint wells and holo sockets under every chip and pad — the same
+  // art direction as the HUD (docs/concepts/techno-ui.jpg). Built in code, so
+  // nothing streams and nothing can fail to load.
+  /**
+   * Which board to build: 'holo' (round 8 default), 'glb' (the Higgsfield
+   * palette-board.glb, still in the manifest, falls back to holo while it
+   * streams) or 'wood' (the round-3 primitive oval).
+   */
+  boardStyle: 'holo' as 'holo' | 'glb' | 'wood',
+  /**
+   * Squareness of the holo board's outline: 2 is the plain oval, 4 a rounded
+   * rectangle. ~3 reads as a modern "squircle" device and still hugs the dab
+   * arc. Its semi-axes are boardRadius and boardRadius * boardOvalScale.
+   */
+  holoSquareness: 3.2,
+  /** Glass face colour (sRGB) and how much passthrough shows through it. */
+  holoFaceColor: '#070912',
+  holoFaceOpacity: 0.84,
+  /** The bezel round the slab's side, a brushed graphite. */
+  holoBezelColor: '#3a3f4f',
+  /** Metres the neon line is inset from the slab's edge. */
+  holoEdgeInset: 0.0045,
+  /** Radius of the crisp neon line, metres. */
+  holoEdgeRadius: 0.0009,
+  /** Radius of the soft additive halo round it, metres. */
+  holoGlowRadius: 0.0032,
+  /** Resting opacity of that halo (the shimmer swings around it). */
+  holoGlowOpacity: 0.32,
+  /**
+   * Colours the neon edge runs through, in order round the board (it closes
+   * back onto the first). sRGB hex. A ramp on a 3D line is fine — the
+   * no-gradient rule is uikit's, not three's.
+   */
+  holoEdgeColors: ['#48dbfb', '#b84dff', '#ff4f81', '#48dbfb'] as readonly string[],
+  /** Paint splats baked onto the glass corners, sRGB hex. Empty for none. */
+  holoSplatColors: ['#b6ff3b', '#b84dff'] as readonly string[],
+
+  // ---- Paint wells under the dabs ------------------------------------------
+  /** Radius of a well's glowing rim as a multiple of dabRadius. */
+  wellRimScale: 1.2,
+  /** Tube radius of that rim, metres. */
+  wellRimTube: 0.0011,
+  /** Rim opacity for the dabs that are NOT loaded. */
+  wellRimOpacity: 0.45,
+  /** Rim opacity for the loaded dab — the obvious "this one" cue. */
+  wellRimSelectedOpacity: 1,
+  /** Soft colour pool under a dab: radius as a multiple of dabRadius. */
+  wellGlowScale: 1.55,
+  /** ...and its opacity (additive). */
+  wellGlowOpacity: 0.2,
+  /** The loaded dab's pool, brighter. */
+  wellGlowSelectedOpacity: 0.42,
+  /** Resting emissive on the liquid paint so it reads as lit from within. */
+  dabEmissive: 0.16,
+  /** How far the idle shimmer swings that emissive (0 = still). */
+  dabPulseAmp: 0.1,
+  /** Idle shimmer frequency, Hz. Slow: a breath, not a blink. */
+  shimmerHz: 0.45,
+  /** How far the shimmer swings the edge halo, as a fraction of its opacity. */
+  shimmerEdgeAmp: 0.35,
+
+  // ---- Holo sockets under chips and mode pads -----------------------------
+  /** Socket ring radius as a multiple of the chip / pad radius. */
+  socketRimScale: 1.25,
+  /** Socket rim opacity, unselected / selected. */
+  socketRimOpacity: 0.4,
+  socketRimSelectedOpacity: 1,
+
+  // ---- Appear animation -----------------------------------------------------
+  /** Seconds of the pop-in when the palette (re)appears. 0 = no animation. */
+  appearSec: 0.3,
+  /** Scale the palette pops up from (then overshoots 1 slightly and settles). */
+  appearFromScale: 0.35,
+  /**
+   * Seconds the left hand may be untracked before the palette hides (and so
+   * pops back in when the hand returns). Long enough that a blink of lost
+   * tracking mid-poke never hides it; a parked (poked) palette never hides.
+   */
+  hideAfterLostSec: 0.5,
 
   // ---- Paint dabs (colour only) -------------------------------------------
   /** Dab radius, metres, before the flatten below. Big enough to poke. */
@@ -515,6 +622,10 @@ export const PALETTE = {
   modePadRowOffset: -0.014,
   /** Identity colours, HAND / BLASTER / WEB. */
   modePadColors: ['#b8c2cc', '#ff4fb8', '#48dbfb'] as readonly string[],
+  /** Round 8: the pad body is dark glass; its accent lives in the rim, icon glow and selected emissive. */
+  modePadBodyColor: '#141827',
+  /** Size of the white icon printed on each pad, as a fraction of the pad diameter. */
+  modePadIconScale: 0.62,
 
   // ---- Hand tracking (round 7) ----------------------------------------------
   //

@@ -33,6 +33,16 @@ import {
   NeutralToneMapping,
   ACESFilmicToneMapping,
   AgXToneMapping,
+  AdditiveBlending,
+  BufferAttribute,
+  CatmullRomCurve3,
+  CircleGeometry,
+  ExtrudeGeometry,
+  MeshPhysicalMaterial,
+  Path,
+  Shape,
+  ShapeGeometry,
+  TubeGeometry,
 } from '@iwsdk/core';
 import type { BufferGeometry, ToneMapping } from '@iwsdk/core';
 import { signal } from '@preact/signals-core';
@@ -70,8 +80,10 @@ import {
   PaletteRoot,
   WristPaletteSystem,
   PALETTE_BOARD_ASSET_KEY,
+  PALETTE_VISUALS_KEY,
   thinnestAxis,
 } from './systems/WristPaletteSystem';
+import type { PaletteVisuals } from './systems/WristPaletteSystem';
 import { Easel, EaselSystem, EASEL_ASSET_KEY } from './systems/EaselSystem';
 import { SceneScanSystem } from './systems/SceneScanSystem';
 import { VfxSystem } from './systems/VfxSystem';
@@ -94,6 +106,10 @@ import {
   BlasterMode,
   BLASTER_MODE_LABELS,
   BLASTER_MODE_ORDER,
+  isPrintableAscii,
+  rampColor,
+  srgbToLinear,
+  superellipsePoint,
 } from './types';
 import type { PaletteChipSpec } from './types';
 
@@ -185,28 +201,36 @@ function seedGlobals(world: World) {
 }
 
 /**
- * The palette board: the modelled GLB if one was registered, otherwise a
- * flattened wooden oval built here.
+ * The palette board, in the style PALETTE.boardStyle asks for.
  *
- * The oval is a cylinder squashed on its near-far axis rather than a scaled
- * mesh, because the squash is baked into the geometry — a non-uniform object
- * scale on the board would be inherited by nothing (the dabs are siblings, not
- * children) but would still make the mesh's normals wrong under lighting.
+ * - 'holo' (round 8 default): the techno-paint glass slab, built here.
+ * - 'glb': the Higgsfield palette-board.glb if it has streamed in, else holo.
+ * - 'wood': the round-3 primitive oval.
+ *
+ * The board is decoration only — every pressable is a sibling entity under
+ * the same root — so swapping styles can never break selection.
  */
-function buildPaletteBoard(): Object3D {
-  const modelled = loadPaletteBoardModel();
-  if (modelled) return modelled;
+function buildPaletteBoard(visuals: PaletteVisuals): Object3D {
+  if (PALETTE.boardStyle === 'glb') {
+    const modelled = loadPaletteBoardModel();
+    if (modelled) return modelled;
+  }
+  if (PALETTE.boardStyle === 'wood') return buildWoodenBoard();
+  return buildHoloBoard(visuals);
+}
 
+/**
+ * The round-3 board: a cylinder squashed into an oval. The squash is baked
+ * into the geometry rather than a mesh scale so the normals stay right.
+ */
+function buildWoodenBoard(): Object3D {
   const geometry = new CylinderGeometry(
     PALETTE.boardRadius,
     PALETTE.boardRadius,
     PALETTE.boardThickness,
     48,
   );
-  // Cylinders stand on +Y, so the face is already the XZ plane the dabs and
-  // chips are laid out in; this just pulls the near-far axis in to an oval.
   geometry.scale(1, 1, PALETTE.boardOvalScale);
-
   const board = new Mesh(
     geometry,
     new MeshStandardMaterial({
@@ -219,12 +243,192 @@ function buildPaletteBoard(): Object3D {
   return board;
 }
 
+/** Outline points of the holo board (a superellipse), `inset` metres in. */
+function holoOutline(inset: number, count: number): Array<[number, number]> {
+  const a = PALETTE.boardRadius - inset;
+  const b = PALETTE.boardRadius * PALETTE.boardOvalScale - inset;
+  const points: Array<[number, number]> = [];
+  for (let i = 0; i < count; i++) {
+    points.push(
+      superellipsePoint((i / count) * Math.PI * 2, a, b, PALETTE.holoSquareness, [0, 0]),
+    );
+  }
+  return points;
+}
+
+/**
+ * A closed neon tube along the board's outline, coloured along its length by
+ * PALETTE.holoEdgeColors. Outline (x, y) maps to board (x, -z): the shape's
+ * +Y is the board's far (-Z) edge, the same mapping the extruded slab uses.
+ */
+function buildNeonTube(
+  outline: Array<[number, number]>,
+  y: number,
+  radius: number,
+  material: MeshBasicMaterial,
+): Mesh {
+  const curve = new CatmullRomCurve3(
+    outline.map(([x, z]) => new Vector3(x, y, -z)),
+    true,
+  );
+  const tubular = 220;
+  const radial = 6;
+  const geometry = new TubeGeometry(curve, tubular, radius, radial, true);
+  const colors = new Float32Array(geometry.attributes.position.count * 3);
+  const rgb: [number, number, number] = [1, 1, 1];
+  for (let i = 0; i <= tubular; i++) {
+    rampColor(i / tubular, PALETTE.holoEdgeColors, rgb);
+    // Vertex colours are linear in three; the ramp is authored in sRGB.
+    const r = srgbToLinear(rgb[0]);
+    const g = srgbToLinear(rgb[1]);
+    const b = srgbToLinear(rgb[2]);
+    for (let j = 0; j <= radial; j++) {
+      const k = (i * (radial + 1) + j) * 3;
+      colors[k] = r;
+      colors[k + 1] = g;
+      colors[k + 2] = b;
+    }
+  }
+  geometry.setAttribute('color', new BufferAttribute(colors, 3));
+  return new Mesh(geometry, material);
+}
+
+/** A cartoon paint splat: a body, lobes and a couple of flung droplets. */
+function splatShapes(radius: number, seed: number): Shape[] {
+  // Deterministic jitter, so every boot draws the same splat.
+  let state = seed;
+  const rand = () => {
+    state = (state * 16807) % 2147483647;
+    return state / 2147483647;
+  };
+  const shapes: Shape[] = [];
+  const disc = (x: number, y: number, r: number) => {
+    const s = new Shape();
+    s.absarc(x, y, r, 0, Math.PI * 2, false);
+    shapes.push(s);
+  };
+  disc(0, 0, radius * 0.62);
+  const lobes = 7;
+  for (let i = 0; i < lobes; i++) {
+    const angle = (i / lobes) * Math.PI * 2 + rand() * 0.6;
+    const dist = radius * (0.55 + rand() * 0.25);
+    disc(Math.cos(angle) * dist, Math.sin(angle) * dist, radius * (0.16 + rand() * 0.14));
+  }
+  for (let i = 0; i < 3; i++) {
+    const angle = rand() * Math.PI * 2;
+    const dist = radius * (1.05 + rand() * 0.35);
+    disc(Math.cos(angle) * dist, Math.sin(angle) * dist, radius * (0.06 + rand() * 0.07));
+  }
+  return shapes;
+}
+
+/**
+ * The round-8 holo board: a translucent dark-glass squircle with a graphite
+ * bezel, a neon line running round its face (crisp line + additive halo, the
+ * halo shimmers — see WristPaletteSystem), and paint splats on the far corners.
+ */
+function buildHoloBoard(visuals: PaletteVisuals): Object3D {
+  const t = PALETTE.boardThickness;
+  const group = new Group();
+  group.name = 'PaletteBoard';
+
+  // ---- The slab --------------------------------------------------------------
+  const shape = new Shape();
+  holoOutline(0, 128).forEach(([x, y], i) =>
+    i === 0 ? shape.moveTo(x, y) : shape.lineTo(x, y),
+  );
+  shape.closePath();
+  const slabGeometry = new ExtrudeGeometry(shape, {
+    depth: t,
+    bevelEnabled: false,
+    curveSegments: 1,
+  });
+  // Extrusion runs along +Z from 0; stand it on +Y, centred like the old
+  // cylinder (face at +t/2) so every height in PALETTE still holds.
+  slabGeometry.rotateX(-Math.PI / 2);
+  slabGeometry.translate(0, -t / 2, 0);
+  const face = new MeshPhysicalMaterial({
+    color: new Color(PALETTE.holoFaceColor),
+    // Satin rather than mirror: a sharp clearcoat picked up the IBL's light
+    // panels as a white smear across half the board.
+    roughness: 0.42,
+    metalness: 0.1,
+    clearcoat: 0.45,
+    clearcoatRoughness: 0.38,
+    transparent: true,
+    opacity: PALETTE.holoFaceOpacity,
+  });
+  const bezel = new MeshStandardMaterial({
+    color: new Color(PALETTE.holoBezelColor),
+    roughness: 0.32,
+    metalness: 0.75,
+  });
+  // ExtrudeGeometry groups: 0 = the two caps, 1 = the side wall.
+  const slab = new Mesh(slabGeometry, [face, bezel]);
+  slab.name = 'PaletteSlab';
+  group.add(slab);
+
+  // ---- Neon edge -------------------------------------------------------------
+  const outline = holoOutline(PALETTE.holoEdgeInset, 160);
+  const lineMaterial = new MeshBasicMaterial({
+    vertexColors: true,
+    toneMapped: false,
+    transparent: true,
+    opacity: 1,
+  });
+  const glowMaterial = new MeshBasicMaterial({
+    vertexColors: true,
+    toneMapped: false,
+    transparent: true,
+    opacity: PALETTE.holoGlowOpacity,
+    blending: AdditiveBlending,
+    depthWrite: false,
+  });
+  const line = buildNeonTube(outline, t / 2 + PALETTE.holoEdgeRadius * 0.5, PALETTE.holoEdgeRadius, lineMaterial);
+  line.name = 'PaletteNeonLine';
+  const glow = buildNeonTube(outline, t / 2 + PALETTE.holoEdgeRadius * 0.5, PALETTE.holoGlowRadius, glowMaterial);
+  glow.name = 'PaletteNeonGlow';
+  glow.renderOrder = 1;
+  group.add(line, glow);
+  visuals.edgeLine = lineMaterial;
+  visuals.edgeGlow = glowMaterial;
+
+  // ---- Paint splats on the far corners ---------------------------------------
+  const corner = superellipsePoint(
+    Math.PI / 4,
+    PALETTE.boardRadius,
+    PALETTE.boardRadius * PALETTE.boardOvalScale,
+    PALETTE.holoSquareness,
+    [0, 0],
+  );
+  PALETTE.holoSplatColors.slice(0, 2).forEach((hex, i) => {
+    const side = i === 0 ? 1 : -1;
+    const splat = new Mesh(
+      new ShapeGeometry(splatShapes(0.011, 11 + i * 7)),
+      new MeshBasicMaterial({
+        color: new Color(hex),
+        toneMapped: false,
+        transparent: true,
+        opacity: 0.92,
+        depthWrite: false,
+      }),
+    );
+    splat.name = `PaletteSplat_${i}`;
+    splat.rotation.x = -Math.PI / 2;
+    // Tucked in from the far corner, clear of the end dabs.
+    splat.position.set(side * corner[0] * 0.86, t / 2 + 0.0004, -corner[1] * 0.86);
+    splat.renderOrder = 1;
+    group.add(splat);
+  });
+
+  return group;
+}
+
 /**
  * The optional `paletteBoard` GLB, measured and rescaled to the same footprint
  * as the primitive oval — the measure-the-art trick TargetSystem and
  * EaselSystem both use, so swapping the model never needs a code change.
- * Returns undefined when no such asset is registered, which is the shipping
- * case until the ROUND3-PALETTE-ASSET manifest entry below is uncommented.
+ * Returns undefined when the asset is absent or has not streamed in yet.
  */
 function loadPaletteBoardModel(): Object3D | undefined {
   let source: Object3D | undefined;
@@ -241,8 +445,7 @@ function loadPaletteBoardModel(): Object3D | undefined {
   const size = box.getSize(new Vector3());
 
   // Lay the model's thinnest axis onto the board normal (+Y) — the shipped
-  // GLB is a slab thin along Z, and loading it as-is stood the board on edge
-  // against its own dabs (round 7). Then re-measure in the rotated pose.
+  // GLB is a slab thin along Z (round 7). Then re-measure in the rotated pose.
   const thin = thinnestAxis(size.x, size.y, size.z);
   if (thin === 2) model.rotation.x = -Math.PI / 2;
   else if (thin === 0) model.rotation.z = Math.PI / 2;
@@ -253,8 +456,6 @@ function loadPaletteBoardModel(): Object3D | undefined {
 
   const fit = (PALETTE.boardRadius * 2) / (size.x || 1);
   model.scale.setScalar(fit);
-  // Re-seat the art so its centre is the root's origin and its top face is the
-  // plane the dabs sit on, whatever origin the exporter happened to choose.
   model.position.set(
     -centre.x * fit,
     -centre.y * fit + PALETTE.boardThickness / 2 - (size.y * fit) / 2,
@@ -270,12 +471,9 @@ function loadPaletteBoardModel(): Object3D | undefined {
 /**
  * The silhouette for one ammo chip.
  *
- * Shape was the *only* cue in rounds 3-4 ("the board is far too small to
- * letter") and the field report was that the row looked bad and read as
- * nothing. Round 5 keeps the silhouettes but demotes them to the third cue
- * behind an identity colour and an actual printed label — three redundant ways
- * to tell five small objects apart, which is about right for something you
- * glance at on your own wrist mid-throw.
+ * Shape is the third cue behind an identity colour and a printed label —
+ * three redundant ways to tell five small objects apart, which is about right
+ * for something you glance at on your own wrist mid-throw.
  */
 function buildChipShape(
   spec: PaletteChipSpec,
@@ -285,16 +483,12 @@ function buildChipShape(
 
   // Style first: a web chip is a web chip whatever kind it nominally carries.
   if (spec.style === BallStyle.Web) {
-    // A web ball: a small sphere caged in two crossed rings, i.e. the thing
-    // that comes out of the shooter rather than the shooter itself. The
-    // shooter would have been unreadable at 13 mm.
+    // A web ball: a small sphere caged in two crossed rings.
     const group = new Group();
-    group.add(new Mesh(new SphereGeometry(r * 0.6, 16, 12), material));
-    const ringGeometry = new TorusGeometry(r * 1.0, r * 0.1, 6, 20);
+    group.add(new Mesh(new SphereGeometry(r * 0.6, 20, 14), material));
+    const ringGeometry = new TorusGeometry(r * 1.0, r * 0.1, 8, 28);
     for (let i = 0; i < 2; i++) {
       const ring = new Mesh(ringGeometry, material);
-      // Torus is authored in the XY plane. One ring stands upright across the
-      // board, the other stands upright along it; crossed, they read as a cage.
       ring.rotation.y = i === 0 ? 0 : Math.PI / 2;
       group.add(ring);
     }
@@ -305,48 +499,47 @@ function buildChipShape(
     case BallKind.Bouncy: {
       // A ball wearing a hoop: reads as "this one comes back at you".
       const group = new Group();
-      group.add(new Mesh(new SphereGeometry(r * 0.72, 16, 12), material));
+      group.add(new Mesh(new SphereGeometry(r * 0.72, 20, 14), material));
       const ring = new Mesh(
-        new TorusGeometry(r * 1.05, r * 0.16, 8, 24),
+        new TorusGeometry(r * 1.05, r * 0.16, 10, 32),
         material,
       );
-      // Torus is authored in the XY plane; lay it flat in the board's plane.
       ring.rotation.x = -Math.PI / 2;
       group.add(ring);
       return group;
     }
 
-    case BallKind.Sticky:
-      // Flat faces read as "this one stops dead where it lands".
-      return new Mesh(new BoxGeometry(r * 1.7, r * 1.7, r * 1.7), material);
+    case BallKind.Sticky: {
+      // Flat faces read as "this one stops dead where it lands". Softened
+      // corners (a rounded box) so it sits in the same family as the rest.
+      const geometry = new BoxGeometry(r * 1.7, r * 1.7, r * 1.7, 2, 2, 2);
+      return new Mesh(geometry, material);
+    }
 
     case BallKind.Splash:
       // Faceted and spiky: a burst, mid-shatter.
       return new Mesh(new IcosahedronGeometry(r * 1.15, 0), material);
 
     default:
-      return new Mesh(new SphereGeometry(r, 16, 12), material);
+      return new Mesh(new SphereGeometry(r, 20, 14), material);
   }
 }
 
 /**
- * A tiny printed label to lie on the board behind one chip.
+ * A tiny printed label to lie on the board behind one chip or pad.
  *
- * Everything here happens **once, at startup**, which is the licence for the
- * offscreen canvas, the string work and the per-label material: five labels
- * baked during World.create cost nothing a player can perceive, and the
- * alternative (an MSDF text mesh per chip) would drag the whole uikit text
- * pipeline into an object 9 mm tall.
+ * Baked **once, at startup** into a CanvasTexture: white condensed caps with a
+ * soft neon glow in the slot's own accent (the techno-paint look) and a thin
+ * dark keyline, so it reads over the glass and over passthrough alike. Unlit,
+ * because a label that dimmed when you turned from a window would stop working.
  *
- * White with a soft dark outline, on transparency, so it stays legible over the
- * warm wooden board and over whatever passthrough is behind it. Unlit
- * (MeshBasicMaterial), because a label that dimmed when the player turned away
- * from a window would be a label that stopped working.
- *
- * Returns a plain Object3D and **never an entity**: labels must not be pokeable
- * or the fingertip aimed at STICKY would land on the word instead of the cube.
+ * Returns a plain Object3D and **never an entity**: labels must not be
+ * pokeable or the fingertip aimed at STICKY would land on the word.
  */
-function buildChipLabel(text: string): Object3D | undefined {
+function buildChipLabel(text: string, accent = '#48dbfb'): Object3D | undefined {
+  if (!isPrintableAscii(text)) {
+    console.warn(`[PaintBlast] palette label "${text}" is not plain ASCII`);
+  }
   const canvas = document.createElement('canvas');
   canvas.width = PALETTE.chipLabelPxW;
   canvas.height = PALETTE.chipLabelPxH;
@@ -356,24 +549,28 @@ function buildChipLabel(text: string): Object3D | undefined {
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
-  // Condensed first, because SPLASH and NORMAL have to fit the same 36 mm as
-  // WEB; the fallbacks are only there so a headset browser without the
-  // condensed faces still renders something rather than a default serif.
-  ctx.font = `bold ${Math.round(h * 0.66)}px "Arial Narrow", "Roboto Condensed", "Helvetica Neue", Arial, sans-serif`;
+  ctx.font = `800 ${Math.round(h * 0.62)}px "Arial Narrow", "Roboto Condensed", "Helvetica Neue", Arial, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  // Rounded joins stop the outline growing spikes off the corners of the caps.
   ctx.lineJoin = 'round';
   ctx.miterLimit = 2;
-  ctx.lineWidth = Math.max(2, Math.round(h * 0.16));
-  ctx.strokeStyle = 'rgba(10, 10, 14, 0.85)';
+
+  // Neon bloom first (two passes build it up), then the keyline, then the
+  // white face on top.
+  ctx.shadowColor = accent;
+  ctx.shadowBlur = Math.round(h * 0.28);
+  ctx.fillStyle = accent;
+  ctx.fillText(text, w / 2, h / 2);
+  ctx.fillText(text, w / 2, h / 2);
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = Math.max(2, Math.round(h * 0.1));
+  ctx.strokeStyle = 'rgba(6, 7, 12, 0.85)';
   ctx.strokeText(text, w / 2, h / 2);
   ctx.fillStyle = '#ffffff';
   ctx.fillText(text, w / 2, h / 2);
 
   const texture = new CanvasTexture(canvas);
-  // 2D canvas pixels are sRGB; unmarked, three would treat them as linear and
-  // the white would come out grey.
+  // 2D canvas pixels are sRGB; unmarked, three would treat them as linear.
   texture.colorSpace = SRGBColorSpace;
   texture.needsUpdate = true;
 
@@ -382,42 +579,183 @@ function buildChipLabel(text: string): Object3D | undefined {
     new MeshBasicMaterial({
       map: texture,
       transparent: true,
-      // The board is right underneath and the chip is right next to it; writing
-      // depth would make the label punch a hole in one or the other depending
-      // on draw order.
       depthWrite: false,
+      toneMapped: false,
     }),
   );
   mesh.name = `ChipLabel_${text}`;
-  // PlaneGeometry faces +Z; the board's face is +Y, so lay it down. The quarter
-  // turn also maps the text's own up-axis onto the board's -Z, i.e. toward the
-  // far edge — which is "up" when you are looking at your own palm.
+  // PlaneGeometry faces +Z; lay it on the board's +Y face, text-up toward the
+  // far (-Z) edge — "up" when you look at your own palm.
   mesh.rotation.x = -Math.PI / 2;
-  // Drawn after the board and the chips, so the outline never loses a fight
-  // with a co-planar surface.
   mesh.renderOrder = 2;
   return mesh;
 }
 
 /**
- * Creates the wrist palette: one root entity carrying a flat board, four
- * glossy paint dabs curving round its far edge, and a row of five ammo chips
- * with printed labels along the near edge by the wrist. Everything is laid out
- * in the root's own XZ plane, face up, so it all inherits whatever pose
- * WristPaletteSystem copies from the left grip each frame.
+ * A glowing ring lying flat on the board face (well rims, chip and pad
+ * sockets). Unlit and transparent so its opacity can carry selection and the
+ * appear fade; never an entity.
+ */
+function buildGlowRing(
+  radius: number,
+  tube: number,
+  color: Color,
+  opacity: number,
+): { mesh: Mesh; material: MeshBasicMaterial } {
+  const material = new MeshBasicMaterial({
+    color,
+    toneMapped: false,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+  });
+  const mesh = new Mesh(new TorusGeometry(radius, tube, 6, 56), material);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.renderOrder = 1;
+  return { mesh, material };
+}
+
+/** A soft additive colour pool lying on the board face. */
+function buildGlowDisc(
+  radius: number,
+  color: Color,
+  opacity: number,
+): { mesh: Mesh; material: MeshBasicMaterial } {
+  const material = new MeshBasicMaterial({
+    color,
+    toneMapped: false,
+    transparent: true,
+    opacity,
+    blending: AdditiveBlending,
+    depthWrite: false,
+  });
+  const mesh = new Mesh(new CircleGeometry(radius, 40), material);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.renderOrder = 1;
+  return { mesh, material };
+}
+
+/** A rounded capsule from (x, y0) to (x, y1), `w` wide, as one Shape. */
+function capsuleShape(x: number, y0: number, y1: number, w: number): Shape {
+  const r = w / 2;
+  const s = new Shape();
+  s.moveTo(x - r, y0);
+  s.lineTo(x - r, y1);
+  s.absarc(x, y1, r, Math.PI, 0, true);
+  s.lineTo(x + r, y0);
+  s.absarc(x, y0, r, 0, Math.PI, true);
+  return s;
+}
+
+/** A filled polygon Shape from [x, y] pairs. */
+function polyShape(points: ReadonlyArray<readonly [number, number]>): Shape {
+  const s = new Shape();
+  points.forEach(([x, y], i) => (i === 0 ? s.moveTo(x, y) : s.lineTo(x, y)));
+  s.closePath();
+  return s;
+}
+
+/**
+ * The white icon printed on a launcher pad, authored in a unit box centred
+ * on the origin (+Y = the icon's up). HAND is an open palm, BLASTER a paint
+ * gun in profile, WEB a web.
+ */
+function modeIconShapes(mode: BlasterMode): Shape[] {
+  if (mode === BlasterMode.Hand) {
+    const palm = new Shape();
+    palm.moveTo(-0.28, 0.04);
+    palm.lineTo(0.28, 0.04);
+    palm.lineTo(0.28, -0.22);
+    palm.absarc(0.1, -0.22, 0.18, 0, -Math.PI / 2, true);
+    palm.lineTo(-0.12, -0.4);
+    palm.absarc(-0.12, -0.24, 0.16, -Math.PI / 2, -Math.PI, true);
+    palm.closePath();
+    const thumb = polyShape([
+      [-0.28, -0.16],
+      [-0.5, 0.04],
+      [-0.42, 0.13],
+      [-0.2, -0.04],
+    ]);
+    return [
+      palm,
+      thumb,
+      capsuleShape(-0.215, 0.0, 0.3, 0.1),
+      capsuleShape(-0.07, 0.0, 0.42, 0.1),
+      capsuleShape(0.075, 0.0, 0.38, 0.1),
+      capsuleShape(0.215, 0.0, 0.24, 0.1),
+    ];
+  }
+  if (mode === BlasterMode.Paint) {
+    const canister = new Shape();
+    canister.absarc(-0.05, 0.3, 0.13, 0, Math.PI * 2, false);
+    return [
+      polyShape([
+        [-0.45, -0.02],
+        [0.3, -0.02],
+        [0.3, 0.2],
+        [-0.45, 0.2],
+      ]),
+      polyShape([
+        [0.3, 0.03],
+        [0.48, 0.03],
+        [0.48, 0.15],
+        [0.3, 0.15],
+      ]),
+      polyShape([
+        [-0.33, -0.02],
+        [-0.12, -0.02],
+        [-0.2, -0.45],
+        [-0.42, -0.45],
+      ]),
+      canister,
+    ];
+  }
+  // Web: two concentric rings and four spokes.
+  const ring = (outer: number, inner: number) => {
+    const s = new Shape();
+    s.absarc(0, 0, outer, 0, Math.PI * 2, false);
+    const hole = new Path();
+    hole.absarc(0, 0, inner, 0, Math.PI * 2, true);
+    s.holes.push(hole);
+    return s;
+  };
+  const shapes = [ring(0.46, 0.38), ring(0.25, 0.18)];
+  for (let i = 0; i < 4; i++) {
+    const a = (i * Math.PI) / 4;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    const half = 0.035;
+    const len = 0.48;
+    shapes.push(
+      polyShape([
+        [c * len - s * half, s * len + c * half],
+        [c * len + s * half, s * len - c * half],
+        [-c * len + s * half, -s * len - c * half],
+        [-c * len - s * half, -s * len + c * half],
+      ]),
+    );
+  }
+  return shapes;
+}
+
+/**
+ * Creates the wrist palette: one root entity carrying the holo board, four
+ * glossy paint dabs in glowing wells round its far edge, three launcher pads
+ * across the middle and a row of five ammo chips with printed labels along
+ * the near edge by the wrist. Everything is laid out in the root's own XZ
+ * plane, face up, so it all inherits whatever pose WristPaletteSystem copies
+ * from the wrist each frame.
  *
- * Round 1 pinned sixteen combined colour+kind orbs to fixed world coordinates,
- * out of reach for anyone not standing where the developer stood. Round 2
- * strapped that grid to the wrist. Round 3 made it an actual palette you tap:
- * four dabs for colour, four chips for kind. Round 5 adds the fifth chip —
- * WEB, which loads webbing instead of paint and is the whole reason there is no
- * Web *phase* any more — plus the colours and labels the field asked for after
- * round 4's silhouette-only row "looked bad".
+ * History: round 1 pinned sixteen orbs to world coordinates; round 2 strapped
+ * them to the wrist; round 3 made an actual palette you tap; round 5 added the
+ * WEB chip and printed labels; round 8 added the launcher pads and the
+ * techno-paint restyle (holo glass, neon edge, liquid wells, holo sockets,
+ * appear pop + shimmer — see WristPaletteSystem).
  *
- * Nine pressables now, and every one carries PokeInteractable as well as the
- * ray and grab tags, so a fingertip touch selects exactly like a squeeze always
- * has. The labels are deliberately NOT pressable: they are plain meshes hung
- * off the root, so a poke aimed at a chip can never be swallowed by its caption.
+ * Every pressable carries PokeInteractable as well as the ray and grab tags,
+ * so a fingertip touch selects exactly like a squeeze. Decoration (board,
+ * wells, sockets, labels, icons' glow) is never an entity, so a poke aimed at
+ * a chip can never be swallowed by its caption or its socket.
  *
  * The first dab and the first chip are pre-highlighted, and both lists are
  * built in PALETTE_DAB_ORDER / PALETTE_CHIP_ORDER from the same constants
@@ -427,9 +765,12 @@ function buildChipLabel(text: string): Object3D | undefined {
 function seedWristPalette(world: World) {
   const rootGroup = new Group();
   rootGroup.name = 'WristPalette';
+  const visuals: PaletteVisuals = { wells: [], chipSockets: [], padSockets: [] };
+  rootGroup.userData[PALETTE_VISUALS_KEY] = visuals;
   // Decoration, not an entity: nothing queries the board, and keeping it a
   // plain child of the root means it can never be poked by accident.
-  rootGroup.add(buildPaletteBoard());
+  rootGroup.add(buildPaletteBoard(visuals));
+  const faceY = PALETTE.boardThickness / 2;
 
   const root = world
     .createTransformEntity(rootGroup, {
@@ -445,27 +786,25 @@ function seedWristPalette(world: World) {
   /** Every pressable wears all three pointer tags. */
   const makePressable = (object: Object3D) => {
     const entity = attach(object);
-    // RayInteractable for completeness (GrabSystem denies the ray pointer on
-    // grabbables anyway), PokeInteractable so a fingertip within 2 cm
-    // auto-presses, and OneHandGrabbable so the round-2 squeeze/pinch still
-    // works as a fallback. All three funnel into the single `pointerdown`
-    // listener InputSystem attaches, which is what adds the `Pressed` tag
-    // BallSpawnSystem selects off — so every route lands in the same place.
+    // RayInteractable for completeness, PokeInteractable so a fingertip within
+    // 2 cm auto-presses, and OneHandGrabbable so the squeeze/pinch still works
+    // as a fallback. All three funnel into the `Pressed` tag BallSpawnSystem
+    // selects off — so every route lands in the same place.
     entity.addComponent(Interactable);
     entity.addComponent(PokeInteractable);
     entity.addComponent(OneHandGrabbable, { rotate: false, translate: false });
     return entity;
   };
 
-  // ---- Paint dabs, on an arc around the board's far edge --------------------
+  // ---- Paint dabs: liquid paint in glowing wells, on the far-edge arc --------
   //
   // One flattened sphere geometry shared by all four; only the material
   // differs. Flattening is baked in rather than applied as a mesh scale,
   // because the selection highlight overwrites the mesh scale outright.
   const dabGeometry: BufferGeometry = new SphereGeometry(
     PALETTE.dabRadius,
+    32,
     20,
-    14,
   );
   dabGeometry.scale(1, PALETTE.dabFlatten, 1);
 
@@ -477,35 +816,52 @@ function seedWristPalette(world: World) {
       (PALETTE.dabArcStartDeg +
         (dabCount > 1 ? (arcSpan * i) / (dabCount - 1) : arcSpan / 2)) *
       DEG_TO_RAD;
-
-    const mesh = new Mesh(
-      dabGeometry,
-      new MeshStandardMaterial({
-        // sRGB, like the HUD swatch (round 7) — see srgbToLinear in types.ts.
-        color: new Color().setRGB(color[0], color[1], color[2], SRGBColorSpace),
-        roughness: PALETTE.dabRoughness,
-        metalness: 0,
-      }),
-    );
+    // sRGB, like the HUD swatch (round 7) — see srgbToLinear in types.ts.
+    const paintColor = new Color().setRGB(color[0], color[1], color[2], SRGBColorSpace);
+    const paint = new MeshPhysicalMaterial({
+      color: paintColor,
+      roughness: Math.min(PALETTE.dabRoughness, 0.08),
+      metalness: 0,
+      clearcoat: 1,
+      clearcoatRoughness: 0.03,
+      // Lit from within: WristPaletteSystem breathes this intensity.
+      emissive: paintColor.clone(),
+      emissiveIntensity: PALETTE.dabEmissive,
+    });
+    const mesh = new Mesh(dabGeometry, paint);
     // Angle 0 points at the far (-Z) edge and sweeps toward +X.
-    mesh.position.set(
-      Math.sin(angle) * PALETTE.dabArcRadius,
-      PALETTE.boardThickness / 2,
-      -Math.cos(angle) * PALETTE.dabArcRadius,
-    );
+    const x = Math.sin(angle) * PALETTE.dabArcRadius;
+    const z = -Math.cos(angle) * PALETTE.dabArcRadius;
+    mesh.position.set(x, faceY, z);
     if (i === 0) mesh.scale.setScalar(SELECTED_SLOT_SCALE);
 
     makePressable(mesh).addComponent(PaintDab, {
       color: [color[0], color[1], color[2], color[3]],
     });
+
+    // The well: a soft pool of the paint's colour and a neon rim round it.
+    const pool = buildGlowDisc(
+      PALETTE.dabRadius * PALETTE.wellGlowScale,
+      paintColor,
+      PALETTE.wellGlowOpacity,
+    );
+    pool.mesh.position.set(x, faceY + 0.0003, z);
+    const rim = buildGlowRing(
+      PALETTE.dabRadius * PALETTE.wellRimScale,
+      PALETTE.wellRimTube,
+      paintColor,
+      PALETTE.wellRimOpacity,
+    );
+    rim.mesh.position.set(x, faceY + PALETTE.wellRimTube, z);
+    rootGroup.add(pool.mesh, rim.mesh);
+    visuals.wells.push({ color, rim: rim.material, glow: pool.material, paint });
   }
 
   // ---- Ammo chips, in a row along the board's near edge ---------------------
   //
-  // One material per chip, never a shared one. Two reasons, both round 5: each
-  // chip carries its own identity colour, and the selected chip's emissive lift
-  // is a property of that material — share it and picking BOUNCY would light
-  // the whole row.
+  // One material per chip, never a shared one: each chip carries its own
+  // identity colour, and the selected chip's emissive lift is a property of
+  // that material — share it and picking BOUNCY would light the whole row.
   const chipCount = PALETTE_CHIP_ORDER.length;
   const labelZ =
     PALETTE.chipRowOffset -
@@ -516,10 +872,12 @@ function seedWristPalette(world: World) {
   for (let i = 0; i < chipCount; i++) {
     const spec = PALETTE_CHIP_ORDER[i];
     const chipColor = new Color(spec.color);
-    const material = new MeshStandardMaterial({
+    const material = new MeshPhysicalMaterial({
       color: chipColor,
-      roughness: PALETTE.chipRoughness,
-      metalness: 0,
+      roughness: PALETTE.chipRoughness * 0.6,
+      metalness: 0.1,
+      clearcoat: 0.8,
+      clearcoatRoughness: 0.2,
       // Baked here and never changed; BallSpawnSystem only moves the intensity,
       // so a chip always glows in its own colour rather than a generic white.
       emissive: chipColor.clone(),
@@ -530,7 +888,7 @@ function seedWristPalette(world: World) {
     const shape = buildChipShape(spec, material);
     shape.position.set(
       x,
-      PALETTE.boardThickness / 2 + PALETTE.chipRadius * PALETTE.chipLift,
+      faceY + PALETTE.chipRadius * PALETTE.chipLift,
       PALETTE.chipRowOffset,
     );
     if (i === 0) shape.scale.setScalar(SELECTED_SLOT_SCALE);
@@ -540,53 +898,83 @@ function seedWristPalette(world: World) {
       style: spec.style,
     });
 
-    // The label is a plain child of the root group, exactly like the board:
-    // decoration, not an entity, so nothing can poke it by accident.
-    const label = buildChipLabel(spec.label);
+    // Holo socket under the chip; lights up when this chip is loaded.
+    const socket = buildGlowRing(
+      PALETTE.chipRadius * PALETTE.socketRimScale,
+      0.0008,
+      chipColor,
+      PALETTE.socketRimOpacity,
+    );
+    socket.mesh.position.set(x, faceY + 0.0008, PALETTE.chipRowOffset);
+    rootGroup.add(socket.mesh);
+    visuals.chipSockets.push({ kind: spec.kind, style: spec.style, rim: socket.material });
+
+    // The label is decoration, not an entity, so nothing can poke it.
+    const label = buildChipLabel(spec.label, spec.color);
     if (label) {
-      label.position.set(x, PALETTE.boardThickness / 2 + PALETTE.chipLabelLift, labelZ);
+      label.position.set(x, faceY + PALETTE.chipLabelLift, labelZ);
       rootGroup.add(label);
     }
   }
 
   // ---- Launcher mode pads (round 8): HAND / BLASTER / WEB -------------------
   //
-  // Three pads across the middle of the board, between the dab arc and the
-  // chip labels. Same three pointer tags as everything else on the palette;
-  // BallSpawnSystem selects and relights them from globals.blasterMode.
+  // Three dark-glass buttons across the middle of the board, each with a white
+  // icon, a neon rim in its identity colour and a holo socket. Same three
+  // pointer tags as everything else; BallSpawnSystem selects and relights them
+  // (scale + emissive) from globals.blasterMode.
   const modeCount = BLASTER_MODE_ORDER.length;
   const modeGeometry = new CylinderGeometry(
     PALETTE.modePadRadius,
     PALETTE.modePadRadius,
     PALETTE.modePadHeight,
-    24,
+    36,
   );
+  const iconSize = PALETTE.modePadRadius * 2 * PALETTE.modePadIconScale;
+  const iconMaterial = new MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
   for (let i = 0; i < modeCount; i++) {
     const mode = BLASTER_MODE_ORDER[i];
     const accent = new Color(PALETTE.modePadColors[i]);
     const mesh = new Mesh(
       modeGeometry,
       new MeshStandardMaterial({
-        color: accent,
-        roughness: 0.3,
-        metalness: 0.2,
+        color: new Color(PALETTE.modePadBodyColor),
+        roughness: 0.25,
+        metalness: 0.35,
         emissive: accent.clone(),
         emissiveIntensity: 0,
       }),
     );
     const x = (i - (modeCount - 1) / 2) * PALETTE.modePadSpacing;
-    mesh.position.set(
-      x,
-      PALETTE.boardThickness / 2 + PALETTE.modePadHeight / 2,
-      PALETTE.modePadRowOffset,
-    );
+    mesh.position.set(x, faceY + PALETTE.modePadHeight / 2, PALETTE.modePadRowOffset);
+
+    // Children of the pad, so they swell with it when it is selected.
+    const icon = new Mesh(new ShapeGeometry(modeIconShapes(mode), 6), iconMaterial);
+    icon.scale.setScalar(iconSize);
+    icon.rotation.x = -Math.PI / 2;
+    icon.position.y = PALETTE.modePadHeight / 2 + 0.0003;
+    icon.renderOrder = 2;
+    const padRim = buildGlowRing(PALETTE.modePadRadius * 0.96, 0.0008, accent, 0.95);
+    padRim.mesh.position.y = PALETTE.modePadHeight / 2;
+    mesh.add(icon, padRim.mesh);
+
     makePressable(mesh).addComponent(BlasterModePad, { mode });
 
-    const label = buildChipLabel(BLASTER_MODE_LABELS[mode]);
+    const socket = buildGlowRing(
+      PALETTE.modePadRadius * PALETTE.socketRimScale,
+      0.0008,
+      accent,
+      PALETTE.socketRimOpacity,
+    );
+    socket.mesh.position.set(x, faceY + 0.0008, PALETTE.modePadRowOffset);
+    rootGroup.add(socket.mesh);
+    visuals.padSockets.push({ mode, rim: socket.material });
+
+    const label = buildChipLabel(BLASTER_MODE_LABELS[mode], PALETTE.modePadColors[i]);
     if (label) {
       label.position.set(
         x,
-        PALETTE.boardThickness / 2 + PALETTE.chipLabelLift,
+        faceY + PALETTE.chipLabelLift,
         PALETTE.modePadRowOffset +
           PALETTE.modePadRadius +
           PALETTE.chipLabelGap +

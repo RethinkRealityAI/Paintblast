@@ -718,3 +718,213 @@ export function unpackPopArchetype(data: number): number {
 export function unpackPopPoints(data: number): number {
   return (data >>> 12) & 0x7ffff;
 }
+
+// ---------------------------------------------------------------------------
+// Round 8: HUD / Armory / palette presentation helpers. Pure, so they test
+// without a panel or a World.
+// ---------------------------------------------------------------------------
+
+/** One line per launcher for the Armory's description row. ASCII (gotcha 24). */
+export const BLASTER_MODE_DESCRIPTIONS: Readonly<Record<BlasterMode, string>> = {
+  [BlasterMode.Hand]: 'Bare hands. Paint flies straight from your fingertips.',
+  [BlasterMode.Paint]: 'Paint blaster gauntlet. Hold to auto-fire.',
+  [BlasterMode.Web]: 'Web shooters. Splat walls, or tether a bot and reel it in.',
+};
+
+/**
+ * Step an index round a ring of `count` slots (the Armory's < > arrows).
+ * Wraps both ways; a non-integer or out-of-range start is clamped first, and
+ * an empty ring always answers 0.
+ */
+export function cycleIndex(index: number, delta: number, count: number): number {
+  if (!(count > 0)) return 0;
+  const n = Math.floor(count);
+  const start = clampIndex(index, n);
+  const step = Math.trunc(delta) % n;
+  return (((start + step) % n) + n) % n;
+}
+
+/** An index forced into [0, count), with anything non-finite becoming 0. */
+export function clampIndex(index: number, count: number): number {
+  if (!(count > 0) || !Number.isFinite(index)) return 0;
+  return Math.min(Math.floor(count) - 1, Math.max(0, Math.floor(index)));
+}
+
+/**
+ * A stored skin index (localStorage hands back a string or null) as a valid
+ * slot. Anything unparsable or out of range falls back to 0 rather than being
+ * clamped to the end of the list: a stale value from a longer skin list says
+ * nothing about which of today's skins the player wanted.
+ */
+export function parseStoredSkin(raw: string | null | undefined, count: number): number {
+  if (raw == null || !(count > 0)) return 0;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return 0;
+  const n = Number.parseInt(trimmed, 10);
+  return n < count ? n : 0;
+}
+
+/** The minimal Storage surface the skin persistence touches. */
+export interface SkinStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+/** Read the persisted skin. Never throws (private mode, blocked storage). */
+export function readSkin(
+  storage: SkinStorage | undefined,
+  key: string,
+  count: number,
+): number {
+  try {
+    return parseStoredSkin(storage?.getItem(key), count);
+  } catch {
+    return 0;
+  }
+}
+
+/** Persist the skin. Never throws; returns false when storage refused it. */
+export function writeSkin(
+  storage: SkinStorage | undefined,
+  key: string,
+  index: number,
+): boolean {
+  if (!storage) return false;
+  try {
+    storage.setItem(key, String(Math.max(0, Math.floor(index))));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** "SKIN 2 OF 5" — the Armory card's counter. */
+export function skinCounterLabel(index: number, count: number): string {
+  const n = Math.max(0, Math.floor(count));
+  return `SKIN ${n === 0 ? 0 : clampIndex(index, n) + 1} OF ${n}`;
+}
+
+/** 15400 -> "15,400": the score numerals the title art promises. ASCII. */
+export function formatScore(score: number): string {
+  const n = Number.isFinite(score) ? Math.max(0, Math.round(score)) : 0;
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** Bot count with the right plural. */
+export function botsLabel(alive: number): string {
+  return alive === 1 ? '1 bot' : `${Math.max(0, Math.round(alive))} bots`;
+}
+
+/** Strictly beat the best that stood when the round began (a tie is not a record). */
+export function isNewBest(score: number, bestAtRoundStart: number): boolean {
+  return score > 0 && score > bestAtRoundStart;
+}
+
+/**
+ * True when every character is printable ASCII (space..tilde). The HUD's MSDF
+ * font has nothing else (gotcha 24), and the palette's canvas labels follow the
+ * same rule so a label never renders differently in one place than another.
+ */
+export function isPrintableAscii(text: string): boolean {
+  return /^[\x20-\x7e]*$/.test(text);
+}
+
+/** '#ff4f81' -> 0xff4f81. Malformed input gives white, never NaN. */
+export function hexToInt(hex: string): number {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  return m ? Number.parseInt(m[1], 16) : 0xffffff;
+}
+
+/**
+ * A point on a superellipse ("squircle") outline: |x/a|^n + |y/b|^n = 1.
+ * n = 2 is the ellipse, larger n squares it off. `angle` in radians; writes
+ * into `out` ([x, y]) and returns it.
+ */
+export function superellipsePoint(
+  angle: number,
+  a: number,
+  b: number,
+  n: number,
+  out: [number, number] = [0, 0],
+): [number, number] {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const e = 2 / Math.max(0.1, n);
+  out[0] = a * Math.sign(c) * Math.pow(Math.abs(c), e);
+  out[1] = b * Math.sign(s) * Math.pow(Math.abs(s), e);
+  return out;
+}
+
+/**
+ * Sample a piecewise-linear colour ramp through `stops` (sRGB hex) at t in
+ * [0, 1] (clamped). Writes 0..1 sRGB floats into `out` and returns it. A single
+ * stop is a flat colour; no stops is white.
+ */
+export function rampColor(
+  t: number,
+  stops: readonly string[],
+  out: [number, number, number] = [1, 1, 1],
+): [number, number, number] {
+  if (stops.length === 0) {
+    out[0] = out[1] = out[2] = 1;
+    return out;
+  }
+  const x = Math.min(1, Math.max(0, Number.isFinite(t) ? t : 0)) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(x));
+  if (i < 0) {
+    const c = hexToInt(stops[0]);
+    out[0] = ((c >> 16) & 0xff) / 255;
+    out[1] = ((c >> 8) & 0xff) / 255;
+    out[2] = (c & 0xff) / 255;
+    return out;
+  }
+  const f = x - i;
+  const c0 = hexToInt(stops[i]);
+  const c1 = hexToInt(stops[i + 1]);
+  for (let k = 0; k < 3; k++) {
+    const shift = 16 - 8 * k;
+    const v0 = ((c0 >> shift) & 0xff) / 255;
+    const v1 = ((c1 >> shift) & 0xff) / 255;
+    out[k] = v0 + (v1 - v0) * f;
+  }
+  return out;
+}
+
+/**
+ * Ease-out with a small overshoot (the "pop" of the palette appear animation).
+ * 0 at t=0, 1 at t=1, peaks a few percent above 1 just before the end.
+ * `t` is clamped to [0, 1].
+ */
+export function easeOutBack(t: number, overshoot = 1.70158): number {
+  const x = Math.min(1, Math.max(0, t)) - 1;
+  return 1 + (overshoot + 1) * x * x * x + overshoot * x * x;
+}
+
+/** Smooth 0 -> 1 ease for fades. `t` clamped to [0, 1]. */
+export function easeOutCubic(t: number): number {
+  const x = 1 - Math.min(1, Math.max(0, t));
+  return 1 - x * x * x;
+}
+
+/**
+ * Scale and glow of the palette's appear animation `elapsed` seconds after it
+ * (re)appeared, over `duration` seconds: scale pops up from `fromScale` with a
+ * slight overshoot, glow fades in on a plain ease. Writes into `out` so the
+ * per-frame caller allocates nothing; returns true while still animating.
+ */
+export function appearFrame(
+  elapsed: number,
+  duration: number,
+  fromScale: number,
+  out: { scale: number; glow: number },
+): boolean {
+  if (!(duration > 0) || elapsed >= duration) {
+    out.scale = 1;
+    out.glow = 1;
+    return false;
+  }
+  const t = Math.max(0, elapsed) / duration;
+  out.scale = fromScale + (1 - fromScale) * easeOutBack(t, 1.4);
+  out.glow = easeOutCubic(t);
+  return true;
+}
