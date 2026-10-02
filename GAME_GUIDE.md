@@ -25,28 +25,39 @@ your headset instead, see **Launching on Quest** below.
 | `CHILL` | Chill status line, spray rate, ambient music on/off | `sprayCooldownMs` 120 → 60 for a firehose; `music: false` for a silent studio |
 | `SPLAT` | Decal capacity, base size, size/rotation jitter, splash pattern | `capacity` 512 → 1024 to paint longer before old splats recycle; `baseRadius` for bigger paint |
 | `GAME` | Round length, countdown, combo window/cap, **scoring values**, pause copy | `roundSec` 90 → 60 for arcade-tight rounds; `scoreWallSplat` 5 → 0 if only robots should score |
-| `TARGETS` | Robot count, spawn arc/ring radii/heights, size, hp, respawn pace, hover motion | `spawnArcDeg` 150 → 360 for the old surround ring (standing play); `maxConcurrent` 4 → 6 and `respawnDelaySec` 1.5 → 0.8 for a harder game |
-| `HUD` | Where the panel sits in menus vs. mid-round, and how lazily it follows | `playOffset` `[0, -0.52, -0.95]` — drop the middle number further if the HUD still crosses your aim |
-| `PALETTE` | Wrist palette: board size/oval, dab arc, chip row + labels, controller mount (grip offsets, tilt), **hand mount** (lift/forward/outward), poke-park lock, pinch reach | Controllers: `wristOffsetY` 0.11 to float it higher. Hands: `handLift` / `handForward` to move it; `lockRadius` 0.16 → 0.2 if it still moves under your finger |
-| `WEB` | Web ammo: hand aim source, gauntlet size/offsets/smoothing, web speed/gravity/aim assist, the two gesture triggers, strands, web splats, **the tether reel** and the wrist selector | `handAimSource` 'ray' ↔ 'hand' if the barrel does not follow your arm; `shooterOffsetZ` to slide it along the forearm; `thrustSpeed` 1.7 → 1.3 if thrusting never fires; `pullGain` 2.2 → 3 if reeling feels stiff |
+| `TARGETS` | Pool size, alive cap, spawn arc/ring radii/**heights**, respawn pace, pop/hit animation timing | `spawnArcDeg` 150 → 360 for the old surround ring (standing play); `heightMax` 1.7 → 2.0 if nobody plays seated; `maxConcurrent` 5 → 6 and `respawnDelaySec` 1.5 → 0.8 for a harder game. `poolSize` must equal the Splotbot pools' sum (a test checks) |
+| `SPLOTBOTS` | **The robot cast** (round 8): per-character size, HP, points, idle motion; the waves; the boss; the shield; the peek cycle; spawn/hit/pop animation; Pip | `waves` for pacing; `boss.enterAtSecLeft` 20 → 0 to switch the boss off; `shield.coneDeg` 140 → 100 to make flanking easier; `peek.upSec` 1.5 → 2.5 for slower peekers |
+| `BLASTER` | **Gauntlet blasters** (round 8): skins, deploy speed, auto-fire rate, barrel muzzle, back-of-hand plate, recoil, glow, mode-switch cue | `autoFireCooldownMs` 150 → 100 for a hose, → 250 for a semi-auto feel; `transitionSec` 0.3 → 0 for instant swaps; `modeSwitchVolume` 0 to silence the swap cue |
+| `INTRO` | The enter-AR logo intro (round 8): timing, size, burst, tagline, sounds | `enabled: false` to drop straight to the title; `exitStartSec` 2.7 → 1.8 for a shorter hold; `tagline` (ASCII only) |
+| `HUD` | Where the panel sits in menus vs. mid-round, how lazily it follows, and (round 8) the button/section micro-animations and the urgent clock | `playOffset` `[0, -0.52, -0.95]` — drop the middle number further if the HUD still crosses your aim; `sectionFadeSec` 0 for instant section swaps; `timerUrgentSec` 10 → 15 |
+| `PALETTE` | Wrist palette: **board style** (holo / glb / wood) and the holo look, dab arc, chip row + labels, mode pads, controller mount (grip offsets, tilt), **hand mount** (lift/forward/outward), poke-park lock, pinch reach, appear / hide-on-lost | `boardStyle: 'wood'` for the old look; controllers: `wristOffsetY` 0.11 to float it higher. Hands: `handLift` (0.08) / `handForward` to move it; `lockRadius` 0.16 → 0.2 if it still moves under your finger; `hideAfterLostSec` 0.5 → 1.5 if it blinks out mid-poke |
+| `WEB` | Web ammo: hand aim source, spinneret/bracer size/offsets/smoothing (shared by every gauntlet mode), web speed/gravity/aim assist, the two gesture triggers, strands, web splats, **the tether reel** and the wrist selector | `handAimSource` 'ray' ↔ 'hand' if the barrel does not follow your arm; `shooterOffsetZ` to slide it along the forearm; `thrustSpeed` 1.7 → 1.3 if thrusting never fires; `pullGain` 2.2 → 3 if reeling feels stiff |
 | `ROOM` | How far robots are held off real walls, **how thick wall colliders are**, and the room-scan notice | `wallThicknessMeters` 0.06 → 0.1 if paint still goes through walls; `spawnWallMargin` 0.45 → 0.7 in a cluttered room |
 | `FLOOR` | The invisible backstop floor: how wide, how thick, how far under y=0 | `extentMeters` 30 if you somehow play in a bigger space than that |
 | `EASEL` | Canvas size (both orientations), board height/tilt, spawn distance, painting resolution, stamp sizes, grab smoothing | `spawnDistance` 1.4 → 0.7 for seated painting; `grabSmoothingSec` for a heavier/lighter easel |
-| `AUDIO` / `AUDIO_VOLUME` / `AUDIO_SPATIAL` | Which mp3 plays for what, how loud, spatializing | Drop replacement mp3s into `public/audio/` with the same names |
+| `AUDIO` / `AUDIO_VOLUME` / `AUDIO_SPATIAL` | Which mp3 plays for what, how loud, spatializing (round 8: `shieldPing` 0.45 for a Squeegee bounce, `bossEnter` 0.75 for the Duke's entrance) | Drop replacement mp3s into `public/audio/` with the same names |
 | `HAPTICS` | Rumble intensity/duration per event | — |
 | `RENDER` | Image-based lighting, tone mapping, ball clearcoat, robot rim | `iblIntensity` 1.0 → 0.8 if objects look too bright against your room; `ballClearcoat` 0 for a cheaper matte ball |
 | `VFX` | Particle pool size and every burst (pop confetti, droplets, sparks, muzzle puff) | `muzzle.count` 0 if the puff clutters your hands; `pop.count` for bigger pops |
 
 ### The painter's palette
 
-It is an actual palette: a flat wooden oval riding the back of your **left
-hand**, tilted toward your face.
+It rides your **left hand**, tilted toward your face. Round 8 made it a
+**holo board**: a dark glass slab with a glowing neon edge, liquid paint wells
+under the dabs and holo sockets under every chip and pad, built entirely in code
+(nothing to stream, nothing to fail). `PALETTE.boardStyle` picks it: `'holo'`
+(default), `'glb'` (the old modelled board, `public/gltf/palette-board.glb`) or
+`'wood'` (the round-3 primitive oval). The `holo*`, `well*`, `socket*` and
+`shimmer*` knobs are the look; the board is decoration only, so no style can
+break selection.
 
 - **Four paint dabs** curve around the far edge — glossy, flattened blobs in the
   four palette colors. Touching one sets the **color**, and drops you back to
   paint if you were throwing webs.
 - **Five ammo chips** sit in a row along the near edge, by your wrist. Four load
   a paint kind; the fifth loads **WEB**. Exactly one chip is lit at a time.
+- **Three mode pads** (round 8) across the middle — **HAND / BLASTER / WEB** —
+  pick the launcher your gauntlets are in. See **Gauntlets and the Armory**.
 
 Each chip has three ways to tell it apart, because round 4 shipped only the
 first one and the field report was that the row looked bad and read as nothing:
@@ -70,8 +81,9 @@ chip — the thing you touched swells to 1.3× *and* lights up in its own color
 pinching still works as a fallback (it is how rounds 1–2 did it), and
 ray-clicking still does nothing, by design.
 
-That is nine things to press instead of the old sixteen, because color and ammo
-are separate choices rather than one control per combination. The 4 colors live
+That is twelve things to press (nine before the mode pads), still fewer than the
+old sixteen, because color, ammo and launcher are separate choices rather than
+one control per combination. The 4 colors live
 in [`src/types.ts`](src/types.ts) (`PALETTE_COLORS`, RGBA 0–1 floats) and the
 chip row is `PALETTE_CHIP_ORDER` in the same file — change a color there and the
 chip, its glow and the HUD footer all follow.
@@ -85,10 +97,16 @@ neighbouring captions overlap. `PALETTE.grabSelectRadius` (9 cm) is how close a
 squeeze has to be to count — it is a plain distance test, deliberately immune
 to the pointer-priority quirks around the wrist.
 
-Drop a modelled board at `public/gltf/palette-board.glb` and uncomment the
-manifest entry marked `ROUND3-PALETTE-ASSET` in [`src/main.ts`](src/main.ts) to
-replace the primitive oval; the dabs and chips are always built in code, so
-tapping keeps working whatever the art is.
+To use a modelled board instead, drop it at `public/gltf/palette-board.glb` (it
+is already in the manifest) and set `PALETTE.boardStyle: 'glb'`; until it has
+streamed in, the holo board stands in. The dabs, chips and pads are always built
+in code, so tapping keeps working whatever the art is.
+
+**It appears and hides with your hand.** The board pops in (`appearSec`,
+`appearFromScale`) when your left hand is tracked and hides after
+`hideAfterLostSec` (0.5 s) without it, so it never hangs frozen in mid-air where
+your hand used to be. It never hides while it is parked under your poking
+finger.
 
 One ergonomic side effect worth knowing: because the palette lives on the left
 hand, that hand's laser is reserved for the palette — **click menu buttons with
@@ -99,6 +117,101 @@ Round 6 hangs a tenth pressable off the left wrist, but not on the board: the
 two-pad web sub-mode selector floats above the left **shooter**, and so exists
 only while web ammo is loaded. It wears the same three pointer tags as a chip
 and answers to the same squeeze-proximity fallback. See **TETHER WEB** below.
+
+### Gauntlets and the Armory (round 8)
+
+Both forearms wear a **gauntlet**, and it has three launchers. Pick one on the
+palette's mode pads or in the **Armory** (title screen → **BLASTERS >**):
+
+| Launcher | What you wear | How it fires |
+|---|---|---|
+| **HAND** | Nothing | Paint from your bare hand along the pointer, one ball per pull — the pre-round-8 game |
+| **BLASTER** (default) | Bracer, back-of-hand plate, a barrel and a canister over the wrist that glows in your loaded paint colour | **Hold to auto-fire**, one ball every `BLASTER.autoFireCooldownMs` (150 ms) per hand, in every phase that allows firing. Shots leave the barrel you can see |
+| **WEB** | Bracer, plate, and the web spinneret underneath | Webs, one per pull; SPLAT / TETHER pads ride the left spinneret |
+
+WEB mode and the WEB chip are the same thing seen from two places: load either
+and the other follows; load paint and you go back to whichever paint launcher
+you had (BLASTER or HAND). Swapping plays a short deploy animation
+(`BLASTER.transitionSec`, 0.3 s — it never blocks a shot), a chime when hardware
+deploys, a soft click when it stows to bare hands, and a buzz on both hands
+(`modeSwitchVolume`, `modeSwitchHapticIntensity` / `Ms`).
+
+**The Armory** is a sub-screen of the title, not a game phase: three launcher
+cards (HAND / BLASTER / WEB, with a one-line description), a skin picker
+(`<` `>` arrows plus five dots), **BACK** and **PLAY**. Opening and closing it does
+not move the panel. Starting a round from anywhere simply closes it.
+
+**Skins** recolour the gauntlet's shell, trim and glow: NEON CORAL, CYBER LIME,
+ULTRAVIOLET, CHROME ICE, GOLD RUSH (`BLASTER.skins`). Your choice is saved on
+the device (localStorage `paintblast.blasterSkin`, `BLASTER.skinStorageKey`).
+Add a skin by **appending** to the list — the saved value is an index, so
+reordering changes everybody's pick; an index that no longer exists falls back
+to the first skin.
+
+| Knob | Ships as | What it does |
+|---|---|---|
+| `BLASTER.autoFireCooldownMs` | 150 | Auto-fire rate. Ball speed is still `FIRE.speed`; the wall-tunnelling cap does not move |
+| `BLASTER.muzzleLocal` / `muzzleOffset` | [0, 0.058, −0.014] / 0.05 | Where on the wrist the barrel's muzzle sits, and how far past it a ball is born |
+| `BLASTER.plateOffsetHand` / `plateOffsetController` | see config | The back-of-hand plate's position on a tracked hand / over a held controller |
+| `BLASTER.controllerRollDeg` | 90 | Controllers are held thumb-up, so the hardware is rolled to put the barrel over the thumb side. 0 = anatomical (barrel sticks out sideways) |
+| `BLASTER.recoilMeters` / `recoilPitchDeg` / `recoilDecaySec` | 0.012 / 6 / 0.07 | The kick per shot |
+| `BLASTER.canisterSwirlHz` / `canisterPulseHz` / `muzzleFlashScale` | 0.35 / 0.6 / 1 | Canister life and the muzzle flash |
+
+The bracer follows your **aim** and the plate follows your **hand**. If the OS
+pointer ray and your hand disagree, they can look misaligned — `WEB.handAimSource:
+'hand'` or wider `WEB.rayBlendNearDeg` / `FarDeg` (see the forearm gauntlet table)
+are the fixes to try.
+
+### The Splotbots (round 8)
+
+The robots are now a cast of cleaning bots that want your paint gone. Every
+round draws from a pool of 14:
+
+| Bot | How many | Hits | Points | How to beat it |
+|---|---|---|---|---|
+| **Mopsy** | 7 | 1 | 100 | Point and shoot. Bobs and sways on a mop-string skirt |
+| **Squeegee** | 3 | 1 | 150 | Its wiper-blade shield always turns to face you and **bounces** shots that arrive inside its front cone (no damage, a cyan ping). Get past it four ways: a **BOUNCY** ball banked off a wall (any ball that has already bounced), a **TETHER** web, **SPLASH** ammo, or a shot from the **side** |
+| **Peekaboo** | 3 | 1 | 200 | Hides behind your real furniture and periscopes up for ~1.5 s. Only hittable while up, so watch the furniture and fire as it rises. With no furniture scanned it peeks up from low down |
+| **Duster Duke** | 1 | 6 | 600 | The boss. Drops in with **20 s left** (once per round), stomps about, and **splits into two Mopsys** when popped. A tether haul takes 2 HP instead of popping him, then he walks back |
+
+Points are multiplied by your combo as always. **Pip**, the little palette
+drone, is the mascot, not a target: he hovers beside the HUD in menus, flies
+away when a round starts, and does a double spin when you set a new best.
+
+**Pacing** is `SPLOTBOTS.waves`: Mopsys only for the first 22 s (so the first
+thing anyone learns is point, pinch, pop), then the cast arrives, then mixed
+pressure until the boss. Each wave has `startSec`, `maxAlive` (capped by
+`TARGETS.maxConcurrent`, 5) and `weights` for [Mopsy, Squeegee, Peekaboo].
+Robots spread across `lanes` (5) of the forward arc.
+
+| Knob | Ships as | What it does |
+|---|---|---|
+| `SPLOTBOTS.archetypes.<bot>.hp` / `points` / `heightMeters` | see table above | Toughness, value, size. Change `pool` only together with `TARGETS.poolSize` (a test checks the sum) |
+| `...faceRate` / `bobAmplitude` / `swayRad` / `swayHz` | per bot | How fast it turns to you and how it idles |
+| `SPLOTBOTS.boss.enterAtSecLeft` | 20 | When the Duke arrives; 0 = no boss |
+| `SPLOTBOTS.boss.tetherDamage` / `companionsMax` / `distance` / `standHeight` | 2 / 2 / 2.0 m / 0.4 m | Tether damage, other bots allowed alongside him, where he lands |
+| `SPLOTBOTS.shield.coneDeg` | 140 | Width of Squeegee's blocking cone. Lower = easier to flank |
+| `SPLOTBOTS.shield.maxDeflectSpeed` | 9 m/s | Keep under ~10: a faster bounced ball tunnels walls (a test pins it) |
+| `SPLOTBOTS.peek.upSec` / `hiddenSec` / `hittableLift` | 1.5 / 1.6 / 0.6 | How long a Peekaboo shows, hides, and how far up it must be to count |
+| `SPLOTBOTS.peek.furnitureMinTop` / `MaxTop` | 0.35 / 1.4 m | Which furniture counts as cover (not rugs, not wardrobes) |
+| `SPLOTBOTS.anim.*` | — | Spawn pop, hit squash and flash, pop spin |
+| `SPLOTBOTS.pip.*` | — | Pip's size, where he sits beside the HUD, bob, happy spin, fly-off |
+
+### The intro (round 8)
+
+The first time each session turns visible, the PAINTBLAST logo bursts out of a
+neon paint splat about 1.5 m in front of you, a ring of splats flies out, the
+tagline **YOUR ROOM IS THE ARENA** lands, and then it lifts away and the title
+HUD appears — about three and a half seconds in all. **Pinch or pull the
+trigger to skip** (the press still does whatever it normally would). It waits
+while the Quest menu is open, and plays again only after you leave AR and come
+back.
+
+`INTRO.enabled: false` turns it off. `exitStartSec` (2.7) is the hold,
+`distance` / `heightOffset` / `logoWidth` place it, `particleCount` (56) is the
+burst, `tagline` is the text (ASCII only), and the three `*Volume` keys mute or
+level its whoosh, splat and chime. `hideHud` keeps the title HUD (and Pip) out
+of the way until `hudRevealAt` of the exit.
 
 ### Paint never just sits there
 
@@ -119,6 +232,14 @@ In the menu the panel sits comfortably in front of you. The moment a round (or
 chill mode) starts it ducks low, shrinks to 75%, and follows your head lazily so
 it stops eating your shots. Both placements are in the `HUD` config section.
 
+Round 8 restyled it techno-paint: dark glass, neon frame, paint drips, the
+brand logo on the title. The title screen has **PLAY**, **CHILL MODE**, **WEB
+MODE**, three how-to tiles, a **LOADOUT** readout (launcher + skin) and
+**BLASTERS >**, which opens the **Armory** (below). Mid-round the clock turns
+coral in the last `HUD.timerUrgentSec` (10) seconds, and a round that beats the
+best score standing when it began gets a **NEW BEST** badge (a tie does not).
+`HUD.baseHeight` went 0.4 → 0.46 because the two-column title is nearly square.
+
 One catch worth knowing before you retune it: `playFaceTarget` has to stay
 `true`. IWSDK's other follow mode pins the panel to head *height* and throws the
 vertical offset away, so with it off the panel climbs straight back into your
@@ -131,9 +252,10 @@ robots, no score. An easel appears about 1.4 m in front of you; paint that
 canvas and the splats land on a real 1024×768 image, not just a decal. Ambient
 music plays for as long as you stay (`CHILL.music: false` turns it off).
 
-**Hold the trigger to spray.** Chill is the only mode where a held trigger keeps
-firing — every other phase wants one pull per ball. `CHILL.sprayCooldownMs`
-(120) is the per-hand rate.
+**Hold the trigger to spray.** In Chill a held trigger keeps firing whatever
+launcher you have out, at `CHILL.sprayCooldownMs` (120) per hand. Outside Chill
+only the **BLASTER** auto-fires (`BLASTER.autoFireCooldownMs`, 150); HAND and
+WEB want one pull per ball. With both, the shorter cooldown wins.
 
 - **SAVE PAINTING** downloads it as `paintblast-painting-1.png` (Quest Browser
   puts it in the usual downloads folder).
@@ -156,10 +278,12 @@ missing).
 
 ### Buttons that answer you
 
-Every HUD button lights up as you point at it, snaps to a darker press color for
-~120 ms when you click, and plays a tick. Filled pills brighten 12% on hover and
-darken 10% on press; outline pills bring their accent tint up from 8% to 20% to
-35%. There is no separate opacity property in uikit — the alpha rides in the
+Every HUD button lights up and swells to `HUD.buttonHoverScale` (1.04) as you
+point at it, squashes to `buttonPressScale` (0.93) in a darker press color for
+`pressFlashMs` (140 ms) when you click, and plays a tick. Filled pills brighten
+12% on hover and darken 18% on press; outline pills bring their accent tint up
+from 8% to 24% to 42%; the Armory's skin dots swell more (`skinDotHoverScale`
+1.18). Whole sections fade and rise into place over `sectionFadeSec` (0.22 s). There is no separate opacity property in uikit — the alpha rides in the
 background color — so all three states are just `rgba()` strings with a bigger
 last number. The whole thing is one `wireInteractiveButton` helper in
 [`src/systems/HudSystem.ts`](src/systems/HudSystem.ts); a new button gets the
@@ -171,9 +295,10 @@ Round 4 shipped webbing as a **mode** you entered from the title screen, which
 hid the palette and made everything white. The field report was "I want web mode
 AND chill mode — same interactions", plus "still want regular mode". A mode you
 have to leave cannot give you that, so round 5 deleted it: **webbing is ammo
-now.** Load the **WEB** chip on your wrist palette and both wrists sprout
-shooters, wherever you happen to be. Load any paint chip — or touch any dab — and
-they go away again.
+now.** Load the **WEB** chip (or the WEB mode pad) on your wrist palette and both
+gauntlets switch to web spinneret, wherever you happen to be. Load any paint chip
+— or touch any dab — and they go back to the launcher you had before (BLASTER or
+HAND).
 
 That means webbing works **everywhere firing works**: the Idle sandbox, mid-round
 in a real game (web wall-splats score exactly like paint wall-splats, through the
@@ -215,10 +340,10 @@ tether web on throws a tether web. They are a second trigger now, not a mode.
 
 Two consequences worth knowing:
 
-- **The wrist shooters still only appear with web ammo**, because they are web
-  hardware. A paint thwip fires from the same point on your wrist with no device
-  visible, which looks exactly like throwing paint from your hand — which is
-  what it is.
+- **What you see on your arm is the launcher, not the ammo** (round 8). In
+  BLASTER mode a paint thwip, thrust or trigger leaves the barrel on top of your
+  wrist; in WEB mode, the spinneret underneath; in HAND mode there is no device
+  and paint flies from your bare hand, as it did before round 8.
 - **The trigger and the gestures now share a cooldown.** Round 5 kept them
   separate and said so in this file, on the grounds that they were separate
   inputs firing different ammo. Now that a thwip and a trigger pull produce an
@@ -330,6 +455,10 @@ forearm, a graphite body on the palm side, a glowing cartridge (white = splat,
 sky = tether) and a nozzle at the wrist crease. What you see is where it shoots,
 by construction — webs fire along the *shown* barrel.
 
+Round 8 moved all of this into **GauntletSystem**, which now poses both arms
+for every launcher; the web device is the **spinneret** under the bracer, and
+these `WEB.shooter*` knobs still place it.
+
 | Knob | Ships as | What it does |
 |---|---|---|
 | `WEB.handAimSource` | `'ray'` | Tracked-hand aim: the OS pointer ray (steady, same ray the pinch fires along) or `'hand'` (exactly where the back of your hand points; a bent-back wrist aims high). Controllers always use their ray. |
@@ -338,7 +467,7 @@ by construction — webs fire along the *shown* barrel.
 | `WEB.shooterOffsetY` | −0.034 | Negative = palm side of the forearm. |
 | `WEB.shooterOffsetZ` | +0.05 | Positive = up the forearm from the wrist joint. |
 | `WEB.shooterLengthMeters` / `BandMeters` | 0.11 / 0.075 | Gauntlet length and the forearm diameter the straps wrap. |
-| `WEB.muzzleLocal` | [0, 0, −0.072] | The nozzle tip, on the barrel axis. Spawn point and strand start. |
+| `WEB.muzzleLocal` | [0, 0, −0.082] | The spinneret's needle tip, on the barrel axis. Spawn point and strand start. |
 | `WEB.controllerWristBack` | 0.07 | Controllers have no wrist joint: how far behind the grip the wrist is assumed. |
 | `WEB.shooterUseGlb` + yaw/pitch/roll | false, 0/0/0 | Swap in a modelled gauntlet. Author it long axis = model −Z, nozzle at −Z, back of hand +Y; the three angles fix an exporter's axes. The old ring-cuff GLB cannot lie along a forearm and is no longer loaded. |
 
@@ -370,7 +499,7 @@ cannot step through a robot on a slow frame.
 
 Controllers keep the tuned grip-frame mount (the four `wristOffset*` knobs and
 `tiltDeg`). On **hands** the palette is posed in world terms: it floats
-`PALETTE.handLift` (6 cm) straight up from the wrist joint, `handForward`
+`PALETTE.handLift` (8 cm since round 8, so it clears the gauntlet) straight up from the wrist joint, `handForward`
 (11 cm) out over the hand and `handOutward` (3 cm) away from your body — so it
 never covers the gauntlet's pads — and turns to **face your eyes**, dab edge
 toward your fingers, in any wrist roll.
@@ -378,7 +507,8 @@ toward your fingers, in any wrist roll.
 It also **holds still while you poke it**: when your right index fingertip comes
 within `PALETTE.lockRadius` (16 cm) the board parks in world space, and rejoins
 the wrist `lockReleaseSec` (0.35 s) after the finger leaves, gliding back over
-`reattachSec`. A **pinch** within `PALETTE.pinchSelectRadius` (4.5 cm) of a dab,
+`reattachSec`. If your left hand drops out of tracking while it is parked, the
+lock still releases on schedule rather than pinning the board in mid-air. A **pinch** within `PALETTE.pinchSelectRadius` (4.5 cm) of a dab,
 chip or pad selects it — and that pinch never also fires a ball.
 
 The palette GLB is a slab authored thin along Z; the loader now lays its
@@ -394,7 +524,9 @@ PAUSED pill; it resumes exactly where it was. A frame longer than
 
 Robots spawn in a **forward arc**, `TARGETS.spawnArcDeg` (150°) wide, centred on
 where you faced when the round started — nobody has to turn round in their
-seat. 360 restores the old full ring.
+seat. 360 restores the old full ring. Round 8 also caps spawn height at
+`TARGETS.heightMax` **1.7 m** (was 2.0): the nearest ring then sits within ~23°
+above a seated eye line, inside the comfortable ±30° band.
 
 ### Rendering and particles (round 7)
 
@@ -404,6 +536,8 @@ seat. 360 restores the old full ring.
 AgX washed it out). Balls are clearcoat wet paint (`ballRoughness`,
 `ballClearcoat`; 0 falls back to the cheaper standard material and avoids the
 one-off first-shot shader compile). Robots get a cool rim (`robotRim*`).
+There is **no depth occlusion**: real furniture never hides virtual objects, so
+a hiding Peekaboo can be seen through your couch.
 
 `VFX` is the juice: one pooled 256-particle draw call — confetti on a pop,
 droplets on an impact, spray on a hit, sparks when a tether catches, a muzzle
@@ -549,13 +683,17 @@ scanned, and pulled back in front of anything they would have spawned through.
 If your room has never been scanned there is nothing to probe, and the ring
 behaves as it always did. `ROOM` holds both knobs.
 
-### Swapping the robot
+### Swapping a Splotbot
 
-Drop any GLB/GLTF at `public/gltf/robot/robot.gltf` (or change the `robot` entry
-in the asset manifest in [`src/main.ts`](src/main.ts)). TargetSystem measures the
-model at runtime and rescales it to `TARGETS.heightMeters`, so any model works
-without code changes. Meta's asset library (`meta_assets_search` via the hzdb MCP)
-is a good source.
+Each character's art is the GLB at `SPLOTBOTS.archetypes.<bot>.url` (Pip's at
+`SPLOTBOTS.pip.url`), under `public/gltf/splotbots/`. Drop a new file at that
+path: TargetSystem measures it and rescales it to `heightMeters`, and swaps it in
+at the next Countdown (PipSystem does the same for Pip, to `sizeMeters`). If the
+face points the wrong way, set `yawOffsetDeg` (0 if the model faces +Z, 180 if
+−Z, ±90 if sideways). Until a GLB has streamed — or if one is missing — a bot
+wears `public/gltf/robot/robot.gltf`, the old robot, at the character's size,
+and Pip a small code-built drone. Animation is all procedural, so an unrigged mesh
+is fine.
 
 ### Swapping the splat look
 
@@ -573,18 +711,23 @@ stamp mask for webbing that lands on the easel canvas.
 One system per file in `src/systems/`, data flows through signals + a per-frame
 event buffer in `world.globals`:
 
+- **WorldCollisionSystem** (5) — turns scanned planes, furniture and the global room mesh into static colliders, and prints the census line
 - **FloorGuardSystem** (6) — lays the one invisible backstop floor collider, once, at startup
 - **SceneScanSystem** (7) — counts detected planes and meshes; raises `sceneScanMissing` when a room turns out never to have been scanned, and owns the one user-pressed call to `initiateRoomCapture()`
-- **WristPaletteSystem** (8) — copies the left grip's pose onto the palette root every frame. Unconditional: the palette is the way out of web ammo, so it is never hidden
-- **WebShooterSystem** (9) — wrist shooters (mounted, band-fitted), the wrist sub-mode selector, the two gesture triggers (finger curl / thrust), the pooled strands, and the per-hand tether line. Gestures run in any firing phase; the *hardware* appears only with web ammo
-- **BallSpawnSystem** (10) — the one place a ball is launched from, whether the trigger, a thwip or a thrust asked for it (held trigger sprays in Chill); paint dabs set the color, ammo chips set the kind and the style, selector pads set the web sub-mode, all by tap/poke or squeeze
+- **WristPaletteSystem** (8) — poses the palette on the left hand (grip for controllers, wrist joint facing your eyes for hands), parks it under a poking finger, pops it in on tracking and hides it on loss, and animates the holo board
+- **GauntletSystem** (9) — both arms' poses, the gauntlet hardware for HAND / BLASTER / WEB, deploy/stow, skins, recoil, and where each arm's shots leave from this frame
+- **WebShooterSystem** (10) — the two gesture triggers (finger curl / thrust), the web sub-mode pads, the pooled strands, and the per-hand tether line
+- **BallSpawnSystem** (11) — the one place a ball is launched from (trigger, thwip or thrust), out of the gauntlet's barrel or the bare hand; auto-fire in BLASTER, spray in Chill; dabs set the color, chips the kind and style, mode pads the launcher, selector pads the web sub-mode
 - **BallFlightSystem** (12) — detects impacts from velocity deltas (IWSDK exposes no collision events), applies per-kind behavior, paints splats or webs, and dissolves settled balls into paint
-- **TargetSystem** (14) — pooled robots on a room-clamped spawn ring, sphere-overlap hits, pop + respawn, and the whole tether lease (attach / reel / anchor / release). WebShooterSystem polls it rather than being told, so a round ending or a robot being shot off the line resolves itself
+- **TargetSystem** (14) — the Splotbot pool, the wave director and lanes, Squeegee's shield, Peekaboo's hiding, Duster Duke, swept hits, pops, and the whole tether lease
 - **SplatterSystem** (15) — two InstancedMeshes and two ring-buffer decal pools, one for paint and one for webbing
 - **EaselSystem** (16) — the chill-mode easel; stamps impacts onto a real 2D canvas with the paint or the web mask, rotates it, and exports it
-- **GameStateSystem** (30) — Idle → Countdown → Playing → GameOver (plus Idle ⇄ Chill), timer, score, combo, best score (localStorage)
-- **HudSystem** (35) — signals → panel text/sections, phase-docked panel placement, hover/press states; START / CHILL MODE / PLAY AGAIN / SCAN ROOM / CLEAR PAINT / SAVE PAINTING / NEW CANVAS / ROTATE CANVAS / EXIT CHILL buttons
-- **FeedbackSystem** (36) — events → sound + rumble. BallFired and BallImpact carry a style bit, so a web plays the thwip and the web hit while a paintball in the same frame plays the trigger and the splat. Plus the Chill ambient loop
+- **GameStateSystem** (30) — Idle → Countdown → Playing → GameOver (plus Idle ⇄ Chill), timer, score (each bot's own points × combo), best score (localStorage), pause
+- **HudSystem** (35) — signals → panel text/sections, the Armory, phase-docked panel placement, button animation; PLAY / CHILL MODE / WEB MODE / BLASTERS / PLAY AGAIN / SCAN ROOM / CLEAR PAINT / SAVE PAINTING / NEW CANVAS / ROTATE CANVAS / EXIT CHILL and the Armory's cards, arrows, dots, BACK and PLAY
+- **FeedbackSystem** (36) — events → sound + rumble (a web plays the thwip and web hit, paint the trigger and splat; mode swap, shield ping, boss entrance). Plus the Chill ambient loop
+- **VfxSystem** (37) — events → pooled particle bursts (confetti, droplets, sparks, shield sparks)
+- **IntroSystem** (38) — the enter-AR logo intro
+- **PipSystem** (39) — Pip the mascot
 - **EventFlushSystem** (90) — clears the event buffer each frame
 
 Design + rationale: [`docs/superpowers/specs/2026-08-16-paintblast-v2-design.md`](docs/superpowers/specs/2026-08-16-paintblast-v2-design.md)
@@ -681,6 +824,11 @@ Production URL: **https://paintblast-mr.netlify.app**
   a wall sits ~3 cm proud of it. That is under a ball's own radius and reads as
   contact in passthrough; it is the price of not tunnelling, and
   `ROOM.wallThicknessMeters` is the dial if your walls read differently.
+- Peekaboo hides behind your real furniture, but the game has no depth
+  occlusion, so you can see it through the couch while it is "hidden". It cannot
+  be hit until it peeks, so this is a look problem, not a fairness one.
+- Pip and the Splotbots are unrigged meshes animated in code (bob, sway,
+  squash, spin) — there are no skeletal animations.
 - Meta's guidance warns that the global mesh has unreliable surface normals and
   is meant for *fast* collisions rather than resting contacts. Paintballs are
   fast and dissolve into paint shortly after settling, so this suits us — but a

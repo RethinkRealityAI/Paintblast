@@ -53,7 +53,7 @@ specs: `docs/superpowers/specs/`.
 ## Build / test / troubleshoot workflow
 
 1. `npx tsc --noEmit` first — always, before any runtime testing.
-2. `npm test` — Vitest; pure-logic tests only (502 as of R7). New mechanics get pure exported helpers + tests (see `detectImpact`, `ringSpawnPosition`, `isThwipPose` for the pattern). `tests/__mocks__/iwsdk-core.ts` grows stubs as imports demand.
+2. `npm test` — Vitest; pure-logic tests only (670 as of R8). New mechanics get pure exported helpers + tests (see `detectImpact`, `ringSpawnPosition`, `isThwipPose` for the pattern). `tests/__mocks__/iwsdk-core.ts` grows stubs as imports demand.
 3. **Emulator drive** (the proof, per the owner's verify-before-shipping rule):
    check `xr_get_session_status` FIRST. If it fails: the dev server may be down
    or port-shifted — Vite wants **8083**; during agent sessions the MCP relay
