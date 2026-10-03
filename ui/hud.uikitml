@@ -991,7 +991,7 @@
         <span class="studio-tab-sub">Pop and splash</span>
       </button>
     </div>
-    <span id="hud-chill-status" class="status">Hold trigger or pinch to spray. Tap the palette to change paint.</span>
+    <span id="hud-chill-status" class="status">Hold trigger or pinch to spray. Tap the gem on your left wrist for paint.</span>
     <div id="studio-meter" class="studio-meter">
       <div class="meter-track"><div id="studio-meter-fill" class="meter-fill"></div></div>
       <span id="studio-meter-text" class="meter-text">0%</span>

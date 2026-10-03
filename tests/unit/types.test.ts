@@ -60,12 +60,13 @@ describe('palette constants', () => {
     }
   });
 
-  it('is 4 dabs plus 5 chips = 9 pressables, down from the old 16-orb grid', () => {
+  it('is 4 colours plus 4 ammo kinds = 8 buttons, down from the old 16-orb grid', () => {
     // Round 3 split colour from kind: choosing them separately is far fewer
-    // controls than one per combination. Round 5 added the fifth chip, WEB.
+    // controls than one per combination. Round 5 added a fifth WEB chip;
+    // round 10 removed it again (GOO is a launcher on the wrist menu).
     expect(PALETTE_DAB_COUNT).toBe(4);
-    expect(PALETTE_CHIP_COUNT).toBe(5);
-    expect(PALETTE_PRESSABLE_COUNT).toBe(9);
+    expect(PALETTE_CHIP_COUNT).toBe(4);
+    expect(PALETTE_PRESSABLE_COUNT).toBe(8);
   });
 
   it('gives every paint colour exactly one dab', () => {
@@ -98,13 +99,12 @@ describe('palette constants', () => {
 });
 
 describe('PALETTE_CHIP_ORDER', () => {
-  it('is the four paint kinds plus exactly one web chip', () => {
-    expect(PALETTE_CHIP_ORDER).toHaveLength(5);
+  it('is the four paint kinds and no web chip (round 10: GOO is a launcher)', () => {
+    expect(PALETTE_CHIP_ORDER).toHaveLength(4);
     const web = PALETTE_CHIP_ORDER.filter(
       (chip) => chip.style === BallStyle.Web,
     );
-    expect(web).toHaveLength(1);
-    expect(web[0].label).toBe('WEB');
+    expect(web).toHaveLength(0);
   });
 
   it('gives every chip its own identity colour, as a full hex triple', () => {

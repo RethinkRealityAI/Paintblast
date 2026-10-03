@@ -197,11 +197,11 @@ export interface PaletteChipSpec {
  * each chip an identity **colour** and a tiny floating **label**, and the
  * silhouettes stay as a third redundant cue rather than the only one.
  *
- * The fifth entry is the round-5 headline: **WEB is ammo, not a mode.** Loading
- * it sets `globals.activeStyle` to Web, and every firing phase (Idle sandbox,
- * Playing, Chill) throws webbing until a paint chip or a paint dab loads
- * `Paint` back. That is why the row is one table rather than "four kinds plus a
- * special case": exactly one chip is lit at any moment, whichever axis it moves.
+ * Round 5 added a fifth WEB chip ("web is ammo, not a mode"); round 8 made
+ * GOO a launcher as well, and round 10 removed the chip: on the wrist menu GOO
+ * lives in the LAUNCHER row and this table is the AMMO row, paint kinds only.
+ * Picking one of these while GOO is loaded returns to the last paint launcher
+ * (BallSpawnSystem's `syncBlasterMode` subscription).
  */
 export const PALETTE_CHIP_ORDER: ReadonlyArray<PaletteChipSpec> = [
   // Plain sphere. Warm off-white, so "default" does not read as "disabled".
@@ -232,14 +232,8 @@ export const PALETTE_CHIP_ORDER: ReadonlyArray<PaletteChipSpec> = [
     label: 'SPLASH',
     color: '#48dbfb',
   },
-  // A web ball: a small sphere caged in two crossed rings. Pale web-grey, the
-  // one chip that is not a paint colour, because webbing is not paint.
-  {
-    kind: BallKind.Normal,
-    style: BallStyle.Web,
-    label: 'WEB',
-    color: '#e8e8ee',
-  },
+  // Round 10: the fifth chip (WEB / GOO) is gone. GOO is a LAUNCHER on the
+  // wrist menu's top row, so the ammo row is the four paint kinds only.
 ];
 
 /**
@@ -254,7 +248,7 @@ export const PALETTE_KIND_ORDER: ReadonlyArray<BallKind> = PALETTE_CHIP_ORDER
 
 export const PALETTE_DAB_COUNT = PALETTE_DAB_ORDER.length;
 export const PALETTE_CHIP_COUNT = PALETTE_CHIP_ORDER.length;
-/** Total pressable elements on the palette board. Was 16 in rounds 1-2. */
+/** Colour + ammo buttons on the wrist menu (launchers excluded). Was 16 in rounds 1-2. */
 export const PALETTE_PRESSABLE_COUNT = PALETTE_DAB_COUNT + PALETTE_CHIP_COUNT;
 
 /**
@@ -437,6 +431,24 @@ export const GameEvent = {
    */
   TutorialStepDone: 23,
 
+  // ---- Neatniks round 10 ----------------------------------------------------
+  //
+  // Numbered from 30 so parallel round-10 streams adding events (24+) cannot
+  // collide with this one in a merge.
+  /**
+   * A Squeegee's shield took its last blocked shot (NEATNIKS.shield.hp) and
+   * shattered; the bot is now hittable from any angle. Position = where the
+   * shot met the blade, `data` = pool slot. FeedbackSystem: a crunch + both
+   * hands buzz; VfxSystem: a cyan burst.
+   */
+  ShieldBroken: 30,
+  // ---- Wrist menu (round 10) -------------------------------------------------
+  /**
+   * The summonable wrist menu opened (`data` 1) or closed (`data` 0).
+   * Position = the summon gem. Emitted by WristMenuSystem alongside a UiClick
+   * (the audible cue); the tutorial's menu step keys off it.
+   */
+  MenuToggled: 24,
   // ---- The Studio (round 10: Chill mode's three activities) -----------------
   //
   // Numbered from 31: round-10 streams took 24 (MenuToggled) and 30
@@ -1000,11 +1012,11 @@ export const TutorialStep = {
   Off: 0,
   /** Pinch to fire at the ring on your wall. */
   Fire: 1,
-  /** Tap a colour on the wrist palette. */
+  /** Open the wrist menu (tap the gem) and tap a colour. */
   Palette: 2,
   /** Pop one Mopsy. */
   Pop: 3,
-  /** Load GOO on the palette's mode pad. */
+  /** Load GOO from the wrist menu's LAUNCHER row. */
   Goo: 4,
   /** Pick the TETHER sub-mode. */
   Tether: 5,
@@ -1279,6 +1291,39 @@ export class PipFocus {
    * subject, never on top of it or in the line of fire.
    */
   readonly offset = new Float32Array(3);
+}
+
+/**
+ * Round 10: the summonable wrist menu's live state, in `world.globals.wristMenu`.
+ * Written by WristMenuSystem (priority 8) every frame, read the same frame by
+ * BallSpawnSystem (shot blocking), TutorialSystem (Pip's focus) and anything
+ * else that cares. A struct rather than a system call so readers never import
+ * the menu system (and so a closed menu is a plain `open === 0` check).
+ */
+export class WristMenuState {
+  /** 1 while the menu is open and interactive (closed or animating shut = 0). */
+  open = 0;
+  /** 1 while the open menu is still scaling in (shown, not yet pressable). */
+  opening = 0;
+  /** Panel centre, world space (valid while `open` or `opening`). */
+  readonly center = new Float32Array(3);
+  /** Panel orientation (x, y, z, w); its +Z faces the eyes. */
+  readonly quaternion = new Float32Array([0, 0, 0, 1]);
+  /** Panel half extents, metres, in its own XY plane. */
+  halfW = 0;
+  halfH = 0;
+  /** 1 while the right index fingertip is in the open panel's poke zone. */
+  tipNear = 0;
+  /** 1 while the summon gem is shown on the left wrist. */
+  gemVisible = 0;
+  /** Summon gem centre, world space (valid while `gemVisible`). */
+  readonly gem = new Float32Array(3);
+  /**
+   * Hands whose current trigger / pinch press the menu spent (bit 0 left,
+   * bit 1 right). BallSpawnSystem folds it into its own consumed-press latch
+   * and clears it, so a menu click never also fires.
+   */
+  consumeMask = 0;
 }
 
 // ---- The Studio (round 10) ---------------------------------------------------

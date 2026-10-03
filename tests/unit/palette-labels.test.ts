@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { paletteLabelText } from '../../src/systems/WristPaletteSystem';
+import { paletteLabelText } from '../../src/wrist-menu';
 import { BLASTER_MODE_LABELS, BlasterMode, PALETTE_CHIP_ORDER } from '../../src/types';
 
 describe('paletteLabelText (round 9 rebrand)', () => {

@@ -23,8 +23,9 @@ describe('hands-first HUD copy', () => {
   });
 
   it('tells a hands-only player which hand presses buttons', () => {
-    // The left hand's ray is permanently taken by the wrist palette, so a
-    // left-hand pinch at START does nothing; the title screen has to say so.
+    // Rounds 2-9: the left hand's ray was permanently taken by the wrist
+    // palette. Round 10's menu takes nothing, but the title still teaches the
+    // one hand that always works.
     expect(idle).toMatch(/RIGHT hand/);
     expect(idle.toLowerCase()).toContain('pinch');
   });
