@@ -709,12 +709,108 @@
     width: 14;
   }
 
-  /* --- Chill -------------------------------------------------------------- */
+  /* --- Chill: the STUDIO (round 10) ------------------------------------- */
   .chill-title {
     font-size: 4.4;
     font-weight: bold;
     letter-spacing: 0.3;
     color: #48dbfb;
+  }
+  /* Generated "STUDIO" sign art (public/studio/studio-sign.webp, 800x332). */
+  .studio-sign {
+    width: 24;
+    margin-top: -0.6;
+    margin-bottom: -0.6;
+  }
+  /* Three big activity tabs; HudSystem lights the active one in its accent. */
+  .studio-tabs {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    width: 100%;
+    gap: 1.2;
+  }
+  .studio-tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-grow: 1;
+    flex-basis: 0;
+    gap: 0.4;
+    padding-y: 1.2;
+    background-color: rgba(255, 255, 255, 0.04);
+    border-radius: 2.2;
+    border-width: 0.16;
+    border-color: rgba(255, 255, 255, 0.18);
+  }
+  .studio-tab-name {
+    font-size: 2.6;
+    font-weight: bold;
+    letter-spacing: 0.24;
+    color: #f4f1ea;
+  }
+  .studio-tab-sub {
+    font-size: 1.8;
+    color: #9a9cb0;
+  }
+  /* Stencil score: a track + fill bar, percent, three stars. */
+  .studio-meter {
+    display: none;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 1.2;
+    width: 100%;
+  }
+  .meter-track {
+    display: flex;
+    flex-direction: row;
+    width: 26;
+    height: 1.6;
+    padding: 0.2;
+    background-color: rgba(255, 255, 255, 0.06);
+    border-radius: 0.8;
+    border-width: 0.1;
+    border-color: rgba(255, 255, 255, 0.25);
+  }
+  .meter-fill {
+    width: 0.1;
+    height: 1.2;
+    border-radius: 0.6;
+    background-color: #b6ff3b;
+  }
+  .meter-text {
+    font-size: 2.2;
+    font-weight: bold;
+    color: #f4f1ea;
+    width: 7;
+  }
+  .star-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4;
+  }
+  .star {
+    width: 3.2;
+    height: 3.2;
+  }
+  .star-off {
+    display: none;
+    width: 3.2;
+    height: 3.2;
+  }
+  .btn-studio {
+    flex-grow: 1;
+    flex-basis: 0;
+  }
+  .studio-foot {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 1.2;
   }
 
   /* PAUSED pill: the first child of the panel, above whichever section is
@@ -874,27 +970,49 @@
     <button id="btn-restart" class="btn-lime"><svg class="icon-m" viewBox="0 0 24 24"><path fill="#0b0c14" d="M6 3.5 L21 12 L6 20.5 Z"/></svg><span class="btn-text">PLAY AGAIN</span><div class="spacer-m"></div></button>
   </div>
 
-  <!-- ===== Chill ======================================================= -->
+  <!-- ===== Chill: the STUDIO (round 10) ================================ -->
   <div id="section-chill" class="section-hidden">
+    <img class="studio-sign" src="./studio/studio-sign.webp" />
     <span class="kicker">NO TIMER - NO NEATNIKS - JUST PAINT</span>
-    <span class="chill-title">CHILL MODE</span>
-    <div class="stripe">
-      <div class="bar-short-coral"></div>
-      <div class="bar-short-amber"></div>
-      <div class="bar-short-cyan"></div>
-      <div class="bar-short-lime"></div>
-      <div class="bar-short-violet"></div>
+    <div class="studio-tabs">
+      <button id="btn-studio-canvas" class="studio-tab">
+        <svg class="icon-l" viewBox="0 0 24 24"><path fill="#ffd23f" d="M2 3 H22 V19 H2 Z M4 5 V17 H20 V5 Z"/><path fill="#ff4f81" d="M7 9.5 A2.5 2.5 0 1 1 7.01 9.5 Z"/><path fill="#48dbfb" d="M5 16 L10 10.5 L13 13.5 L16 9 L19 16 Z"/><path fill="#ffd23f" d="M11 19 H13 L15 23 H13 Z M11 19 L9 23 H11 Z"/></svg>
+        <span class="studio-tab-name">CANVAS</span>
+        <span class="studio-tab-sub">Paint a picture</span>
+      </button>
+      <button id="btn-studio-stencil" class="studio-tab">
+        <svg class="icon-l" viewBox="0 0 24 24"><path fill="#b6ff3b" d="M1 1 H23 V23 H1 Z M12 4.5 L9.8 9.3 L4.6 9.9 L8.5 13.4 L7.4 18.6 L12 16 L16.6 18.6 L15.5 13.4 L19.4 9.9 L14.2 9.3 Z"/></svg>
+        <span class="studio-tab-name">STENCIL</span>
+        <span class="studio-tab-sub">Fill the shape</span>
+      </button>
+      <button id="btn-studio-targets" class="studio-tab">
+        <svg class="icon-l" viewBox="0 0 24 24"><path fill="#ff4f81" d="M12 1 A11 11 0 1 1 11.99 1 Z"/><path fill="#f4f1ea" d="M12 4.5 A7.5 7.5 0 1 1 11.99 4.5 Z"/><path fill="#48dbfb" d="M12 7.5 A4.5 4.5 0 1 1 11.99 7.5 Z"/><path fill="#ffd23f" d="M12 10 A2 2 0 1 1 11.99 10 Z"/></svg>
+        <span class="studio-tab-name">TARGETS</span>
+        <span class="studio-tab-sub">Pop and splash</span>
+      </button>
     </div>
     <span id="hud-chill-status" class="status">Hold trigger or pinch to spray. Tap the gem on your left wrist for paint.</span>
-    <span class="hint">Paint the easel, then save the picture</span>
-    <span class="hint">Pinch or squeeze the easel with both hands to move it</span>
-    <div class="btn-row">
-      <button id="btn-save-painting" class="btn-line line-amber btn-chill">SAVE PAINTING</button>
-      <button id="btn-new-canvas" class="btn-line line-cyan btn-chill">NEW CANVAS</button>
+    <div id="studio-meter" class="studio-meter">
+      <div class="meter-track"><div id="studio-meter-fill" class="meter-fill"></div></div>
+      <span id="studio-meter-text" class="meter-text">0%</span>
+      <div class="star-row">
+        <svg id="studio-star-on-0" class="star" viewBox="0 0 24 24"><path fill="#ffd23f" d="M12 1.5 L15.1 8.2 L22.4 9 L17 14 L18.5 21.3 L12 17.6 L5.5 21.3 L7 14 L1.6 9 L8.9 8.2 Z"/></svg>
+        <svg id="studio-star-off-0" class="star-off" viewBox="0 0 24 24"><path fill="#3a3c4c" d="M12 1.5 L15.1 8.2 L22.4 9 L17 14 L18.5 21.3 L12 17.6 L5.5 21.3 L7 14 L1.6 9 L8.9 8.2 Z"/></svg>
+        <svg id="studio-star-on-1" class="star" viewBox="0 0 24 24"><path fill="#ffd23f" d="M12 1.5 L15.1 8.2 L22.4 9 L17 14 L18.5 21.3 L12 17.6 L5.5 21.3 L7 14 L1.6 9 L8.9 8.2 Z"/></svg>
+        <svg id="studio-star-off-1" class="star-off" viewBox="0 0 24 24"><path fill="#3a3c4c" d="M12 1.5 L15.1 8.2 L22.4 9 L17 14 L18.5 21.3 L12 17.6 L5.5 21.3 L7 14 L1.6 9 L8.9 8.2 Z"/></svg>
+        <svg id="studio-star-on-2" class="star" viewBox="0 0 24 24"><path fill="#ffd23f" d="M12 1.5 L15.1 8.2 L22.4 9 L17 14 L18.5 21.3 L12 17.6 L5.5 21.3 L7 14 L1.6 9 L8.9 8.2 Z"/></svg>
+        <svg id="studio-star-off-2" class="star-off" viewBox="0 0 24 24"><path fill="#3a3c4c" d="M12 1.5 L15.1 8.2 L22.4 9 L17 14 L18.5 21.3 L12 17.6 L5.5 21.3 L7 14 L1.6 9 L8.9 8.2 Z"/></svg>
+      </div>
     </div>
-    <div class="btn-row">
-      <button id="btn-orientation" class="btn-line line-lime btn-chill">ROTATE CANVAS</button>
-      <button id="btn-exit-chill" class="btn-line line-coral btn-chill">EXIT CHILL</button>
+    <div id="studio-actions" class="btn-row-fill">
+      <button id="btn-studio-primary" class="btn-line line-lime btn-studio">SHAPE</button>
+      <button id="btn-studio-mount" class="btn-line line-violet btn-studio">TO EASEL</button>
+      <button id="btn-save-painting" class="btn-line line-amber btn-studio">SAVE</button>
+      <button id="btn-new-canvas" class="btn-line line-cyan btn-studio">CLEAR</button>
+    </div>
+    <div class="studio-foot">
+      <span class="hint">Hold a pinch to spray. Paint the room too!</span>
+      <button id="btn-exit-chill" class="btn-line line-coral btn-skip">EXIT</button>
     </div>
   </div>
 

@@ -7,11 +7,13 @@ import {
   Group,
   Matrix4,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   PhysicsBody,
   PhysicsShape,
   PhysicsShapeType,
   PhysicsState,
+  PlaneGeometry,
   Pressed,
   Quaternion,
   SRGBColorSpace,
@@ -21,13 +23,15 @@ import {
   createComponent,
   createSystem,
 } from '@iwsdk/core';
-import type { Entity, Object3D } from '@iwsdk/core';
+import type { Entity, Object3D, Texture } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
-import { EASEL } from '../config';
+import { EASEL, STUDIO } from '../config';
+import { onBoardSurface, shapeBoard } from '../studio';
 import { smoothingAlpha } from '../wrist-frame';
 import {
   BallStyle,
+  CanvasShape,
   GameEvent,
   GameEventBuffer,
   GamePhase,
@@ -43,6 +47,31 @@ const RIGHT = new Vector3(1, 0, 0);
 
 /** Object3D name of the paintable board, so ROTATE CANVAS can find and swap it. */
 const BOARD_MESH_NAME = 'EaselCanvas';
+/** Round 10: the gallery-frame art laid over the board's face. */
+const FRAME_ART_NAME = 'EaselFrameArt';
+/** Round 10: the stencil guide overlay (dimmed outside + outline). */
+const GUIDE_MESH_NAME = 'EaselStencilGuide';
+/** The legs / GLB stand group, hidden when the canvas hangs on a wall. */
+const STAND_NAME = 'EaselFrame';
+
+/** Round 10: board + painting sizes for the Studio's shapes, from EASEL + STUDIO. */
+const SHAPE_BOARD_CONFIG = {
+  boardWidth: EASEL.boardWidth,
+  boardHeight: EASEL.boardHeight,
+  canvasPxW: EASEL.canvasPxW,
+  canvasPxH: EASEL.canvasPxH,
+  squareBoardSize: STUDIO.squareBoardSize,
+  squareCanvasPx: STUDIO.squareCanvasPx,
+};
+
+/** Which frame art a shape wears (portrait = the landscape frame turned). */
+function frameFor(shape: CanvasShape) {
+  return shape === CanvasShape.Round
+    ? STUDIO.frames.round
+    : shape === CanvasShape.Square
+      ? STUDIO.frames.square
+      : STUDIO.frames.rect;
+}
 
 /**
  * AssetManifest key for the modelled easel used as the frame. The stand is
@@ -250,6 +279,35 @@ export class EaselSystem extends createSystem({
   private dims: EaselDims = orientationDims(false, EASEL);
   private portrait = false;
 
+  // ---- Round 10: the Studio ------------------------------------------------
+  /** Shape of the surface on the stand (Landscape/Portrait mirror `portrait`). */
+  private shape: CanvasShape = CanvasShape.Landscape;
+  /** Metres multiplier on the board (a wall canvas grows with distance). */
+  private boardScale = 1;
+  /**
+   * Set by StudioSystem: it decides where the canvas goes and when it shows,
+   * so entering Chill only builds the easel instead of planting it. Without a
+   * Studio (tests, a stripped build) the round-9 behaviour is unchanged.
+   */
+  managed = false;
+  /**
+   * Called for every stamp laid on the painting, in board UV (u right, v
+   * down, 0..1) with the stamp's drawn size as a fraction of the canvas
+   * width. StudioSystem feeds its stencil coverage grid from it, so coverage
+   * always matches the paint actually drawn.
+   */
+  onStamp?: (u: number, v: number, sizeFrac: number) => void;
+  /** Hidden material for the round board's sides and back. */
+  private hiddenMaterial?: MeshBasicMaterial;
+  private roundMaterials?: Array<MeshStandardMaterial | MeshBasicMaterial>;
+  private frameMaterial?: MeshStandardMaterial;
+  private frameLoading = new Set<string>();
+  private guideCanvas?: HTMLCanvasElement;
+  private guideTexture?: CanvasTexture;
+  private guideMaterial?: MeshBasicMaterial;
+  private guideOn = false;
+  private sharedPlane?: PlaneGeometry;
+
   init() {
     this.events = this.globals.gameEvents as GameEventBuffer;
     this.gamePhase = this.globals.gamePhase as Signal<GamePhase>;
@@ -273,7 +331,9 @@ export class EaselSystem extends createSystem({
     this.cleanupFuncs.push(
       this.gamePhase.subscribe((phase) => {
         if (phase === GamePhase.Chill) {
-          this.enterChill();
+          // Round 10: the Studio places and shows the canvas itself.
+          if (this.managed) this.ensureEasel();
+          else this.enterChill();
         } else {
           this.hideEasel();
         }
@@ -373,8 +433,7 @@ export class EaselSystem extends createSystem({
         .applyMatrix4(this.inverseBoard);
 
       if (
-        Math.abs(this.hitPoint.x) > halfW ||
-        Math.abs(this.hitPoint.y) > halfH ||
+        !onBoardSurface(this.shape, this.hitPoint.x, this.hitPoint.y, halfW, halfH) ||
         Math.abs(this.hitPoint.z) > EASEL.hitDepthTolerance
       ) {
         continue;
@@ -409,10 +468,26 @@ export class EaselSystem extends createSystem({
    * Quest Browser honours a programmatic anchor click the same way desktop
    * Chrome does, so this is one file per press with no extra UI.
    */
-  savePainting(): void {
-    const canvas = this.painting;
-    if (!canvas?.toBlob) return;
+  savePainting(knockout?: HTMLCanvasElement | null, name = 'painting'): number {
+    let canvas: HTMLCanvasElement = this.painting;
+    if (!canvas?.toBlob) return this.saveCount;
     const index = this.saveCount + 1;
+
+    // Round 10: a stencil SAVE lifts the stencil - everything outside the
+    // shape is knocked out to transparent, like peeling the tape off.
+    if (knockout) {
+      const lifted = document.createElement('canvas');
+      lifted.width = canvas.width;
+      lifted.height = canvas.height;
+      const ctx = lifted.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(canvas, 0, 0);
+        ctx.globalCompositeOperation = 'destination-in';
+        ctx.drawImage(knockout, 0, 0, lifted.width, lifted.height);
+        ctx.globalCompositeOperation = 'source-over';
+        canvas = lifted;
+      }
+    }
 
     try {
       canvas.toBlob((blob) => {
@@ -420,7 +495,7 @@ export class EaselSystem extends createSystem({
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
-        anchor.download = `splotopia-painting-${index}.png`;
+        anchor.download = `splotopia-${name}-${index}.png`;
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
@@ -431,11 +506,12 @@ export class EaselSystem extends createSystem({
     } catch {
       // Blob export blocked (tainted canvas, exotic browser) — never throw
       // out of a button handler.
-      return;
+      return this.saveCount;
     }
 
     this.saveCount = index;
     this.currentEasel()?.setValue(Easel, 'saveCount', this.saveCount);
+    return index;
   }
 
   /**
@@ -469,18 +545,155 @@ export class EaselSystem extends createSystem({
    * @returns true when the new orientation is portrait.
    */
   rotateCanvas(): boolean {
-    this.portrait = !this.portrait;
-    this.dims = orientationDims(this.portrait, EASEL);
+    this.setShape(this.portrait ? CanvasShape.Landscape : CanvasShape.Portrait);
+    return this.portrait;
+  }
 
-    // New surface first: buildBoard() below reads the canvas for its texture.
+  // ---- Round 10: Studio API --------------------------------------------------
+
+  /** The shape on the stand now. */
+  get currentShape(): CanvasShape {
+    return this.shape;
+  }
+
+  /**
+   * Swap the surface's shape. Like ROTATE CANVAS (which now routes here) this
+   * wipes the painting: a browser canvas clears whenever its size is written.
+   * Four things move together or the picture stretches - the board mesh, the
+   * physics box, the Easel component's half-extents and the 2D canvas - and
+   * {@link shapeBoard} hands out all of their numbers.
+   */
+  setShape(shape: CanvasShape): void {
+    this.shape = shape;
+    this.portrait = shape === CanvasShape.Portrait;
+    this.dims = shapeBoard(shape, this.boardScale, SHAPE_BOARD_CONFIG);
+    const resized =
+      this.painting.width !== this.dims.canvasPxW ||
+      this.painting.height !== this.dims.canvasPxH;
     this.painting.width = this.dims.canvasPxW;
     this.painting.height = this.dims.canvasPxH;
     this.fillCanvas();
     this.stampCount = 0;
-    if (this.texture) this.texture.needsUpdate = true;
+    if (this.texture) {
+      // three r181 allocates immutable texStorage at the first upload's size
+      // and later uploads are texSubImage2D into it, so a canvas that changed
+      // size silently fails to upload (the board kept showing the old
+      // picture). dispose() frees the GPU storage; the next render
+      // re-allocates at the new size. Same Texture object, so the material
+      // keeps its map.
+      if (resized) this.texture.dispose();
+      this.texture.needsUpdate = true;
+    }
+    this.applyGeometry();
+  }
 
+  /**
+   * Hang the canvas at a world pose with no stand: upright, its painted face
+   * turned by `yaw` (about +Y), metres scaled by `scale`. Scale changes only
+   * the board's size, never its pixels, so the painting survives a re-hang.
+   */
+  placeAt(x: number, y: number, z: number, yaw: number, scale: number): void {
+    const entity = this.ensureEasel();
+    const object3D = entity.object3D;
+    if (!object3D) return;
+    this.setBoardScale(scale);
+    object3D.position.set(x, y, z);
+    this.yawRotation.setFromAxisAngle(UP, yaw);
+    object3D.quaternion.copy(this.yawRotation);
+    this.setStandVisible(entity, false);
+    this.grabPrimed = false;
+    this.rebuildColliderIfPresent(entity);
+  }
+
+  /** Stand the canvas on the round-2 easel within seated reach (scale 1). */
+  placeOnEasel(): void {
+    const entity = this.ensureEasel();
+    this.setBoardScale(1);
+    this.placeInFrontOfHead(entity);
+    this.setStandVisible(entity, true);
+    this.grabPrimed = false;
+    this.rebuildColliderIfPresent(entity);
+  }
+
+  /** Show the canvas (and its collider). */
+  show(): void {
+    this.showEasel(this.ensureEasel());
+  }
+
+  /** Hide the canvas and take its collider out of the room. */
+  hide(): void {
+    this.hideEasel();
+  }
+
+  /**
+   * Lay a stencil guide over the board - the area outside the shape dimmed,
+   * a neon outline just outside its edge - or clear it with null. `mask` is
+   * a white silhouette with its luminance already baked into alpha (any
+   * size; it is stretched over the whole board). Event-rate only.
+   */
+  setStencilGuide(mask: HTMLCanvasElement | null): void {
+    this.guideOn = !!mask;
+    const canvas = this.guideCanvas;
+    const ctx = canvas?.getContext('2d');
+    if (mask && ctx && canvas) {
+      const size = canvas.width;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.clearRect(0, 0, size, size);
+      // Outline: the mask stamped in a ring of offsets and tinted...
+      const r = STUDIO.guideOutlinePx;
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2;
+        ctx.drawImage(mask, Math.cos(a) * r, Math.sin(a) * r, size, size);
+      }
+      ctx.globalCompositeOperation = 'source-in';
+      ctx.fillStyle = STUDIO.guideOutlineColor;
+      ctx.fillRect(0, 0, size, size);
+      // ...the dimmed outside slid in underneath it...
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.fillStyle = `rgba(10, 12, 22, ${STUDIO.guideOutsideAlpha})`;
+      ctx.fillRect(0, 0, size, size);
+      // ...and the shape itself punched back out, so only the band just
+      // outside the edge and the dim surround stay.
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.drawImage(mask, 0, 0, size, size);
+      ctx.globalCompositeOperation = 'source-over';
+      if (this.guideTexture) this.guideTexture.needsUpdate = true;
+    }
+    const guide = this.currentEasel()?.object3D?.getObjectByName(GUIDE_MESH_NAME);
+    if (guide) guide.visible = this.guideOn;
+  }
+
+  /** The painting itself (read-only use: export, harness checks). */
+  get paintingCanvas(): HTMLCanvasElement {
+    return this.painting;
+  }
+
+  /** Build the easel if this is the first time, without showing it. */
+  private ensureEasel(): Entity {
+    return this.currentEasel() ?? this.buildEasel();
+  }
+
+  private setBoardScale(scale: number): void {
+    const next = scale > 0 && Number.isFinite(scale) ? scale : 1;
+    if (Math.abs(next - this.boardScale) < 1e-4) return;
+    this.boardScale = next;
+    this.dims = shapeBoard(this.shape, this.boardScale, SHAPE_BOARD_CONFIG);
+    this.applyGeometry();
+  }
+
+  private setStandVisible(entity: Entity, visible: boolean): void {
+    const stand = entity.object3D?.getObjectByName(STAND_NAME);
+    if (stand) stand.visible = visible;
+  }
+
+  /**
+   * Make the board mesh, the frame art, the guide, the Easel component and
+   * (if present) the physics box match `dims`. Physics is rebuilt rather than
+   * resized (gotcha 7: shapes are immutable post-creation).
+   */
+  private applyGeometry(): void {
     const entity = this.currentEasel();
-    if (!entity) return this.portrait;
+    if (!entity) return;
 
     const group = entity.object3D;
     if (group) {
@@ -493,22 +706,126 @@ export class EaselSystem extends createSystem({
         old.geometry?.dispose();
       }
       group.add(this.buildBoard());
+      this.layoutOverlays(group);
     }
 
     entity.setValue(Easel, 'halfWidth', this.dims.boardWidth / 2);
     entity.setValue(Easel, 'halfHeight', this.dims.boardHeight / 2);
-    entity.setValue(Easel, 'stampCount', 0);
+    entity.setValue(Easel, 'stampCount', this.stampCount);
+    this.rebuildColliderIfPresent(entity);
+  }
 
-    // Only worth rebuilding while the easel is actually in the room; hideEasel
-    // has already stripped both components otherwise, and showEasel re-adds
-    // them at the current dimensions on the next entry into Chill.
+  /**
+   * Only worth rebuilding while the easel is actually in the room; hideEasel
+   * has already stripped both components otherwise, and showEasel re-adds
+   * them at the current dimensions and pose. Remove shape then body, add
+   * fresh (gotcha 7) - also how a moved, non-grabbed kinematic board gets its
+   * Havok body to the new pose.
+   */
+  private rebuildColliderIfPresent(entity: Entity): void {
     if (entity.hasComponent(PhysicsShape) || entity.hasComponent(PhysicsBody)) {
       if (entity.hasComponent(PhysicsShape)) entity.removeComponent(PhysicsShape);
       if (entity.hasComponent(PhysicsBody)) entity.removeComponent(PhysicsBody);
       this.addCollider(entity);
     }
+  }
 
-    return this.portrait;
+  /** Size and place the frame art and the stencil guide over the board's face. */
+  private layoutOverlays(group: Object3D): void {
+    this.sharedPlane ??= new PlaneGeometry(1, 1);
+    const front = EASEL.boardDepth / 2;
+    const w = this.dims.boardWidth;
+    const h = this.dims.boardHeight;
+
+    let frame = group.getObjectByName(FRAME_ART_NAME) as Mesh | undefined;
+    if (!frame) {
+      this.frameMaterial ??= new MeshStandardMaterial({
+        transparent: true,
+        alphaTest: 0.04,
+        depthWrite: false,
+        roughness: 0.35,
+        metalness: 0.15,
+        emissive: new Color(0xffffff),
+        emissiveIntensity: STUDIO.frameEmissive,
+        visible: false,
+      });
+      frame = new Mesh(this.sharedPlane, this.frameMaterial);
+      frame.name = FRAME_ART_NAME;
+      frame.renderOrder = 2;
+      group.add(frame);
+    }
+    const art = frameFor(this.shape);
+    const rotated = this.shape === CanvasShape.Portrait;
+    // The art's own axes: its width spans the board's height when turned.
+    const artW = (rotated ? h : w) / art.innerW;
+    const artH = (rotated ? w : h) / art.innerH;
+    frame.scale.set(artW, artH, 1);
+    frame.rotation.set(0, 0, rotated ? Math.PI / 2 : 0);
+    // Shift so the opening (not the image centre) lands on the board; a
+    // quarter turn maps the art's (x, y) to the board's (-y, x).
+    const ox = -art.offX * artW;
+    const oy = -art.offY * artH;
+    frame.position.set(rotated ? -oy : ox, rotated ? ox : oy, front + 0.004);
+    this.applyFrameTexture(art.key, art.url);
+
+    let guide = group.getObjectByName(GUIDE_MESH_NAME) as Mesh | undefined;
+    if (!guide) {
+      this.guideCanvas = document.createElement('canvas');
+      this.guideCanvas.width = STUDIO.guidePx;
+      this.guideCanvas.height = STUDIO.guidePx;
+      this.guideTexture = new CanvasTexture(this.guideCanvas);
+      this.guideTexture.colorSpace = SRGBColorSpace;
+      this.guideMaterial = new MeshBasicMaterial({
+        map: this.guideTexture,
+        transparent: true,
+        depthWrite: false,
+      });
+      guide = new Mesh(this.sharedPlane, this.guideMaterial);
+      guide.name = GUIDE_MESH_NAME;
+      guide.renderOrder = 1;
+      group.add(guide);
+    }
+    guide.scale.set(w, h, 1);
+    guide.position.set(0, 0, front + 0.002);
+    guide.visible = this.guideOn;
+  }
+
+  /**
+   * Put a frame's art on the shared frame material, streaming it in through
+   * AssetManager the first time (main.ts also lists it as a background asset).
+   * Until it arrives the board shows unframed.
+   */
+  private applyFrameTexture(key: string, url: string): void {
+    const material = this.frameMaterial;
+    if (!material) return;
+    let texture: Texture | null = null;
+    try {
+      texture = AssetManager.getTexture(key) as Texture | null;
+    } catch {
+      texture = null;
+    }
+    if (!texture) {
+      material.visible = false;
+      if (!this.frameLoading.has(key) && typeof AssetManager.loadTexture === 'function') {
+        this.frameLoading.add(key);
+        AssetManager.loadTexture(url, key)
+          .then(() => {
+            // Only if that frame is still the one the board wants.
+            if (frameFor(this.shape).key === key) this.applyFrameTexture(key, url);
+          })
+          .catch(() => {
+            // Missing art: the board simply stays unframed.
+          });
+      }
+      return;
+    }
+    texture.colorSpace = SRGBColorSpace;
+    if (material.map !== texture) {
+      material.map = texture;
+      material.emissiveMap = texture;
+      material.needsUpdate = true;
+    }
+    material.visible = true;
   }
 
   /** True when the canvas is currently stood on its short edge. */
@@ -566,7 +883,18 @@ export class EaselSystem extends createSystem({
     if (!ctx) return;
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = EASEL.canvasColor;
-    ctx.fillRect(0, 0, this.painting.width, this.painting.height);
+    const w = this.painting.width;
+    const h = this.painting.height;
+    if (this.shape === CanvasShape.Round) {
+      // Round 10: a tondo. Transparent corners, so the board's alphaTest
+      // cuts the disc and SAVE exports a round picture.
+      ctx.clearRect(0, 0, w, h);
+      ctx.beginPath();
+      ctx.arc(w / 2, h / 2, Math.min(w, h) / 2, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    ctx.fillRect(0, 0, w, h);
   }
 
   /**
@@ -636,6 +964,14 @@ export class EaselSystem extends createSystem({
       Math.random() * (EASEL.stampMaxPx - EASEL.stampMinPx);
 
     ctx.save();
+    if (this.shape === CanvasShape.Round) {
+      // Paint never lands on the transparent corners of a round board.
+      const w = this.painting.width;
+      const h = this.painting.height;
+      ctx.beginPath();
+      ctx.arc(w / 2, h / 2, Math.min(w, h) / 2, 0, Math.PI * 2);
+      ctx.clip();
+    }
     ctx.translate(px, py);
     ctx.rotate(Math.random() * Math.PI * 2);
 
@@ -665,6 +1001,11 @@ export class EaselSystem extends createSystem({
 
     this.stampCount++;
     entity.setValue(Easel, 'stampCount', this.stampCount);
+    this.onStamp?.(
+      px / this.painting.width,
+      py / this.painting.height,
+      size / this.painting.width,
+    );
   }
 
   // ---- Easel lifecycle -----------------------------------------------------
@@ -713,7 +1054,7 @@ export class EaselSystem extends createSystem({
         dimensions: [
           this.dims.boardWidth,
           this.dims.boardHeight,
-          EASEL.boardDepth,
+          EASEL.colliderDepth,
         ],
         density: 1,
         restitution: 0.15,
@@ -794,6 +1135,7 @@ export class EaselSystem extends createSystem({
     const frame = this.buildModelledFrame() ?? this.buildPrimitiveFrame(wood);
     group.add(frame);
     group.add(this.buildBoard());
+    this.layoutOverlays(group);
 
     const entity = this.world.createTransformEntity(group, {
       parent: this.world.sceneEntity,
@@ -824,9 +1166,8 @@ export class EaselSystem extends createSystem({
       EASEL.boardDepth,
     );
 
-    // One CanvasTexture for the life of the system: resizing the backing 2D
-    // canvas and flagging needsUpdate makes three re-upload at the new size,
-    // so rotating never leaks a texture.
+    // One CanvasTexture for the life of the system. A resize must dispose it
+    // first (see setShape) - three allocates fixed-size storage on upload.
     if (!this.texture) {
       this.texture = new CanvasTexture(this.painting);
       // 2D canvas pixels are sRGB. Without this the paint renders washed out,
@@ -848,13 +1189,25 @@ export class EaselSystem extends createSystem({
         map: this.texture,
         roughness: 0.9,
         metalness: 0,
+        // Round 10: the round board's corners are transparent pixels.
+        alphaTest: 0.5,
       });
       // BoxGeometry material order is [+X, -X, +Y, -Y, +Z, -Z]; only the front
       // face shows the painting.
       this.boardMaterials = [blank, blank, blank, blank, painted, blank];
+      // The round board shows its painted disc only - square sides and back
+      // would poke out past the round frame.
+      this.hiddenMaterial = new MeshBasicMaterial({ visible: false });
+      const hidden = this.hiddenMaterial;
+      this.roundMaterials = [hidden, hidden, hidden, hidden, painted, hidden];
     }
 
-    const board = new Mesh(geometry, this.boardMaterials);
+    const board = new Mesh(
+      geometry,
+      this.shape === CanvasShape.Round && this.roundMaterials
+        ? this.roundMaterials
+        : this.boardMaterials,
+    );
     board.name = BOARD_MESH_NAME;
     return board;
   }
