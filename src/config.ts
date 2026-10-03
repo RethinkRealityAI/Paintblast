@@ -279,10 +279,13 @@ export const TARGETS = {
    */
   baseHp: 1,
   /**
-   * Seconds after a pop before the spawn director may fill the gap (and
-   * before that pool slot can be reused).
+   * Seconds a popped pool slot cools down before it can be reused (after its
+   * TARGETS.popDurationSec pop). Round 10: this no longer paces the director
+   * (that is NEATNIKS.refillDelaySec); it only stops a slot from blinking
+   * straight back in where it just popped. Was 1.5, and it used to gate every
+   * refill too, which was the owner's "waiting a few seconds" gap.
    */
-  respawnDelaySec: 1.5,
+  respawnDelaySec: 0.6,
   /**
    * Legacy hover amplitude, metres. Round 8: per archetype
    * (`NEATNIKS.archetypes.*.bobAmplitude`); unused.
@@ -2111,7 +2114,7 @@ export const COACH = {
   /** Tips by archetype index (Mopsy, Squeegee, Peekaboo, Duster Duke). ASCII. */
   lines: [
     '',
-    'Shield! Hit its side or bank a shot',
+    'Shield! Hit it 3x to break it, or flank',
     'Hiding! Hit it when it peeks',
     'BOSS! GOO > TETHER hauls him in',
   ] as readonly string[],
@@ -2173,12 +2176,15 @@ export interface NeatnikArchetypeConfig {
  * - **Squeegee**: carries a wiper-blade shield and always turns to face you.
  *   A shot into its front cone pings off with no damage unless the ball has
  *   already bounced off something (BOUNCY off a wall), is a TETHER web, or is
- *   SPLASH ammo. Flank it, bank it, or hook it.
+ *   SPLASH ammo. Flank it, bank it, or hook it. Round 10: each blocked shot
+ *   chips the shield (`shield.hp`, 3); at 0 it shatters and the Squeegee is
+ *   open from any angle (body hp 2).
  * - **Peekaboo**: hides behind your real furniture (bounded scene meshes on
  *   the far side from you) and periscopes up for a moment; only hittable while
  *   up. With no furniture scanned it peeks up from low spawn heights.
  * - **Duster Duke**: the boss. Drops in for the last stretch of a round,
- *   takes six hits, stomps and sways, and splits into two Mopsys when popped.
+ *   takes `hp` hits (11, HP bar overhead), patrols between points across the
+ *   arc while Mopsys keep spawning, and splits into two Mopsys when popped.
  *   A tether haul takes `boss.tetherDamage` HP off instead of killing him.
  * - **Pip**: the palette-drone mascot. Never shot; hovers beside the HUD in
  *   menus and flies off while you play (PipSystem).
@@ -2205,8 +2211,10 @@ export const NEATNIKS = {
       pool: 3,
       heightMeters: 0.42,
       hitRadiusScale: 0.95,
-      hp: 1,
-      points: 150,
+      // Round 10: body HP 2 (was 1). The shield (NEATNIKS.shield.hp) has its
+      // own pips; break it or flank, then two hits to pop.
+      hp: 2,
+      points: 250,
       yawOffsetDeg: 0,
       // Snappy: the shield has to be in your face to be a puzzle.
       faceRate: 6,
@@ -2234,8 +2242,10 @@ export const NEATNIKS = {
       pool: 1,
       heightMeters: 0.75,
       hitRadiusScale: 0.8,
-      hp: 6,
-      points: 600,
+      // Round 10: 11 (was 6). He patrols now and Mopsys keep coming, so the
+      // fight lasts long enough to read as a boss; HP bar above him.
+      hp: 11,
+      points: 1000,
       yawOffsetDeg: 0,
       // Heavy: turns like a wardrobe on castors.
       faceRate: 1.5,
@@ -2251,14 +2261,72 @@ export const NEATNIKS = {
    * More lanes = finer spread; fewer than a wave's maxAlive bunches robots.
    */
   lanes: 5,
-  /** Seconds between two spawns when several slots are free at once. */
-  spawnStaggerSec: 0.45,
   /**
-   * Round 9: rest beat at every wave boundary (after the first wave), seconds.
-   * No new robots spawn for this long once a wave starts, so arms get a
-   * breather (comfort / gorilla arm). Robots already up stay up. 0 disables.
+   * Seconds between two spawns when several slots are free at once, so a
+   * refill pops in one by one instead of all at once. Round 10: 0.3 (was 0.45).
    */
-  waveBreatherSec: 3,
+  spawnStaggerSec: 0.3,
+  /**
+   * Round 10: seconds after a pop before the director refills the gap (was
+   * TARGETS.respawnDelaySec, 1.5 s). Short, so the arena never feels like it
+   * is waiting on you.
+   */
+  refillDelaySec: 0.35,
+  /**
+   * Round 10: when the LAST robot pops (arena empty), the next one is due this
+   * many seconds later, ignoring the stagger and refill delay. The pacing
+   * goal is "never more than ~0.8 s with zero bots during Playing"; a test
+   * simulates a 90 s round of instant pops against it.
+   */
+  emptyRefillSec: 0.2,
+  /**
+   * Rest beat at every wave boundary (after the first wave), seconds. Round
+   * 10: 1 (was 3), and it no longer stops spawns outright: during it the
+   * director only tops the arena up to `breatherKeepAlive`, so the beat thins
+   * the crowd without ever emptying it. 0 disables.
+   */
+  waveBreatherSec: 1,
+  /** Round 10: robots kept up during a wave breather (never an empty arena). */
+  breatherKeepAlive: 2,
+  /**
+   * Round 10: Mopsys gently strafe side to side across your line of sight so
+   * they are not static targets. `amplitude` metres peak, `hz` cycles per
+   * second (each bot has its own phase). 0 amplitude = stand still.
+   */
+  mopsyDrift: {
+    amplitude: 0.1,
+    hz: 0.16,
+  },
+  /**
+   * Round 10: the floating HP pip bar over multi-hit bots (Squeegee, Duster
+   * Duke - any archetype with hp > 1, plus the Squeegee's shield row). One
+   * billboard per bot, segmented neon pips, shared materials. Colours are
+   * sRGB tuples (gotcha 23).
+   */
+  hpBar: {
+    /** Pip width / height / depth, metres. */
+    pipWidth: 0.032,
+    pipHeight: 0.02,
+    pipDepth: 0.004,
+    /** Gap between neighbouring pips, metres. */
+    pipGap: 0.007,
+    /** Vertical gap between the body row and the shield row above it. */
+    rowGap: 0.028,
+    /** Metres above the top of the bot the bar floats. */
+    above: 0.07,
+    /** Seconds the pips flash white (and the bar punches) after a hit. */
+    flashSec: 0.25,
+    /** Peak scale punch of the bar on a hit (0.3 = 30% bigger). */
+    flashPunch: 0.3,
+    /** Body HP pip, lit. Hot pink, the Duke's accent. */
+    bodyColor: [1.0, 0.31, 0.5] as readonly [number, number, number],
+    /** Shield pip, lit. Cyan, matching the shield ping flash. */
+    shieldColor: [0.35, 0.95, 1.0] as readonly [number, number, number],
+    /** A spent pip. Dark slate, still readable as a slot. */
+    offColor: [0.14, 0.13, 0.2] as readonly [number, number, number],
+    /** Flash colour on a hit. */
+    flashColor: [1.0, 1.0, 1.0] as readonly [number, number, number],
+  },
   /**
    * Round 9: seconds a robot let off a tether (tap or timeout) takes to drift
    * back out to at least ROOM.spawnMinDist from your head, instead of
@@ -2272,13 +2340,18 @@ export const NEATNIKS = {
    * new spawn being [mopsy, squeegee, peekaboo] (any scale, normalised).
    * `maxAlive` is how many robots it keeps up (capped by TARGETS.maxConcurrent).
    */
+  // Round 10: waves escalate by COUNT and MIX, never by gaps (was 3 waves
+  // with 3 s dead breathers). Each boundary opens with the 1 s thinned
+  // breather above; the boss phase (boss.enterAtSecLeft) overrides the cap.
   waves: [
     // Warm-up: only Mopsys, so the first thing anyone learns is "point, pinch, pop".
     { startSec: 0, maxAlive: 3, weights: [1, 0, 0] },
-    // The cast arrives: shields and peekers join.
-    { startSec: 22, maxAlive: 4, weights: [0.55, 0.25, 0.2] },
-    // Mixed pressure until the boss.
-    { startSec: 48, maxAlive: 4, weights: [0.4, 0.3, 0.3] },
+    // Shields arrive (3 hits breaks one, or flank it).
+    { startSec: 15, maxAlive: 4, weights: [0.7, 0.3, 0] },
+    // Peekers join the mix.
+    { startSec: 30, maxAlive: 4, weights: [0.5, 0.25, 0.25] },
+    // Full pressure until the boss.
+    { startSec: 48, maxAlive: 5, weights: [0.4, 0.3, 0.3] },
   ] as ReadonlyArray<NeatnikWave>,
 
   boss: {
@@ -2287,9 +2360,17 @@ export const NEATNIKS = {
      * clock (once per round). 0 disables the boss.
      */
     enterAtSecLeft: 20,
-    /** Other robots kept alive alongside the boss (his split Mopsys excluded). */
-    companionsMax: 2,
-    /** Metres from the player's head the Duke lands, down the arc's middle. */
+    /**
+     * Other robots kept alive alongside the boss (his split Mopsys excluded).
+     * Round 10: 3 (was 2) - small bots keep spawning while you work him down.
+     */
+    companionsMax: 3,
+    /**
+     * Round 10: spawn weights [mopsy, squeegee, peekaboo] for his companions
+     * - mostly Mopsys, so the small fry keep coming while you focus the boss.
+     */
+    companionWeights: [0.85, 0.15, 0] as readonly [number, number, number],
+    /** Metres from the player's head the Duke patrols (his side points). */
     distance: 2.0,
     /**
      * Height of the Duke's centre above the floor once landed, metres. Half
@@ -2312,6 +2393,30 @@ export const NEATNIKS = {
     returnSec: 1.2,
     /** Sideways distance between the two Mopsys he splits into, metres. */
     splitSpread: 0.55,
+
+    // ---- Round 10: patrol ---------------------------------------------------
+    /**
+     * Points he strafes between across the forward arc, spread evenly over
+     * `patrolArcDeg` (2-4 is readable). He lands on the middle one.
+     */
+    patrolPoints: 3,
+    /** Width of the patrol, degrees, centred on the spawn arc (<= spawnArcDeg). */
+    patrolArcDeg: 100,
+    /** Walking pace between points, metres per second (readable, not twitchy). */
+    patrolSpeed: 0.5,
+    /** Seconds he pauses at each point (stomping in place). */
+    patrolPauseSec: 1.3,
+    /** Random extra pause, 0..this seconds, so he is not metronomic. */
+    patrolPauseJitterSec: 0.9,
+    /**
+     * Half-width, degrees, of the band straight ahead where the docked HUD
+     * sits low in front of you. Inside it he keeps to `hudClearDist` (further
+     * away = higher in your view, above the strip); paths through the middle
+     * bulge out to match.
+     */
+    hudAvoidDeg: 18,
+    /** Distance he keeps inside the HUD band, metres (room-clamped). */
+    hudClearDist: 2.6,
   },
 
   shield: {
@@ -2335,6 +2440,14 @@ export const NEATNIKS = {
     immunitySec: 0.4,
     /** Seconds of the shield's cyan "ping" flash. */
     flashSec: 0.22,
+    /**
+     * Round 10: blocked frontal shots the shield takes before it SHATTERS
+     * (cyan burst + ShieldBroken cue). After that the Squeegee is hittable
+     * from any angle. Shown as cyan pips above its HP pips. No regen.
+     */
+    hp: 3,
+    /** Seconds of the bigger cyan flash when the shield shatters. */
+    shatterFlashSec: 0.45,
     /** Recoil tilt of a deflecting Squeegee, radians. */
     recoilRad: 0.35,
     /** Guard-stance lean of the whole body toward you, radians. */
