@@ -279,10 +279,13 @@ export const TARGETS = {
    */
   baseHp: 1,
   /**
-   * Seconds after a pop before the spawn director may fill the gap (and
-   * before that pool slot can be reused).
+   * Seconds a popped pool slot cools down before it can be reused (after its
+   * TARGETS.popDurationSec pop). Round 10: this no longer paces the director
+   * (that is NEATNIKS.refillDelaySec); it only stops a slot from blinking
+   * straight back in where it just popped. Was 1.5, and it used to gate every
+   * refill too, which was the owner's "waiting a few seconds" gap.
    */
-  respawnDelaySec: 1.5,
+  respawnDelaySec: 0.6,
   /**
    * Legacy hover amplitude, metres. Round 8: per archetype
    * (`NEATNIKS.archetypes.*.bobAmplitude`); unused.
@@ -440,290 +443,209 @@ export const HUD = {
 } as const;
 
 /**
- * The wrist palette: an actual painter's palette strapped to the left grip.
+ * The summonable holographic wrist menu (round 10) — WristMenuSystem.
  *
- * Round 1 seeded sixteen orbs at fixed world coordinates, which put them
- * behind or below half the players who tried it. Round 2 strapped that grid to
- * the wrist. Round 3 threw the grid away: field feedback was "make it look
- * like a real paint palette, and let me just tap a colour". So the board is a
- * flat oval you hold, four glossy **dabs** curve around its outer edge (colour
- * only), and four neutral **chips** sit in a row along the near edge (ammo
- * kind only). Eight pressables instead of sixteen, and each one means one
- * thing.
+ * History: rounds 1-9 kept an always-on painter's palette strapped to the left
+ * wrist (dabs, chips, launcher pads; every element pokeable, squeezable and
+ * pinch-selectable). Round 10 owner playtest: "the menu palette is completely
+ * interrupting the game ... there are always a bunch of accidental presses
+ * switching". So the palette is gone. A small glowing **gem** rides the left
+ * wrist; poke it with the RIGHT index fingertip (or press **Y** on the left
+ * controller) and a flat holo panel opens above the forearm, facing your eyes.
+ * Poke a button on it the way you poke the Quest's own menus. Poke the gem
+ * again (or wait, or drop the left hand) and it closes.
  *
- * The wrist offsets are in the **left grip's own frame**: +Y is out of the back
- * of the hand (where a watch face sits), -X is thumb-side-away, -Z is the
- * direction the controller points.
+ * While the menu is CLOSED nothing on it exists for input: no proximity
+ * squeeze, no pinch-select, no touch hover, no shot blocking. The left hand is
+ * an ordinary shooting hand.
+ *
+ * Panel geometry is in the panel's own frame: +X right, +Y up, +Z out of the
+ * face toward the eyes, origin at the panel centre. Metres throughout.
  */
-export const PALETTE = {
-  // ---- Board ---------------------------------------------------------------
-  //
-  // The board lies flat in the palette root's XZ plane with its face pointing
-  // +Y, the way you actually hold a palette. -Z is the far edge (pointing away
-  // from you), +Z is the near edge by your wrist.
-  /** Board radius, metres, before the oval squash below. */
-  boardRadius: 0.11,
-  /** Board thickness, metres. A palette is a plank, not a plate. */
-  boardThickness: 0.008,
-  /** Squash on the board's near-far axis — under 1 turns the disc into an oval. */
-  boardOvalScale: 0.85,
-  /** Board colour. Warm wood, so the paint on it reads as paint. */
-  boardColor: '#8a6a48',
-  /** Board roughness — matte, unlike the glossy dabs sitting on it. */
-  boardRoughness: 0.6,
+export const MENU = {
+  // ---- The summon gem --------------------------------------------------------
+  /** Radius of the gem's crystal core, metres. The glow halo is ~2.4x this. */
+  gemRadius: 0.0085,
+  /**
+   * Where the gem rides with a tracked hand, metres, in the LEFT wrist joint's
+   * frame: +X = the thumb side of a left hand, +Y = out of the back of the
+   * hand, +Z = up the forearm. Thumb-side top of the wrist, beside the BLASTER
+   * barrel and floating ~6.5 cm off the forearm axis so it clears the bracer
+   * shell (radius ~4 cm) with its glow: where the right index finger
+   * naturally lands when you reach across.
+   */
+  gemOffsetHand: [0.052, 0.04, 0.03] as readonly [number, number, number],
+  /** The same for a controller, in WristPose's controller wrist frame. */
+  gemOffsetController: [0.05, 0.045, 0.0] as readonly [number, number, number],
+  /**
+   * The right index fingertip inside this many metres of the gem centre is a
+   * press (toggles the menu). Larger than the gem itself: you aim at a glow.
+   */
+  gemPokeEnterRadius: 0.02,
+  /**
+   * ...and it must go back out beyond this many metres before the gem can be
+   * pressed again (hysteresis: a fingertip resting on the gem toggles once).
+   */
+  gemPokeExitRadius: 0.038,
+  /** Seconds after a toggle during which the gem ignores further presses. */
+  gemDebounceSec: 0.45,
+  /** Seconds the left hand may drop tracking before the gem hides. */
+  gemHideAfterLostSec: 0.5,
+  /** Resting glow (halo opacity) of the gem. */
+  gemGlowOpacity: 0.5,
+  /**
+   * First-time affordance: until the menu has been opened once on this device
+   * (`firstOpenStorageKey`), the gem pulses at this rate and swells by this
+   * fraction. 0 amplitude = no pulse.
+   */
+  gemPulseHz: 1.5,
+  gemPulseAmp: 0.4,
+  /** localStorage flag: '1' once the menu has been opened on this device. */
+  firstOpenStorageKey: 'splotopia.menuOpened',
 
-  // ---- Round 8: the techno-paint holo board ---------------------------------
-  //
-  // The wooden kidney became a dark glass slab with a glowing neon edge, glossy
-  // liquid paint wells and holo sockets under every chip and pad — the same
-  // art direction as the HUD (docs/concepts/techno-ui.jpg). Built in code, so
-  // nothing streams and nothing can fail to load.
+  // ---- Opening and closing -----------------------------------------------------
+  /** Seconds of the open (scale up + fade in) and close (reverse) animation. */
+  openSec: 0.15,
+  /** Scale the panel grows from when it opens (and shrinks to when it closes). */
+  openFromScale: 0.6,
   /**
-   * Which board to build: 'holo' (round 8 default), 'glb' (the Higgsfield
-   * palette-board.glb, still in the manifest, falls back to holo while it
-   * streams) or 'wood' (the round-3 primitive oval).
+   * Seconds with no hover or press on the open menu before it closes on its
+   * own. 0 = never auto-close.
    */
-  boardStyle: 'holo' as 'holo' | 'glb' | 'wood',
+  autoCloseIdleSec: 6,
+  /** Seconds the left hand may drop tracking before the open menu closes. */
+  closeAfterLostSec: 0.6,
   /**
-   * Squareness of the holo board's outline: 2 is the plain oval, 4 a rounded
-   * rectangle. ~3 reads as a modern "squircle" device and still hugs the dab
-   * arc. Its semi-axes are boardRadius and boardRadius * boardOvalScale.
+   * Which picks close the menu. Launcher picks close it (that is usually the
+   * whole errand) except GOO, whose SPLAT / TETHER row has just appeared and
+   * is very likely the next tap. Colour and ammo picks keep it open, because
+   * people pick both.
    */
-  holoSquareness: 3.2,
-  /** Glass face colour (sRGB) and how much passthrough shows through it. */
-  holoFaceColor: '#070912',
-  holoFaceOpacity: 0.84,
-  /** The bezel round the slab's side, a brushed graphite. */
-  holoBezelColor: '#3a3f4f',
-  /** Metres the neon line is inset from the slab's edge. */
-  holoEdgeInset: 0.0045,
-  /** Radius of the crisp neon line, metres. */
-  holoEdgeRadius: 0.0009,
-  /** Radius of the soft additive halo round it, metres. */
-  holoGlowRadius: 0.0032,
-  /** Resting opacity of that halo (the shimmer swings around it). */
-  holoGlowOpacity: 0.32,
-  /**
-   * Colours the neon edge runs through, in order round the board (it closes
-   * back onto the first). sRGB hex. A ramp on a 3D line is fine — the
-   * no-gradient rule is uikit's, not three's.
-   */
-  holoEdgeColors: ['#48dbfb', '#b84dff', '#ff4f81', '#48dbfb'] as readonly string[],
-  /** Paint splats baked onto the glass corners, sRGB hex. Empty for none. */
-  holoSplatColors: ['#b6ff3b', '#b84dff'] as readonly string[],
+  closeOnPick: {
+    launcher: true,
+    gooLauncher: false,
+    subMode: true,
+    colour: false,
+    ammo: false,
+  },
 
-  // ---- Paint wells under the dabs ------------------------------------------
-  /** Radius of a well's glowing rim as a multiple of dabRadius. */
-  wellRimScale: 1.2,
-  /** Tube radius of that rim, metres. */
-  wellRimTube: 0.0011,
-  /** Rim opacity for the dabs that are NOT loaded. */
-  wellRimOpacity: 0.45,
-  /** Rim opacity for the loaded dab — the obvious "this one" cue. */
-  wellRimSelectedOpacity: 1,
-  /** Soft colour pool under a dab: radius as a multiple of dabRadius. */
-  wellGlowScale: 1.55,
-  /** ...and its opacity (additive). */
-  wellGlowOpacity: 0.2,
-  /** The loaded dab's pool, brighter. */
-  wellGlowSelectedOpacity: 0.42,
-  /** Resting emissive on the liquid paint so it reads as lit from within. */
-  dabEmissive: 0.16,
-  /** How far the idle shimmer swings that emissive (0 = still). */
-  dabPulseAmp: 0.1,
-  /** Idle shimmer frequency, Hz. Slow: a breath, not a blink. */
-  shimmerHz: 0.45,
-  /** How far the shimmer swings the edge halo, as a fraction of its opacity. */
-  shimmerEdgeAmp: 0.35,
-
-  // ---- Holo sockets under chips and mode pads -----------------------------
-  /** Socket ring radius as a multiple of the chip / pad radius. */
-  socketRimScale: 1.25,
-  /** Socket rim opacity, unselected / selected. */
-  socketRimOpacity: 0.4,
-  socketRimSelectedOpacity: 1,
-
-  // ---- Appear animation -----------------------------------------------------
-  /** Seconds of the pop-in when the palette (re)appears. 0 = no animation. */
-  appearSec: 0.3,
-  /** Scale the palette pops up from (then overshoots 1 slightly and settles). */
-  appearFromScale: 0.35,
+  // ---- Where the open panel floats ----------------------------------------------
   /**
-   * Seconds the left hand may be untracked before the palette hides (and so
-   * pops back in when the hand returns). Long enough that a blink of lost
-   * tracking mid-poke never hides it; a parked (poked) palette never hides.
+   * Tracked hand: the panel's TOP edge sits this many metres above the left
+   * wrist joint plus the tall (GOO) panel's height, so the launcher row never
+   * moves when the SPLAT / TETHER row appears beneath it.
    */
-  hideAfterLostSec: 0.5,
-
-  // ---- Paint dabs (colour only) -------------------------------------------
-  /** Dab radius, metres, before the flatten below. Big enough to poke. */
-  dabRadius: 0.024,
-  /** Vertical squash on a dab — a blob of wet paint, not a marble. */
-  dabFlatten: 0.4,
-  /** Dab material roughness — low is glossy, like paint that has not dried. */
-  dabRoughness: 0.15,
-  /** Radius of the arc the dabs sit on, metres from the board centre. */
-  dabArcRadius: 0.076,
-  /** Angle of the first dab on that arc, degrees. 0 points at the far edge. */
-  dabArcStartDeg: -72,
-  /** Angle of the last dab. The rest are spaced evenly between the two. */
-  dabArcEndDeg: 72,
-
-  // ---- Ammo chips (ball kind and paint style) -----------------------------
-  //
-  // Five of them since round 5: four paint kinds and WEB. Each carries its own
-  // identity colour and a floating label — see PALETTE_CHIP_ORDER in types.ts,
-  // which is the table, while everything here is the geometry the table is laid
-  // out with.
-  /** Half-size of a chip, metres. Deliberately smaller than a paint dab. */
-  chipRadius: 0.0135,
-  /** Chip material roughness — matte, so chips never read as wet paint. */
-  chipRoughness: 0.4,
-  /** Centre-to-centre spacing along the chip row, metres. */
-  chipSpacing: 0.038,
-  /** How far toward the board's near (+Z) edge the chip row sits, metres. */
-  chipRowOffset: 0.05,
-  /** How far a chip floats above the board face, as a fraction of chipRadius. */
-  chipLift: 0.55,
+  handLift: 0.05,
+  /** Metres along the forearm toward the fingers from the wrist joint. */
+  handForward: 0.05,
+  /** Metres sideways away from the body (left of a left forearm). */
+  handOutward: 0.04,
+  /** Controller: metres above the left grip (same top-edge rule). */
+  controllerLift: 0.06,
   /**
-   * Emissive intensity on the selected chip, on top of the 1.3x scale.
-   *
-   * Deliberately a lift and not a glow: scale alone was ambiguous at a glance
-   * on a board this small (which of two nearly-equal blobs is bigger?), while a
-   * chip that actually emits light is unmistakable. Push it past ~0.6 and the
-   * chip blows out to a white ball in passthrough and loses its identity colour,
-   * which defeats the point.
+   * The panel parks in world space while the right fingertip is in its poke
+   * zone (Meta's hands guidance: a wrist menu must not slide under the poking
+   * finger), and rejoins the wrist this many seconds after the finger leaves.
    */
-  chipSelectedEmissive: 0.35,
-
-  // ---- Chip labels ---------------------------------------------------------
-  //
-  // Round 4 shipped silhouettes alone ("the board is far too small to letter").
-  // Field feedback said the row was unreadable, so round 5 letters it after all:
-  // one tiny plane per chip, lying flat on the board just behind its chip, with
-  // a CanvasTexture baked once at startup. Never an entity and never
-  // Interactable — a label must not eat the poke aimed at the chip above it.
-  /**
-   * Label plane width, metres.
-   *
-   * Must stay under `chipSpacing` or neighbouring labels overlap, which is the
-   * one constraint that decides this number: five chips across a 22 cm board
-   * leaves 3.8 cm per column and the label has to live inside that.
-   */
-  chipLabelWidth: 0.036,
-  /** Label plane height, metres. Matches the texture's 4:1 aspect. */
-  chipLabelHeight: 0.009,
-  /**
-   * Gap between the chip's near edge and the label's far edge, metres.
-   *
-   * Tuned in the emulator rather than guessed: the chips stand proud of the
-   * board (STICKY's cube is 23 mm on a side), so at a steep viewing angle a
-   * tight gap lets the chip occlude its own caption. 5 mm clears it.
-   */
-  chipLabelGap: 0.005,
-  /** Lift off the board face, metres — enough to beat z-fighting, no more. */
-  chipLabelLift: 0.0015,
-  /** Baked label texture width, pixels. Power of two, read at a hand's length. */
-  chipLabelPxW: 256,
-  /** Baked label texture height, pixels. */
-  chipLabelPxH: 64,
-
-  // ---- Where the whole thing rides ----------------------------------------
-  /** Metres left of the left grip (negative = away from the thumb). */
-  wristOffsetX: -0.04,
-  /** Metres out of the back of the left hand. */
-  wristOffsetY: 0.11,
-  /** Metres along the controller's pointing axis (negative = forward). */
-  wristOffsetZ: -0.02,
-  /**
-   * Pitch of the palette plane about the grip's X axis, degrees. Negative tips
-   * the face up toward your eyes; flip the sign if it faces the floor on your
-   * device.
-   */
-  tiltDeg: -35,
-  /**
-   * Squeeze-to-select reach, metres from the grip to a dab or chip centre.
-   * This path is a plain distance test on the squeeze-down frame, deliberately
-   * outside the pointer pipeline — near the palette the touch pointer's hover
-   * sphere outranks the grab pointer and can swallow squeeze-grabs.
-   */
-  grabSelectRadius: 0.09,
-
-  // ---- Launcher mode pads (round 8) -----------------------------------------
-  /** Radius of one HAND / BLASTER / WEB pad, metres. 2.6 cm across: a fingertip target. */
-  modePadRadius: 0.013,
-  /** Pad thickness, metres. */
-  modePadHeight: 0.006,
-  /** Centre-to-centre spacing of the three pads, metres. */
-  modePadSpacing: 0.036,
-  /**
-   * Where the pad row sits along the board's near-far axis (+ = near edge).
-   * Between the dab arc and the chip labels.
-   */
-  modePadRowOffset: -0.014,
-  /** Identity colours, HAND / BLASTER / WEB. */
-  modePadColors: ['#b8c2cc', '#ff4fb8', '#48dbfb'] as readonly string[],
-  /** Round 8: the pad body is dark glass; its accent lives in the rim, icon glow and selected emissive. */
-  modePadBodyColor: '#141827',
-  /** Size of the white icon printed on each pad, as a fraction of the pad diameter. */
-  modePadIconScale: 0.62,
-
-  // ---- Hand tracking (round 7) ----------------------------------------------
-  //
-  // The four offsets and the tilt above were tuned on controllers, in the grip
-  // frame, and still drive the controller palette unchanged. A tracked hand's
-  // grip frame is a quarter turn away from a controller's (its -Z points at
-  // the thumb), which is why the palette stood on edge across the forearm in
-  // hand mode — and a bare hand rolls freely, so "above the back of the hand"
-  // ends up *under* the arm the moment you turn your palm up.
-  //
-  // So with hands the palette is posed in world terms instead: it floats
-  // `handLift` metres straight UP from the wrist joint (whatever the roll),
-  // nudged `handForward` toward the fingers, and turns its face to your eyes,
-  // with its dab edge pointing the way your fingers do. Readable in every
-  // pose; reachable by the other index finger.
-  /** Metres straight up (world +Y) from the left wrist joint to the board centre. */
-  // Round 8: 0.08 (was 0.06) so the board clears the gauntlet, which rides
-  // the palm side of the forearm and so faces up at the board when palm-up.
-  handLift: 0.08,
-  /**
-   * Metres along the forearm toward the fingers from the wrist joint. Out over
-   * the hand rather than the wrist, so the board never covers the gauntlet's
-   * selector pads (which ride the forearm just behind the wrist).
-   */
-  handForward: 0.11,
-  /**
-   * Metres sideways, away from the body (to the left of a left forearm), so
-   * the board clears the gauntlet's selector pads. 0 sits it over the wrist.
-   */
-  handOutward: 0.03,
-  /**
-   * Pinch-to-select reach, metres from the pinch point to a dab, chip or pad
-   * centre. Tighter than {@link grabSelectRadius}: a fingertip pinch is a
-   * precise point, a controller's grip origin is not.
-   */
-  pinchSelectRadius: 0.045,
-
-  // ---- Hold still while I poke you (round 7) --------------------------------
-  //
-  // Meta's hands UI guidance: "Do not anchor menus to the user's wrist... a
-  // menu that follows the wrist is hard to use because it shifts position while
-  // the other hand tries to poke it." So the palette now **parks in world space
-  // the moment the other hand's fingertip comes near**, and only rejoins the
-  // wrist once that fingertip has left. You aim at a still target; the board
-  // never visibly detaches unless you move the palette arm mid-poke.
-  /**
-   * Metres from the palette centre at which the other hand's index fingertip
-   * (or controller) parks the palette in place.
-   */
-  lockRadius: 0.16,
-  /** Seconds the fingertip must stay outside `lockRadius` before the palette lets go. */
   lockReleaseSec: 0.35,
-  /**
-   * Time constant, seconds, of the glide back onto the wrist after a park, so
-   * re-attaching is a quick slide rather than a snap.
-   */
+  /** Poke zone: the panel rect grown by this many metres on every side... */
+  lockMarginMeters: 0.04,
+  /** ...from this far in front of the face... */
+  lockFrontMeters: 0.1,
+  /** ...to this far behind it. */
+  lockBehindMeters: 0.05,
+  /** Time constant, seconds, of the glide back onto the wrist after a park. */
   reattachSec: 0.06,
+
+  // ---- Layout ----------------------------------------------------------------------
+  /** Outer padding between the panel edge and its buttons. */
+  padding: 0.01,
+  /** Width of one 4-across cell (colour / ammo buttons). >= 26 mm: a fingertip. */
+  cellWidth: 0.03,
+  /** Columns of the widest rows; sets the panel width. */
+  columns: 4,
+  /** Horizontal air between neighbouring buttons. >= 10 mm (Meta hands guidance). */
+  buttonGap: 0.01,
+  /** Extra vertical air between one row's buttons and the next row's caption. */
+  rowGap: 0.004,
+  /** Height of a row caption (LAUNCHER / GOO MODE / COLOUR / AMMO). */
+  captionHeight: 0.0075,
+  /** Air between a caption and its buttons. */
+  captionGap: 0.003,
+  /** Button heights per row. */
+  launcherHeight: 0.034,
+  subModeHeight: 0.03,
+  colourHeight: 0.028,
+  ammoHeight: 0.028,
+  /** Corner radius of a button, and of the panel. */
+  buttonCorner: 0.006,
+  panelCorner: 0.012,
+  /** How far a button face stands proud of the panel (it sinks when pressed). */
+  buttonLift: 0.004,
+  /** Canvas pixels per metre for baked button faces and captions. */
+  texturePxPerMeter: 6400,
+
+  // ---- Poke (Quest-native press) ----------------------------------------------------
+  /** Hover glow while the fingertip is within this far in front of a button. */
+  hoverMeters: 0.03,
+  /**
+   * The fingertip must push this far PAST the button face (from in front) to
+   * select. One selection per poke; it re-arms only after backing out.
+   */
+  selectDepthMeters: 0.006,
+  /** ...backing out this far in front of the face re-arms the next poke. */
+  rearmMeters: 0.012,
+  /**
+   * A fingertip that turns up more than this far behind the face without
+   * having hovered in front first (a hand swept through the panel) is
+   * ignored until it comes back out in front.
+   */
+  maxBehindMeters: 0.05,
+  /** Fingertip joint to skin, metres: the press is measured at the skin. */
+  tipRadiusMeters: 0.005,
+  /** Deepest a pressed button visibly sinks. */
+  sinkMaxMeters: 0.0035,
+  /** Hit slop round every button rect (well inside the 10 mm gaps). */
+  hitMarginMeters: 0.003,
+
+  // ---- Controllers and firing ---------------------------------------------------------
+  /** Furthest a controller ray can click the open menu (and be blocked by it). */
+  rayMaxMeters: 1.2,
+  /**
+   * Pause the LEFT hand's fire (trigger, pinch, gesture) while the menu is
+   * open: that hand is holding the menu up, and a pinch while reading it
+   * should not throw paint.
+   */
+  pauseLeftFireWhileOpen: true,
+  /** Haptic tick on open / close / pick (controllers; hands have no motors). */
+  hapticIntensity: 0.25,
+  hapticMs: 22,
+
+  // ---- Look (techno-paint: dark glass, neon edge, ASCII only) --------------------------
+  panelColor: '#070912',
+  panelOpacity: 0.88,
+  /** Neon edge: crisp line colour and its soft additive halo. */
+  edgeColor: '#48dbfb',
+  edgeAccent: '#b84dff',
+  edgeGlowOpacity: 0.3,
+  captionColor: '#8fe9ff',
+  buttonColor: '#141827',
+  buttonOpacity: 0.94,
+  /** Button rim opacity unselected / selected / hovered. */
+  rimOpacity: 0.4,
+  rimSelectedOpacity: 1,
+  rimHoverOpacity: 0.8,
+  /** Additive glow round a button: selected / hovered (added). */
+  glowSelectedOpacity: 0.32,
+  glowHoverOpacity: 0.22,
+  /** How far a selected button's plate is tinted toward its accent (0..1). */
+  selectedFillMix: 0.3,
+  /** Opacity multiplier on the AMMO row while GOO is loaded (it then means "back to paint"). */
+  dimmedRowOpacity: 0.55,
+  /** Identity colours, HAND / BLASTER / GOO. */
+  launcherColors: ['#b8c2cc', '#ff4fb8', '#48dbfb'] as readonly string[],
+  /** SPLAT / TETHER. Big and loud: GOO's two verbs must be obvious. */
+  subModeColors: ['#b84dff', '#b6ff3b'] as readonly string[],
 } as const;
 
 /**
@@ -904,7 +826,7 @@ export const CHILL = {
    * Names the pinch as well as the trigger: a hands-only player has no trigger
    * to hold, and holding a pinch sprays exactly the same way.
    */
-  statusText: 'Hold trigger or pinch to spray. Tap the palette to change paint.',
+  statusText: 'Hold trigger or pinch to spray. Tap the gem on your left wrist for paint.',
   /** Shown for the rest of the session after ROTATE CANVAS wipes the picture. */
   rotatedText: 'Canvas rotated - blank page, fresh start.',
   /** Loop ambient music while chilling. Set false for a silent studio. */
@@ -969,8 +891,20 @@ export const EASEL = {
   boardCentreHeight: 1.2,
   /** Degrees the easel leans back, like a real A-frame. */
   tiltDeg: 12,
-  /** Metres of slop allowed on the board's depth axis when matching an impact. */
-  hitDepthTolerance: 0.06,
+  /**
+   * Metres of slop allowed on the board's depth axis when matching an impact.
+   * Round 10: 0.1 (was 0.06) to match the thicker collider below - a ball
+   * stopped on its front face sits colliderDepth/2 + BALLS.radius (0.07 m)
+   * out from the board's centre plane.
+   */
+  hitDepthTolerance: 0.1,
+  /**
+   * Round 10: depth of the board's physics box, metres (the visual board stays
+   * `boardDepth`). No CCD (gotcha 6/22): a paintball covers ~12 cm per 72 Hz
+   * step, so a 2 cm box plus two radii (10 cm) could be stepped clean over;
+   * 6 cm - the same as wall boxes - plus two radii is 14 cm.
+   */
+  colliderDepth: 0.06,
   /** Painting resolution, pixels across, in landscape. */
   canvasPxW: 1024,
   /** Painting resolution, pixels down, in landscape. */
@@ -1017,6 +951,214 @@ export const EASEL = {
 } as const;
 
 /**
+ * Round 10: the STUDIO - what Chill mode became. No timer, no Neatniks, the
+ * ambient music, and three activities picked from the HUD's chill card:
+ *
+ * - **CANVAS**: a framed canvas hangs on your nearest real wall (scene planes;
+ *   floats at a seated distance without them) or stands on the round-2 easel.
+ *   SHAPE cycles landscape / portrait / round; SAVE downloads the picture.
+ * - **STENCIL**: paint-by-shape. A silhouette (star, heart, Pip, Mopsy, splat)
+ *   is masked onto a square canvas; a coverage meter scores paint inside vs
+ *   spill outside into 1-3 stars. SAVE lifts the stencil (outside knocked out).
+ * - **TARGETS**: a relaxed range of bullseyes and paint balloons in the seated
+ *   forward arc. Every pop splashes its colour onto your walls; streak counter;
+ *   HARD makes them drift and spin.
+ *
+ * Free painting of the room keeps working in all three. StudioSystem owns it;
+ * the canvas surface itself is still EaselSystem's (see EASEL).
+ */
+export const STUDIO = {
+  /** Activity on the first entry into Chill (0 Canvas, 1 Stencil, 2 Targets). */
+  defaultActivity: 0,
+
+  // ---- Canvas placement ----------------------------------------------------
+  /** Nearest wall considered, metres from the head (closer is in your lap). */
+  wallMinDist: 0.6,
+  /** Farthest wall considered, metres. Past this it floats instead. */
+  wallMaxDist: 3.5,
+  /** A surface counts as a wall within this many degrees of vertical. */
+  wallMaxTiltDeg: 30,
+  /**
+   * Probe yaws, degrees off your forward, tried for a wall; the nearest hit
+   * wins. A spread so a doorway straight ahead does not lose the wall beside it.
+   */
+  wallProbeYawsDeg: [0, -25, 25, -50, 50] as readonly number[],
+  /**
+   * Metres the canvas stands proud of the wall. Wall planes get 6 cm collider
+   * boxes centred on the plane (gotcha 6), so 3 cm of box sits in front; this
+   * keeps the canvas's own collider clear of it.
+   */
+  wallStandoff: 0.06,
+  /**
+   * A wall canvas grows with distance so it reads the same size as one at
+   * this distance (metres), clamped to [wallScaleMin, wallScaleMax].
+   */
+  wallBaseDist: 1.3,
+  wallScaleMin: 1,
+  /** 2.2 turns the 0.62 m board into a 1.36 m mural on a far wall. */
+  wallScaleMax: 2.2,
+  /** No wall: float this far ahead (seated reach to shoot, not to touch). */
+  floatDistance: 1.3,
+  /** Canvas centre this far below the eyes (0 = eye height). */
+  canvasBelowEyes: 0.05,
+  /** Canvas centre height clamp, metres (floor-seated to tall standing). */
+  canvasMinCentre: 0.9,
+  canvasMaxCentre: 1.9,
+
+  // ---- Square / round boards -------------------------------------------------
+  /** Side of the square (stencil) and round boards, metres, before scaling. */
+  squareBoardSize: 0.56,
+  /** Painting resolution of the square / round board, pixels per side. */
+  squareCanvasPx: 1024,
+
+  // ---- Frames (generated art; transparent centre) ---------------------------
+  /**
+   * Gallery frames laid over the board's face. `innerW/innerH` are the
+   * transparent opening as a fraction of the image; `offX/offY` where the
+   * opening's centre sits relative to the image centre (fraction, +Y up), so
+   * the opening lands exactly on the board whatever the art's margins. The
+   * landscape frame is rotated 90 degrees for portrait.
+   */
+  frames: {
+    rect: {
+      key: 'studioFrameRect',
+      url: '/studio/frame-rect.webp',
+      innerW: 0.877,
+      innerH: 0.823,
+      offX: -0.002,
+      offY: 0.005,
+    },
+    square: {
+      key: 'studioFrameSquare',
+      url: '/studio/frame-square.webp',
+      innerW: 0.824,
+      innerH: 0.844,
+      offX: 0.002,
+      offY: 0.004,
+    },
+    round: {
+      key: 'studioFrameRound',
+      url: '/studio/frame-round.webp',
+      innerW: 0.789,
+      innerH: 0.781,
+      offX: -0.007,
+      offY: 0.016,
+    },
+  },
+  /** Emissive boost on the frame art so the neon reads on passthrough. */
+  frameEmissive: 0.45,
+
+  // ---- Stencils ----------------------------------------------------------------
+  /**
+   * Silhouettes, white on pure black (luminance = inside). Cycled by NEXT.
+   * Labels are ASCII (gotcha 24).
+   */
+  stencils: [
+    { id: 'star', label: 'STAR', url: '/studio/stencil-star.png' },
+    { id: 'heart', label: 'HEART', url: '/studio/stencil-heart.png' },
+    { id: 'splat', label: 'SPLAT', url: '/studio/stencil-splat.png' },
+    { id: 'pip', label: 'PIP', url: '/studio/stencil-pip.png' },
+    { id: 'mopsy', label: 'MOPSY', url: '/studio/stencil-mopsy.png' },
+  ] as ReadonlyArray<{ id: string; label: string; url: string }>,
+  /**
+   * Coverage grid side, cells. Impacts are rasterised into it on the CPU - no
+   * GPU readback. 128 = 16k cells, ~4 mm per cell on the 0.56 m board.
+   */
+  coverageGrid: 128,
+  /** Mask luminance (0-255) at or above which a cell is inside the shape. */
+  maskThreshold: 128,
+  /**
+   * Fraction of a stamp's drawn size counted as covered radius. The splat
+   * mask's solid core spans about 0.45 of its square (radius ~0.22); the thin
+   * arms are bonus paint that neither fills nor spills.
+   */
+  stampCoverRadius: 0.22,
+  /** Score = fill - spillPenalty x spill (spill as a fraction of the shape's area). */
+  spillPenalty: 0.5,
+  /** Score needed for 1, 2 and 3 stars. */
+  starThresholds: [0.35, 0.6, 0.82] as readonly number[],
+  /** Guide overlay: alpha of the dimmed area outside the shape. */
+  guideOutsideAlpha: 0.42,
+  /** Guide overlay: colour of the outline drawn just outside the shape. */
+  guideOutlineColor: '#48dbfb',
+  /** Guide overlay resolution, pixels per side. */
+  guidePx: 512,
+  /** Guide outline thickness, guide pixels. */
+  guideOutlinePx: 5,
+
+  // ---- Targets -------------------------------------------------------------------
+  /** Targets up at once (also the pool size: a popped one respawns in place). */
+  targetCount: 4,
+  /** Seconds before a popped target's replacement appears. */
+  respawnSec: 0.9,
+  /** Forward arc they appear in, degrees (seated: no turning round). */
+  arcDeg: 110,
+  /** Distance band, metres from the head. */
+  minDist: 1.3,
+  maxDist: 2.6,
+  /** Height band relative to the eyes, metres. */
+  heightBelowEyes: 0.4,
+  heightAboveEyes: 0.35,
+  /** Absolute height clamp, metres. */
+  minHeight: 0.6,
+  maxHeight: 1.9,
+  /** Minimum gap between two live targets, metres. */
+  minSpacing: 0.55,
+  /** Bullseye disc radius, metres. */
+  bullseyeRadius: 0.17,
+  /** Balloon half-height, metres (its width follows the art). */
+  balloonRadius: 0.15,
+  /** Extra hit slop, metres, on top of target + ball radius. */
+  hitSlop: 0.03,
+  /** Share of spawns that are balloons (the rest are bullseyes). */
+  balloonShare: 0.5,
+  /** Idle bob amplitude (m) and rate (Hz). */
+  bobAmp: 0.035,
+  bobHz: 0.3,
+  /** Appear / pop animation lengths, seconds. */
+  appearSec: 0.35,
+  popSec: 0.22,
+  /** HARD: lateral drift amplitude (m) and rate (Hz); bullseye spin (deg/s). */
+  hardDriftMeters: 0.45,
+  hardDriftHz: 0.16,
+  hardSpinDegPerSec: 75,
+  /**
+   * Splats thrown onto the room per pop. Each casts away from you through the
+   * target (cone `popSplatConeDeg`) against scene planes/meshes within
+   * `popSplatRange`; rays that find nothing land on the floor if they point
+   * down, else are dropped.
+   */
+  popSplats: 5,
+  popSplatConeDeg: 55,
+  popSplatRange: 4.5,
+  /** Splat size multiplier for pop splashes (a paintball is 1). */
+  popSplatSize: 1.7,
+  /** Pop splash colours (sRGB, gotcha 23), cycled per target. */
+  popColors: [
+    [1, 0.31, 0.51],
+    [1, 0.82, 0.25],
+    [0.28, 0.86, 0.98],
+    [0.71, 1, 0.23],
+    [0.72, 0.3, 1],
+  ] as ReadonlyArray<readonly [number, number, number]>,
+  /** Target art (generated; cut-outs). */
+  bullseyeKey: 'studioBullseye',
+  bullseyeUrl: '/studio/target-bullseye.webp',
+  balloonKey: 'studioBalloon',
+  balloonUrl: '/studio/target-balloon.webp',
+
+  // ---- Copy (ASCII only, gotcha 24) ---------------------------------------------
+  lines: {
+    canvasWall: 'On your wall. Paint it, then SAVE.',
+    canvasFloat: 'No wall found - floating. Paint it, then SAVE.',
+    canvasEasel: 'On the easel. Pinch it with both hands to move it.',
+    stencil: 'Fill the shape. Paint outside the line is spill.',
+    targets: 'Pop the targets - every pop splashes your walls.',
+    saved: 'Saved to your downloads.',
+  },
+} as const;
+
+/**
  * Web ammo: the wrist shooters, the two gesture triggers, and the webbing.
  *
  * Round 4 made this a *mode* you entered from the title screen. Round 5 deleted
@@ -1034,7 +1176,7 @@ export const EASEL = {
  *
  * ### The grip frame, since every offset below is in it
  *
- * Same convention as PALETTE, and worth stating exactly because round 5 moved
+ * The old wrist palette used the same convention. Worth stating exactly because round 5 moved
  * the shooter across it: **+Y is out of the BACK of the hand** (where a watch
  * face sits), **-Y is the PALM side**, **-Z is the way the hand points** and +Z
  * is back toward the elbow. X is the mirrored axis: +X is thumb-side on the
@@ -1104,9 +1246,11 @@ export const WEB = {
   shooterLengthMeters: 0.11,
   /**
    * Forearm diameter the straps are sized to, metres. 7.5 cm is a generous
-   * adult wrist with the strap standing a little proud of it. Deliberately a
-   * constant: do NOT measure the player's hand at runtime — joint spans are
-   * noisy and this has to look right on frame one.
+   * adult wrist with the strap standing a little proud of it. Only the
+   * optional GLB uses it now: since round 10 the code-built sleeve is sized
+   * from a robust (median-of-window, pose-invariant bone length) measurement
+   * of the player's hand — see ARMFIT — and starts at a generous default, so
+   * it still looks right on frame one.
    */
   shooterBandMeters: 0.075,
   /**
@@ -1128,27 +1272,33 @@ export const WEB = {
    * pose people adopt to look at their wrist.
    */
   shooterRollDeg: 0,
-  /** Metres toward the pinky side, in the RIGHT hand's aim frame. Left mirrors. */
+  /**
+   * Metres toward the pinky side, in the RIGHT hand's TURRET frame (round 10:
+   * origin = the swivel pivot on top of the sleeve, see BLASTER). Left mirrors.
+   */
   shooterOffsetX: 0.0,
   /**
-   * Metres along the aim frame's Y from the wrist joint. **Negative**: the
-   * device rides the underside (palm side) of the forearm, the way a web
-   * shooter is worn — out of the way of the hand when the wrist bends back.
+   * Metres up from the turret pivot to the GOO launcher's axis. **Positive**
+   * since round 10: the launcher moved from under the wrist (where nobody saw
+   * it — owner playtest) to the TOP of the forearm, on the same mount the
+   * BLASTER barrel uses; the two swap places on a mode change. Same axis
+   * height as the barrel (BLASTER.muzzleLocal[1]).
    */
-  shooterOffsetY: -0.034,
+  shooterOffsetY: 0.027,
   /**
-   * Metres along the aim frame's Z from the wrist joint. **Positive**, i.e.
-   * back up the forearm: the body sits on the arm and only the nozzle reaches
-   * the wrist crease.
+   * Metres along the turret's Z from the pivot to the launcher body centre.
+   * Positive = back up the forearm: the goo canister sits over the sleeve and
+   * only the nozzle reaches past the wrist.
    */
-  shooterOffsetZ: 0.05,
+  shooterOffsetZ: 0.012,
   /**
-   * The nozzle tip, in the shooter holder's own (aim-aligned) frame, metres.
-   * Both the web's spawn point and the strand's near end come from here.
-   * Round 8: the spinneret (GauntletSystem) puts its chrome needle's tip here
-   * — housing, collar, glowing cartridge, needle, all on this axis.
+   * The nozzle tip, in the launcher's own (aim-aligned) frame, metres. Both
+   * the goo ball's spawn point and the strand's near end come from here
+   * (nozzleInto / shotOriginInto / globals.gauntletMuzzles). Round 10: with
+   * the offsets above the tip lands where the BLASTER muzzle is, just past the
+   * wrist over the back of the hand.
    */
-  muzzleLocal: [0, 0, -0.082] as [number, number, number],
+  muzzleLocal: [0, 0, -0.083] as [number, number, number],
   /** Metres past the nozzle that a web ball is born, so it clears the hand. */
   muzzleOffset: 0.09,
 
@@ -1255,8 +1405,8 @@ export const WEB = {
 
   // ---- TETHER WEB (round 6, reworked round 7) -------------------------------
   //
-  // A second thing web ammo can be, chosen on the wrist selector or with the
-  // right controller's B button. A tether web flies like a splat web, but a
+  // A second thing web ammo can be, chosen on the wrist menu's GOO row or with
+  // the right controller's B button. A tether web flies like a splat web, but a
   // robot it touches gets LATCHED instead of damaged. Then you reel it in and
   // it pops when it reaches you.
   //
@@ -1331,38 +1481,6 @@ export const WEB = {
   tetherStruggleRad: 0.22,
   /** Struggle oscillation, Hz. */
   tetherStruggleHz: 7,
-
-  // ---- The wrist selector gadget -------------------------------------------
-  //
-  // Two mini pads on the LEFT gauntlet's palm-side face, parented into its
-  // holder so they ride the forearm exactly as the device does. Poke one,
-  // pinch or squeeze near one, or press B. They only exist while web ammo is
-  // loaded — with paint on the palette there is no sub-mode to choose.
-  //
-  // Round 7: everything here is in the shooter holder's frame (the aim frame,
-  // origin at the device centre), not the grip's. -Y is the palm side, which
-  // is the side facing the player when they turn the forearm palm-up to look.
-  /** Half-height of one pad, metres. Big enough to poke, small enough to wear. */
-  selectorPadMeters: 0.022,
-  /** Gap between the two pads, metres. */
-  selectorPadGap: 0.008,
-  /**
-   * Metres along the holder's Y. Negative = palm side, and further out than
-   * the gauntlet body (radius ~1.6 cm) so the pads float clear of it rather
-   * than inside the model the player is trying to poke.
-   */
-  selectorOffsetY: -0.03,
-  /**
-   * Metres along the holder's Z. Slightly up the forearm from the device
-   * centre, so a fingertip reaching for a pad never crosses the nozzle.
-   */
-  selectorOffsetZ: 0.012,
-  /** Scale applied to whichever pad is selected. */
-  selectorSelectedScale: 1.2,
-  /** Emissive intensity on the selected pad, on top of that scale. */
-  selectorSelectedEmissive: 0.55,
-  /** Resting emissive on the unselected pad — a holo panel is never fully dark. */
-  selectorIdleEmissive: 0.08,
 } as const;
 
 /**
@@ -1833,14 +1951,22 @@ export const BLASTER = {
     { name: 'GOLD RUSH', accent: '#ffd23f', trim: '#ff7a3d', shell: '#2a2c33' },
   ] as ReadonlyArray<BlasterSkin>,
 
-  // ---- The hardware (round 8, GauntletSystem) ------------------------------
+  // ---- The hardware (round 8, refitted in round 10, GauntletSystem) --------
   //
-  // Two pieces per arm. A forearm BRACER posed in the aim frame (-Z = where
-  // shots go, +Y = back of the hand, origin at the wrist joint) carrying the
-  // paint barrel + canister on top (BLASTER mode) or the web spinneret
-  // underneath (WEB mode; its offsets are WEB.shooterOffset*). And a
-  // back-of-hand PLATE posed in the hand's own wrist frame, so it rides the
-  // hand while the fingers stay free. HAND mode shows neither.
+  // Three pieces per arm since round 10:
+  //  - the SLEEVE: a closed armour tube round the forearm (top, sides AND
+  //    underside), posed from the forearm axis (wrist joint + an estimated
+  //    elbow) and sized to the player's measured hand — see ARMFIT. It never
+  //    follows the aim ray, so it stays ON the arm.
+  //  - the TURRET: a swivel mount pinned to the top of the sleeve
+  //    (ARMFIT.turretPivot*) that follows the aim. It carries the BLASTER
+  //    barrel + canister or the GOO launcher; the two swap places on the same
+  //    mount when the mode changes. Muzzles are in the turret frame (origin =
+  //    the pivot on top of the sleeve, -Z = where shots go, +Y = up off the
+  //    back of the forearm).
+  //  - the back-of-hand PLATE, in the hand's own wrist frame (fingers free),
+  //    scaled to the measured palm.
+  // HAND mode shows none of them (only the menu gem, ARMFIT.gemInHandMode).
   //
   // X values are declared for the RIGHT hand and mirrored for the left.
   /**
@@ -1856,11 +1982,14 @@ export const BLASTER = {
    */
   autoFireCooldownMs: 150,
   /**
-   * The paint barrel's muzzle, metres, in the aim frame at the wrist joint
-   * (+Y = over the back of the wrist, -Z = toward the fingers). Trigger,
-   * pinch, flick and thrust shots in BLASTER mode all leave from here.
+   * The paint barrel's muzzle, metres, in the TURRET frame (round 10: origin
+   * = the swivel pivot on top of the sleeve, +Y = up off the forearm, -Z =
+   * where shots go). Trigger, pinch, flick and thrust shots in BLASTER mode
+   * all leave from here. With the pivot ARMFIT.turretPivotZ (5.7 cm) behind
+   * the wrist this puts the muzzle just past the wrist joint, over the back of
+   * the hand — where the R8 muzzle was.
    */
-  muzzleLocal: [0, 0.058, -0.014] as [number, number, number],
+  muzzleLocal: [0, 0.027, -0.071] as [number, number, number],
   /**
    * Metres past the muzzle that a paint ball is born, so it clears the barrel
    * and the knuckles. Smaller than FIRE.muzzleOffset because the barrel
@@ -1869,7 +1998,9 @@ export const BLASTER = {
   muzzleOffset: 0.05,
   /**
    * The back-of-hand plate's centre in the WRIST-JOINT frame (tracked hands):
-   * +Y out of the back of the hand, -Z toward the knuckles.
+   * +Y out of the back of the hand, -Z toward the knuckles. For the default
+   * hand (ARMFIT.default*); Y scales with the measured palm width, Z with the
+   * hand length.
    */
   plateOffsetHand: [0, 0.021, -0.048] as [number, number, number],
   /**
@@ -1879,11 +2010,12 @@ export const BLASTER = {
   plateOffsetController: [0, 0.036, -0.062] as [number, number, number],
   /**
    * Controllers are held thumb-up, so the anatomical back of the hand faces
-   * outward and a barrel "over the wrist" would stick out sideways. Rolls the
-   * controller hardware (bracer, barrel, spinneret — not the hand plate) about
-   * the forearm by this many degrees (right hand; mirrored for the left). 90
-   * brings the barrel up over the thumb side and the spinneret underneath;
-   * 0 keeps it anatomical (barrel pointing out sideways).
+   * outward and a turret "on top of the forearm" would stick out sideways.
+   * Rolls the controller hardware (sleeve and turret — not the hand plate)
+   * about the forearm by this many degrees (right hand; mirrored for the
+   * left). 90 brings the turret up over the thumb side (the sleeve swaps its
+   * breadth and depth so its ellipse still matches the forearm); 0 keeps it
+   * anatomical (turret pointing out sideways).
    */
   controllerRollDeg: 90,
   /** Metres the barrel kicks back up the forearm on each shot. */
@@ -1903,6 +2035,204 @@ export const BLASTER = {
   /** Haptic pulse on both hands when the mode changes. */
   modeSwitchHapticIntensity: 0.35,
   modeSwitchHapticMs: 45,
+} as const;
+
+/**
+ * Round 10: fitting the gauntlets to the player's arm (GauntletSystem).
+ *
+ * Owner playtest: "they look a little too small, so it's kind of just sitting
+ * on top of them". Two causes, both fixed here:
+ *
+ * 1. **Size.** The R8 bracer was a fixed ~6.7 x 5.2 cm tube 11 cm long — a
+ *    wrist-sized ring — while a forearm swells to ~8.5 cm across within 15 cm
+ *    of the wrist. Now the player's hand is MEASURED from tracked joints (bone
+ *    lengths and knuckle span, which do not change with pose), the forearm is
+ *    estimated from it with anthropometric ratios, and the sleeve encloses
+ *    that forearm plus a skin margin, so the real arm in passthrough never
+ *    pokes through.
+ * 2. **Pose.** The bracer rode the AIM frame, which blends the OS ray and can
+ *    sit up to ~30 degrees off the arm. The sleeve now rides the FOREARM axis:
+ *    the wrist joint's own distal axis blended with an elbow estimated by
+ *    two-bone IK from a shoulder hung off the head. Only the turret (barrel /
+ *    goo launcher) follows the aim.
+ *
+ * Anthropometric sources (adult population means; the RATIOS are what this
+ * uses): ANSUR II (US Army anthropometric survey, Gordon et al. 2014) — hand
+ * length M 19.4 / F 18.0 cm, hand breadth M 8.9 / F 7.8 cm, wrist
+ * circumference M 17.4 / F 15.2 cm, forearm circumference (max) M ~29 / F ~25
+ * cm, radiale-stylion (forearm) length M 26.6 / F 24.1 cm, acromion-radiale
+ * (upper arm) M 33.6 / F 31.0 cm. The cross-section shape (flat at the wrist,
+ * rounder toward the elbow) and the widest point (~70% of the way to the
+ * elbow) are standard anatomy; treat those exact numbers as assumptions,
+ * tuned so the sleeve visibly encloses a 6.6 x 5.0 cm wrist / 8.4 cm forearm
+ * proxy in the headless harness.
+ *
+ * WebXR specifics: a joint's radius (XRFrame.fillJointRadii, reached through
+ * the system's `xrFrame` and the hand adapter's `jointSpaces` — IWSDK 0.3.1
+ * itself never reads radii) is "the radius of a sphere placed at its center so
+ * that it roughly touches the skin on both sides of the hand", i.e. half the
+ * wrist's palm-to-back DEPTH. The spec also lets a UA map every hand to a
+ * static hand model for privacy, so on some runtimes all players may measure
+ * alike — the fit then simply stays at that model's size.
+ */
+export const ARMFIT = {
+  /** Master switch for measuring. false = everyone wears the default fit. */
+  enabled: true,
+  /** localStorage key of the per-device calibration (JSON, try/catch). */
+  storageKey: 'splotopia.armFit',
+
+  // ---- Defaults (controllers, and tracked hands before a calibration) -----
+  /**
+   * Hand length, metres: wrist joint to middle fingertip measured ALONG THE
+   * BONES (pose-invariant). ~Mean of ANSUR II male/female (19.4 / 18.0 cm).
+   */
+  defaultHandLengthMeters: 0.187,
+  /**
+   * Palm width, metres: knuckle (index MCP to pinky MCP joint) span plus the
+   * two joint radii, i.e. hand breadth. ~Mean of ANSUR II M/F (8.9 / 7.8 cm),
+   * rounded up a touch: a fit that errs large never shows skin.
+   */
+  defaultPalmWidthMeters: 0.083,
+
+  // ---- Measuring ------------------------------------------------------------
+  /** Joint samples per second per hand (only while tracked and steady). */
+  sampleHz: 15,
+  /** Samples per calibration window (~1-1.6 s with one or both hands feeding it). */
+  windowSamples: 24,
+  /** Seconds after a hand (re)appears before its joints are trusted. */
+  settleAfterReacquireSec: 0.6,
+  /** A palm moving faster than this (m/s) is not sampled (tracking smears). */
+  maxSampleSpeed: 0.9,
+  /** Plausible adult hand length, metres; samples outside are discarded. */
+  handLengthRange: [0.13, 0.25] as [number, number],
+  /** Plausible adult palm width, metres. */
+  palmWidthRange: [0.06, 0.11] as [number, number],
+  /** Plausible wrist joint radius, metres; outside it the radius is ignored. */
+  wristRadiusRange: [0.012, 0.04] as [number, number],
+  /**
+   * Once a window holds 6+ samples, a sample further than this fraction from
+   * the window's running median is rejected as a tracking glitch.
+   */
+  outlierFraction: 0.12,
+  /**
+   * Knuckle joint radius assumed (metres) when the runtime gives no radii:
+   * palm width = knuckle span + 2 x this.
+   */
+  fallbackKnuckleRadius: 0.0095,
+  /**
+   * Weight of the first window of a session against a stored calibration
+   * (someone else may be wearing the headset now). Later windows refine with
+   * weight 1/(n+1), never below `minRefineWeight`, so the fit keeps improving
+   * but cannot be dragged around by one bad window.
+   */
+  firstWindowWeight: 0.7,
+  minRefineWeight: 0.15,
+  /** Re-save to localStorage when a value moves more than this (metres). */
+  persistEpsilonMeters: 0.001,
+
+  // ---- Anthropometric model -------------------------------------------------
+  /** Wrist circumference / hand breadth. ANSUR II: 17.4/8.9 ~ 15.2/7.8 ~ 1.96. */
+  wristCircPerPalmWidth: 1.97,
+  /**
+   * How much the wrist joint radius (when the runtime reports one) counts
+   * against the palm-width estimate of the wrist, 0..1. The joint radius is
+   * half the wrist DEPTH; it is converted to an equivalent round radius with
+   * `aspectWrist` first.
+   */
+  wristJointRadiusWeight: 0.5,
+  /** Forearm (wrist joint to elbow) length / hand length. ANSUR II ~1.36. */
+  forearmLengthPerHandLength: 1.36,
+  /** Upper arm (shoulder to elbow) length / hand length. ANSUR II ~1.73. */
+  upperArmLengthPerHandLength: 1.73,
+  /** Max forearm circumference / wrist circumference. ANSUR II ~1.65. */
+  forearmMaxCircPerWristCirc: 1.62,
+  /** Where the forearm is widest, as a fraction of its length from the wrist. */
+  forearmMaxAt: 0.72,
+  /** Cross-section depth / breadth at the wrist (flat: radius and ulna side by side). */
+  aspectWrist: 0.8,
+  /** Cross-section depth / breadth at the widest point (rounder: muscle belly). */
+  aspectProximal: 0.92,
+
+  // ---- The sleeve -------------------------------------------------------------
+  /** Metres behind the wrist joint the sleeve starts (the wrist must still bend). */
+  sleeveStartMeters: 0.012,
+  /** Fraction of the estimated forearm length the sleeve covers (from the wrist). */
+  sleeveCoverage: 0.65,
+  /**
+   * Gap between the estimated skin and the sleeve's inner wall, metres. Covers
+   * the estimate's error and hand-tracking jitter, so passthrough skin never
+   * pokes through ("render slightly larger than the skin").
+   */
+  skinMarginMeters: 0.008,
+  /** Shell wall thickness, metres (inner wall to outer surface). */
+  shellThicknessMeters: 0.0045,
+  /** Time constant, seconds, of size changes (a recalibration glides, never pops). */
+  sizeSmoothingSec: 0.6,
+  /** Back-of-hand plate width / palm width (fingers and palm stay free). */
+  plateWidthPerPalmWidth: 0.86,
+  /** Back-of-hand plate length / hand length (wrist to just short of the knuckles). */
+  plateLengthPerHandLength: 0.41,
+
+  // ---- Forearm axis (sleeve pose) ---------------------------------------------
+  /**
+   * How much the sleeve's axis follows the IK-estimated forearm (elbow to
+   * wrist) rather than the hand's own wrist-joint axis, 0..1, once the two
+   * disagree by more than `forearmIkDeadzoneDeg[1]`. The hand axis bends with
+   * the wrist; the forearm does not. 0 = pure wrist frame.
+   */
+  forearmIkWeight: 0.6,
+  /**
+   * Degrees of hand-vs-forearm disagreement over which that weight fades in
+   * (smoothstep from 0 at the first value to full at the second). Below ~15
+   * degrees the elbow guess is no better than the tracked wrist (headless:
+   * a 7-degree IK disagreement pushed a straight-ahead forearm proxy through
+   * the sleeve at 0.35 flat weight); a clearly bent wrist (the web-shooter
+   * pose, a flexed wrist) is where the forearm estimate earns its keep.
+   */
+  forearmIkDeadzoneDeg: [15, 40] as [number, number],
+  /**
+   * The sleeve axis never leaves the hand axis by more than this (degrees):
+   * roughly the wrist's comfortable flexion/extension range, and a cap on how
+   * wrong a bad elbow guess can make it.
+   */
+  wristMaxBendDeg: 50,
+  /** Eyes to the neck pivot, metres: down, and back, in the head frame. */
+  neckDownMeters: 0.1,
+  neckBackMeters: 0.08,
+  /** Neck pivot to the shoulder joints: drop and half-width, metres. */
+  shoulderDropMeters: 0.13,
+  shoulderHalfWidthMeters: 0.175,
+  /** Time constant, seconds, of the torso yaw following the head's. */
+  torsoYawSmoothingSec: 0.35,
+
+  // ---- Turret (the swivel mount on top of the sleeve) ---------------------------
+  /** Metres behind the wrist joint of the turret pivot (default-size arm; scales with it). */
+  turretPivotZ: 0.057,
+  /** Metres the pivot stands proud of the sleeve's top surface. */
+  turretPivotLift: 0.0025,
+  /**
+   * The turret (and so the aim it shoots along) never swings more than this
+   * many degrees away from the sleeve; beyond it the barrel would read as
+   * detached from the arm.
+   */
+  turretMaxDeg: 35,
+
+  // ---- Menu gem (left arm) ---------------------------------------------------
+  /**
+   * The menu gem on the LEFT sleeve, for the summonable wrist menu (poked
+   * with the right index tip). Angle round the sleeve from the pinky side
+   * through the top (90 = top dead centre); >90 is the thumb side, which faces
+   * the right hand when the left palm is down — and the turret is not there.
+   */
+  gemAngleDeg: 132,
+  /** Metres behind the sleeve's wrist edge (default-size arm; scales with it). */
+  gemBackMeters: 0.024,
+  /** Gem radius, metres (a poke target: keep >= ~7 mm). */
+  gemRadiusMeters: 0.0085,
+  /** Show the gem (on a slim wrist band) in HAND mode too, so the menu is always reachable. */
+  gemInHandMode: true,
+  /** Gem glow, `#rrggbb` (sRGB). */
+  gemColor: '#c58bff',
 } as const;
 
 /**
@@ -2033,10 +2363,15 @@ export const TUTORIAL = {
    */
   lines: {
     fire: 'Pinch to fire at the ring!',
-    palette: 'Tap a colour on your wrist',
+    // Round 10: the always-on palette became a summonable wrist menu, so each
+    // menu step has a "menu closed" line (open it) and a "menu open" line.
+    palette: 'Tap the gem on your left wrist',
+    paletteOpen: 'Now tap a colour',
     pop: 'Pop a Mopsy!',
-    goo: 'Tap GOO on your wrist palette',
-    tether: 'Now tap TETHER',
+    goo: 'Open the menu, tap GOO',
+    gooOpen: 'Tap GOO',
+    tether: 'Open the menu, tap TETHER',
+    tetherOpen: 'Now tap TETHER',
     haul: 'Hook a Mopsy, then pull it in!',
     ready: "You're ready! Press PLAY",
   },
@@ -2081,9 +2416,10 @@ export const TUTORIAL = {
   /** Metres toward the viewer. */
   pipToward: 0.15,
   /**
-   * Over the wrist palette Pip hovers this far above the left hand, metres,
-   * this far out to its side, and this far BEYOND it (he is close to the
-   * eyes there; any nearer and he hides the palette he is pointing at).
+   * Over the wrist menu (round 10: the summon gem while it is closed, the
+   * open panel's centre while it is open) Pip hovers this far above it,
+   * metres, this far out to its side, and this far BEYOND it (he is close to
+   * the eyes there; any nearer and he hides what he is pointing at).
    */
   pipWristAbove: 0.24,
   pipWristBeside: 0.22,
@@ -2111,7 +2447,7 @@ export const COACH = {
   /** Tips by archetype index (Mopsy, Squeegee, Peekaboo, Duster Duke). ASCII. */
   lines: [
     '',
-    'Shield! Hit its side or bank a shot',
+    'Shield! Hit it 3x to break it, or flank',
     'Hiding! Hit it when it peeks',
     'BOSS! GOO > TETHER hauls him in',
   ] as readonly string[],
@@ -2119,8 +2455,8 @@ export const COACH = {
   floatingLabel: true,
   /** Floating label width, metres (height follows its 8:1 texture). */
   labelWidth: 0.62,
-  /** Metres above the bot's centre the label floats. */
-  labelAbove: 0.38,
+  /** Metres above the bot's centre the label floats. 0.58 clears the R10 HP pip bars (Duke is 0.75 m tall). */
+  labelAbove: 0.58,
 } as const;
 
 /**
@@ -2173,12 +2509,15 @@ export interface NeatnikArchetypeConfig {
  * - **Squeegee**: carries a wiper-blade shield and always turns to face you.
  *   A shot into its front cone pings off with no damage unless the ball has
  *   already bounced off something (BOUNCY off a wall), is a TETHER web, or is
- *   SPLASH ammo. Flank it, bank it, or hook it.
+ *   SPLASH ammo. Flank it, bank it, or hook it. Round 10: each blocked shot
+ *   chips the shield (`shield.hp`, 3); at 0 it shatters and the Squeegee is
+ *   open from any angle (body hp 2).
  * - **Peekaboo**: hides behind your real furniture (bounded scene meshes on
  *   the far side from you) and periscopes up for a moment; only hittable while
  *   up. With no furniture scanned it peeks up from low spawn heights.
  * - **Duster Duke**: the boss. Drops in for the last stretch of a round,
- *   takes six hits, stomps and sways, and splits into two Mopsys when popped.
+ *   takes `hp` hits (11, HP bar overhead), patrols between points across the
+ *   arc while Mopsys keep spawning, and splits into two Mopsys when popped.
  *   A tether haul takes `boss.tetherDamage` HP off instead of killing him.
  * - **Pip**: the palette-drone mascot. Never shot; hovers beside the HUD in
  *   menus and flies off while you play (PipSystem).
@@ -2205,8 +2544,10 @@ export const NEATNIKS = {
       pool: 3,
       heightMeters: 0.42,
       hitRadiusScale: 0.95,
-      hp: 1,
-      points: 150,
+      // Round 10: body HP 2 (was 1). The shield (NEATNIKS.shield.hp) has its
+      // own pips; break it or flank, then two hits to pop.
+      hp: 2,
+      points: 250,
       yawOffsetDeg: 0,
       // Snappy: the shield has to be in your face to be a puzzle.
       faceRate: 6,
@@ -2234,8 +2575,10 @@ export const NEATNIKS = {
       pool: 1,
       heightMeters: 0.75,
       hitRadiusScale: 0.8,
-      hp: 6,
-      points: 600,
+      // Round 10: 11 (was 6). He patrols now and Mopsys keep coming, so the
+      // fight lasts long enough to read as a boss; HP bar above him.
+      hp: 11,
+      points: 1000,
       yawOffsetDeg: 0,
       // Heavy: turns like a wardrobe on castors.
       faceRate: 1.5,
@@ -2251,14 +2594,72 @@ export const NEATNIKS = {
    * More lanes = finer spread; fewer than a wave's maxAlive bunches robots.
    */
   lanes: 5,
-  /** Seconds between two spawns when several slots are free at once. */
-  spawnStaggerSec: 0.45,
   /**
-   * Round 9: rest beat at every wave boundary (after the first wave), seconds.
-   * No new robots spawn for this long once a wave starts, so arms get a
-   * breather (comfort / gorilla arm). Robots already up stay up. 0 disables.
+   * Seconds between two spawns when several slots are free at once, so a
+   * refill pops in one by one instead of all at once. Round 10: 0.3 (was 0.45).
    */
-  waveBreatherSec: 3,
+  spawnStaggerSec: 0.3,
+  /**
+   * Round 10: seconds after a pop before the director refills the gap (was
+   * TARGETS.respawnDelaySec, 1.5 s). Short, so the arena never feels like it
+   * is waiting on you.
+   */
+  refillDelaySec: 0.35,
+  /**
+   * Round 10: when the LAST robot pops (arena empty), the next one is due this
+   * many seconds later, ignoring the stagger and refill delay. The pacing
+   * goal is "never more than ~0.8 s with zero bots during Playing"; a test
+   * simulates a 90 s round of instant pops against it.
+   */
+  emptyRefillSec: 0.2,
+  /**
+   * Rest beat at every wave boundary (after the first wave), seconds. Round
+   * 10: 1 (was 3), and it no longer stops spawns outright: during it the
+   * director only tops the arena up to `breatherKeepAlive`, so the beat thins
+   * the crowd without ever emptying it. 0 disables.
+   */
+  waveBreatherSec: 1,
+  /** Round 10: robots kept up during a wave breather (never an empty arena). */
+  breatherKeepAlive: 2,
+  /**
+   * Round 10: Mopsys gently strafe side to side across your line of sight so
+   * they are not static targets. `amplitude` metres peak, `hz` cycles per
+   * second (each bot has its own phase). 0 amplitude = stand still.
+   */
+  mopsyDrift: {
+    amplitude: 0.1,
+    hz: 0.16,
+  },
+  /**
+   * Round 10: the floating HP pip bar over multi-hit bots (Squeegee, Duster
+   * Duke - any archetype with hp > 1, plus the Squeegee's shield row). One
+   * billboard per bot, segmented neon pips, shared materials. Colours are
+   * sRGB tuples (gotcha 23).
+   */
+  hpBar: {
+    /** Pip width / height / depth, metres. */
+    pipWidth: 0.032,
+    pipHeight: 0.02,
+    pipDepth: 0.004,
+    /** Gap between neighbouring pips, metres. */
+    pipGap: 0.007,
+    /** Vertical gap between the body row and the shield row above it. */
+    rowGap: 0.028,
+    /** Metres above the top of the bot the bar floats. */
+    above: 0.07,
+    /** Seconds the pips flash white (and the bar punches) after a hit. */
+    flashSec: 0.25,
+    /** Peak scale punch of the bar on a hit (0.3 = 30% bigger). */
+    flashPunch: 0.3,
+    /** Body HP pip, lit. Hot pink, the Duke's accent. */
+    bodyColor: [1.0, 0.31, 0.5] as readonly [number, number, number],
+    /** Shield pip, lit. Cyan, matching the shield ping flash. */
+    shieldColor: [0.35, 0.95, 1.0] as readonly [number, number, number],
+    /** A spent pip. Dark slate, still readable as a slot. */
+    offColor: [0.14, 0.13, 0.2] as readonly [number, number, number],
+    /** Flash colour on a hit. */
+    flashColor: [1.0, 1.0, 1.0] as readonly [number, number, number],
+  },
   /**
    * Round 9: seconds a robot let off a tether (tap or timeout) takes to drift
    * back out to at least ROOM.spawnMinDist from your head, instead of
@@ -2272,13 +2673,18 @@ export const NEATNIKS = {
    * new spawn being [mopsy, squeegee, peekaboo] (any scale, normalised).
    * `maxAlive` is how many robots it keeps up (capped by TARGETS.maxConcurrent).
    */
+  // Round 10: waves escalate by COUNT and MIX, never by gaps (was 3 waves
+  // with 3 s dead breathers). Each boundary opens with the 1 s thinned
+  // breather above; the boss phase (boss.enterAtSecLeft) overrides the cap.
   waves: [
     // Warm-up: only Mopsys, so the first thing anyone learns is "point, pinch, pop".
     { startSec: 0, maxAlive: 3, weights: [1, 0, 0] },
-    // The cast arrives: shields and peekers join.
-    { startSec: 22, maxAlive: 4, weights: [0.55, 0.25, 0.2] },
-    // Mixed pressure until the boss.
-    { startSec: 48, maxAlive: 4, weights: [0.4, 0.3, 0.3] },
+    // Shields arrive (3 hits breaks one, or flank it).
+    { startSec: 15, maxAlive: 4, weights: [0.7, 0.3, 0] },
+    // Peekers join the mix.
+    { startSec: 30, maxAlive: 4, weights: [0.5, 0.25, 0.25] },
+    // Full pressure until the boss.
+    { startSec: 48, maxAlive: 5, weights: [0.4, 0.3, 0.3] },
   ] as ReadonlyArray<NeatnikWave>,
 
   boss: {
@@ -2287,9 +2693,17 @@ export const NEATNIKS = {
      * clock (once per round). 0 disables the boss.
      */
     enterAtSecLeft: 20,
-    /** Other robots kept alive alongside the boss (his split Mopsys excluded). */
-    companionsMax: 2,
-    /** Metres from the player's head the Duke lands, down the arc's middle. */
+    /**
+     * Other robots kept alive alongside the boss (his split Mopsys excluded).
+     * Round 10: 3 (was 2) - small bots keep spawning while you work him down.
+     */
+    companionsMax: 3,
+    /**
+     * Round 10: spawn weights [mopsy, squeegee, peekaboo] for his companions
+     * - mostly Mopsys, so the small fry keep coming while you focus the boss.
+     */
+    companionWeights: [0.85, 0.15, 0] as readonly [number, number, number],
+    /** Metres from the player's head the Duke patrols (his side points). */
     distance: 2.0,
     /**
      * Height of the Duke's centre above the floor once landed, metres. Half
@@ -2312,6 +2726,30 @@ export const NEATNIKS = {
     returnSec: 1.2,
     /** Sideways distance between the two Mopsys he splits into, metres. */
     splitSpread: 0.55,
+
+    // ---- Round 10: patrol ---------------------------------------------------
+    /**
+     * Points he strafes between across the forward arc, spread evenly over
+     * `patrolArcDeg` (2-4 is readable). He lands on the middle one.
+     */
+    patrolPoints: 3,
+    /** Width of the patrol, degrees, centred on the spawn arc (<= spawnArcDeg). */
+    patrolArcDeg: 100,
+    /** Walking pace between points, metres per second (readable, not twitchy). */
+    patrolSpeed: 0.5,
+    /** Seconds he pauses at each point (stomping in place). */
+    patrolPauseSec: 1.3,
+    /** Random extra pause, 0..this seconds, so he is not metronomic. */
+    patrolPauseJitterSec: 0.9,
+    /**
+     * Half-width, degrees, of the band straight ahead where the docked HUD
+     * sits low in front of you. Inside it he keeps to `hudClearDist` (further
+     * away = higher in your view, above the strip); paths through the middle
+     * bulge out to match.
+     */
+    hudAvoidDeg: 18,
+    /** Distance he keeps inside the HUD band, metres (room-clamped). */
+    hudClearDist: 2.6,
   },
 
   shield: {
@@ -2335,6 +2773,14 @@ export const NEATNIKS = {
     immunitySec: 0.4,
     /** Seconds of the shield's cyan "ping" flash. */
     flashSec: 0.22,
+    /**
+     * Round 10: blocked frontal shots the shield takes before it SHATTERS
+     * (cyan burst + ShieldBroken cue). After that the Squeegee is hittable
+     * from any angle. Shown as cyan pips above its HP pips. No regen.
+     */
+    hp: 3,
+    /** Seconds of the bigger cyan flash when the shield shatters. */
+    shatterFlashSec: 0.45,
     /** Recoil tilt of a deflecting Squeegee, radians. */
     recoilRad: 0.35,
     /** Guard-stance lean of the whole body toward you, radians. */

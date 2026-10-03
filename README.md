@@ -16,15 +16,21 @@ scan the code with your headset.
 - **Fire** — trigger/pinch, or a forward hand thrust. Both fire whatever's
   loaded. (An optional finger-curl **FLICK** gesture ships off; see
   `WEB.gestureEnabled` in `src/config.ts`.)
-- **Painter's palette on your left wrist** — tap or squeeze a paint **dab** for
-  color, a **chip** for ammo: NORMAL · BOUNCY (3 ricochets) · STICKY (welds) ·
-  SPLASH (9-splat flower) · **GOO**.
-- **GOO** mounts wrist launchers that fling sticky strands in your paint colour:
-  SPLAT goo on the walls, or flip the holo pad / press **B** for **TETHER** —
-  hook a Neatnik, yank to reel it in, pop it up close.
-- **90-second rounds**: Neatniks = 100 × combo, painting the room = 5 a splat,
-  best score remembered. **CHILL MODE**: no clock, easel painting you can save
-  as a PNG, lofi loop, hold-to-spray. **GOO MODE**: chill with goo preloaded.
+- **Gauntlets** sized to your measured hands and forearms, with three
+  launchers: bare **HAND**, the auto-firing paint **BLASTER**, and **GOO**.
+- **Wrist menu** — poke the glowing gem on your left wrist (or press **Y**) to
+  pop up launcher · colour · ammo (NORMAL · BOUNCY · STICKY · SPLASH). Closed,
+  it never gets in the way.
+- **GOO** flings sticky strands in your paint colour: SPLAT goo on the walls,
+  or switch to **TETHER** (menu or **B**) — hook a Neatnik, yank to reel it in,
+  pop it up close.
+- **90-second rounds**: each Neatnik has its own points (Mopsy 100 up to Duster
+  Duke 1000) × combo, painting the room = 5 a splat, best score remembered.
+  Break the Squeegee's shield in 3 hits or flank it; the Duke patrols the last
+  20 s.
+- **CHILL MODE** opens the **Studio** (no clock): a framed canvas on your real
+  wall, stencils scored by coverage, a target range that splashes your walls;
+  save your art as a PNG.
 - First visit in a new room: tap **SCAN ROOM** if prompted — walls need Quest's
   Space Setup scan (Guardian alone isn't a room scan).
 

@@ -49,8 +49,8 @@ largest scope item on this list. **Still undecided** (§9).
 
 | Requirement | Status | Remaining work |
 |---|---|---|
-| Fully usable with hands, end-to-end | ✅ in code: pinch PLAY, pinch-select palette, pinch-hold reel, hands-only copy, hands-only tutorial with SKIP / two-pinch skip | **Prove it on device.** Quest Browser treats a *left* palm pinch as the menu button (exits the session), so test that the wrist palette pose never triggers it |
-| Seated / "airplane seat" (2 ft radius) | ✅ in code: 150° forward spawn arc, 1.7 m height cap, released bots drift back out, 3 s wave breathers; R9 easel at 0.7 m with the board at eye height | Prove seated reach on device |
+| Fully usable with hands, end-to-end | ✅ in code: pinch PLAY, R10 summonable poke wrist menu (gem on the left wrist), pinch-hold reel, hands-only copy, hands-only tutorial with SKIP / two-pinch skip | **Prove it on device.** Quest Browser treats a *left* palm pinch as the menu button (exits the session), so test that the left-palm-down menu pose never triggers it |
+| Seated / "airplane seat" (2 ft radius) | ✅ in code: 150° forward spawn arc, 1.7 m height cap, released bots drift back out, R10 continuous spawns with a 1 s thinning breather; R9 easel at 0.7 m with the board at eye height; R10 Studio canvas on the wall or floating 1.3 m ahead | Prove seated reach on device |
 | Quick entry/exit, clean pause/resume | ✅ Pause on focus loss (timer, robots, tethers freeze and resume) | Measure cold start; consider resuming a round after the session is fully exited and re-entered |
 | 60 fps minimum | ❓ Not measured on device since R6 | On-screen perf meter (dev flag), test a double pop with full VFX on Quest 3 **and 3S** |
 | Purposeful passthrough + scene understanding | 🟡 Room mesh colliders, paint sticks to real walls, Peekaboo hides behind real furniture, intro logo and tutorial ring land on your real wall; R9 robot-only depth occlusion (`RobotDepthSensingSystem`; splats excluded because the occlusion shader ignores `instanceMatrix`) | **Verify occlusion and wall snap on Quest 3/3S** — the emulator has neither depth nor scene data |
@@ -67,7 +67,7 @@ headset session.
 **Phase 0: Rounds 7–9 (done 2026-10-01 → 10-03).** R8 shipped the characters, gauntlets and HUD (§6). R9 shipped the rebrand (§5), an adversarial mechanics audit's fixes, robot depth occlusion, the seated easel, and the whole Phase 3 onboarding item (Pip's tutorial with a practice round, first-encounter coaching, results card). R7: Shooters now lie along the forearm and shoot where they point. Tether reels smoothly with pull, pinch and hold. Palette is readable and holds still while you poke it. Pinch-to-select no longer fires. Easel grab is smoothed. Pause/resume works. Seated spawn arc. IBL, tone mapping, wet-paint balls, VFX, vivid sRGB colours, and a swept hit test.
 
 **Phase 1: foundation and compliance (Oct 2 – Oct 14)**
-- Device-test R7–R9 on Quest 3 and 3S using the STATE.md checklist (depth occlusion, wall snap, tutorial haul are new). Tune `WEB.handAimSource`, the `rayBlend*` and `PALETTE.hand*` knobs.
+- Device-test R7–R9 on Quest 3 and 3S using the STATE.md checklist (depth occlusion, wall snap, tutorial haul are new). Tune `WEB.handAimSource`, the `rayBlend*`, `MENU.hand*` and `ARMFIT.*` knobs (R10 added the wrist menu and arm fit).
 - Upgrade to **IWSDK 1.0.x** on its own branch, using the headless harness as the regression gate. This brings gaze+pinch, `fieldOfViewMask`, Glasses support, and is what the rules recommend.
 - ~~Turn on depth occlusion for robots~~ (R9, robots only; splats excluded). Prove it on device.
 - ~~Make the seated easel distance the default~~ (R9, 0.7 m). Add a perf meter.
@@ -146,9 +146,9 @@ Approved; R8 built it as Meshy GLBs (unrigged, procedural animation).*
 | Character | Role | Silhouette and behaviour | Hit and pop |
 |---|---|---|---|
 | **Mopsy** | Basic hover target | Squat dome with a mop skirt. Drifts and bobs. | Mop fringe flicks; face shows 😵 |
-| **Squeegee** | Shielded | Flat wiper-blade shield on its front arm that always turns to face you. Needs a Bouncy shot off a wall or a tether. | The shield gets painted over and falls off |
+| **Squeegee** | Shielded | Flat wiper-blade shield on its front arm that always turns to face you. Needs a Bouncy shot off a wall, a tether, SPLASH or a flank; R10: the shield breaks after 3 blocked hits, then 2 HP. | The shield gets painted over and falls off |
 | **Peekaboo** | Room-aware | Hides behind your real furniture (scene mesh) and peeks out for 1.5 s | The surprised face is the tell |
-| **Duster Duke** | Boss (last 20 s) | Tall feather-duster crown, 6 HP, splits into two Mopsys | Crown feathers fly off as confetti |
+| **Duster Duke** | Boss (last 20 s) | Tall feather-duster crown, 11 HP (R10), patrols the forward arc, splits into two Mopsys | Crown feathers fly off as confetti |
 | **Pip** | Onboarding guide and mascot | A floating paint-palette drone with brush arms that speaks short lines (R9: speech bubble in the tutorial) | Never shot. Celebrates a new best |
 
 **Pipeline** (this extends the asset table in STATE.md):
@@ -200,7 +200,7 @@ The live version, with form copy, is `docs/SUBMISSION.md` §7; this list is the 
 
 - [ ] Devpost: name, tagline (≤140 chars), track **Gaming**, division **Adapted**, description (≤500 words), target launch date, team.
 - [ ] "Summary of new features", with the Aug 19 permalink as the "before" and screenshots and changelog for the "after". STATE.md's round history is the source.
-- [ ] Optional hand-interaction description: pinch to fire and select, punch-thrust, pull and pinch reel, a palette that holds still while poked, aim assist, two-pinch tutorial skip.
+- [ ] Optional hand-interaction description: pinch to fire and select, punch-thrust, pull and pinch reel, a summonable wrist menu with Quest-style poke buttons that holds still while poked, aim assist, two-pinch tutorial skip.
 - [ ] Live URL (Netlify production), working on Quest 3 and 3S. Keep the QR code on the landing page.
 - [ ] Video on YouTube or Vimeo, public, under 3:00.
 - [ ] Start Program membership active. Meta developer account in good standing.

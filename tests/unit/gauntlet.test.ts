@@ -14,7 +14,7 @@ import {
   resolveFireGate,
 } from '../../src/systems/BallSpawnSystem';
 import { fitShooterScale, createShooterFit } from '../../src/systems/WebShooterSystem';
-import { BALLS, BLASTER, CHILL, FIRE, ROOM, WEB } from '../../src/config';
+import { ARMFIT, BALLS, BLASTER, CHILL, FIRE, ROOM, WEB } from '../../src/config';
 import { BlasterMode, GameEvent, GauntletMuzzles } from '../../src/types';
 
 const targets = (): DeployTargets => ({ bracer: -1, paint: -1, web: -1 });
@@ -239,9 +239,12 @@ describe('BLASTER config', () => {
     expect(BLASTER.muzzleOffset).toBeGreaterThanOrEqual(BALLS.radius);
   });
 
-  it('the muzzle sits over the back of the wrist, toward the hand', () => {
-    expect(BLASTER.muzzleLocal[1]).toBeGreaterThan(0.03);
-    expect(BLASTER.muzzleLocal[2]).toBeLessThanOrEqual(0);
+  it('the muzzle sits above the turret pivot, forward toward the hand', () => {
+    // Round 10: turret frame (origin = pivot on top of the sleeve).
+    expect(BLASTER.muzzleLocal[1]).toBeGreaterThan(0.015);
+    expect(BLASTER.muzzleLocal[2]).toBeLessThan(0);
+    // ...and past the wrist joint (pivot is turretPivotZ behind it).
+    expect(BLASTER.muzzleLocal[2] + ARMFIT.turretPivotZ).toBeLessThanOrEqual(0);
   });
 
   it('the web needle tip is forward of the spinneret centre', () => {

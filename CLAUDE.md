@@ -50,11 +50,14 @@ specs: `docs/superpowers/specs/`.
 28. Headless SwiftShader renders **no uikit panel or glyph** (`smoothstep(e, e, x)` returns 0, and uikit clips with `smoothstep(-fwidth, fwidth, d)`) — `scripts/headless-verify.mjs` injects `scripts/swiftshader-smoothstep-patch.js`; any new Playwright harness must too.
 29. IWSDK's pointer cursor eases with `lerp(a, b, 30 * delta)` (`xr-input/dist/pointer/cursor-visual.js`), which diverges once frames exceed ~66 ms — a screen-filling white disc in headless runs is that, not game art. Harmless at 72 Hz; the harness hides it via `material.visible`.
 30. IWER grants the `depth-sensing` feature but implements **no depth API** (`getDepthInformation`), so the stock `DepthSensingSystem` throws every frame and aborts the whole world update (no round ever starts) — register `RobotDepthSensingSystem` (TargetSystem.ts), which checks the API, catches, and self-disables per session.
+31. three r181 allocates a texture's GPU storage at its **first upload size** — resizing a `CanvasTexture`'s canvas later never re-uploads (the old picture stays). `dispose()` the texture on resize (EaselSystem does).
+32. IWSDK 0.3.1 **never reads hand joint radii** (only poses via `fillPoses`) — call `XRFrame.fillJointRadii` yourself through the system's `this.xrFrame` (GauntletSystem's arm fit). WebXR `*-metacarpal` joints sit at the WRIST end of the bone; knuckles are `*-phalanx-proximal`.
+33. IWER's default emulated hand has the wrist bent ~29° up and ~16° inward from its target ray — level the pose in harness scripts before judging anything that should sit on the forearm.
 
 ## Build / test / troubleshoot workflow
 
 1. `npx tsc --noEmit` first — always, before any runtime testing.
-2. `npm test` — Vitest; pure-logic tests only (763 as of R9). New mechanics get pure exported helpers + tests (see `detectImpact`, `ringSpawnPosition`, `isThwipPose` for the pattern). `tests/__mocks__/iwsdk-core.ts` grows stubs as imports demand.
+2. `npm test` — Vitest; pure-logic tests only (877 as of R10). New mechanics get pure exported helpers + tests (see `detectImpact`, `ringSpawnPosition`, `isThwipPose` for the pattern). `tests/__mocks__/iwsdk-core.ts` grows stubs as imports demand.
 3. **Emulator drive** (the proof, per the owner's verify-before-shipping rule):
    check `xr_get_session_status` FIRST. If it fails: the dev server may be down
    or port-shifted — Vite wants **8083**; during agent sessions the MCP relay
