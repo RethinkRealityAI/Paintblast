@@ -43,6 +43,7 @@ import {
   readFlag,
   srgbToLinear,
   writeFlag,
+  GamePhase,
 } from '../types';
 import type { FlagStorage } from '../types';
 import { smoothingAlpha } from '../wrist-frame';
@@ -924,12 +925,23 @@ export class WristMenuSystem extends createSystem({
     this.activeKind = globals.activeKind as typeof this.activeKind;
     this.activeStyle = globals.activeStyle as typeof this.activeStyle;
     this.paused = globals.paused as typeof this.paused;
+    const gamePhase = globals.gamePhase as Signal<GamePhase> | undefined;
     this.openedOnce = readFlag(safeStorage(), MENU.firstOpenStorageKey);
 
     const subs: Array<() => void> = [];
     if (this.activeColor) subs.push(this.activeColor.subscribe(() => this.paintGemColors()));
     if (this.blasterMode) subs.push(this.blasterMode.subscribe(() => this.paintGemColors()));
     if (this.webSubMode) subs.push(this.webSubMode.subscribe(() => this.paintGemColors()));
+    // A round starting or ending closes the menu: an open menu pauses left
+    // fire and swallows right-hand shots near it. Playing itself is left
+    // alone — the tutorial's practice (Playing) needs the menu for GOO/TETHER.
+    if (gamePhase) {
+      subs.push(
+        gamePhase.subscribe((phase) => {
+          if (phase === GamePhase.Countdown || phase === GamePhase.GameOver) this.close();
+        }),
+      );
+    }
     this.cleanupFuncs.push(
       ...subs,
       this.queries.roots.subscribe('qualify', (root) => {
@@ -979,11 +991,14 @@ export class WristMenuSystem extends createSystem({
 
     const input = this.input;
     const rightTracked = !!input && isTracked(input, 'right');
-    const tipSpace = this.player?.indexTipSpaces?.right;
-    const tipOk = rightTracked && !!tipSpace;
-    if (tipOk) tipSpace!.getWorldPosition(this.tip);
     const rightPad = input?.gamepads?.right;
+    // Only a tracked HAND has a fingertip: a right controller leaves the
+    // index-tip space frozen where the hand last was (gotcha 21), which would
+    // poke the gem / panel forever and block right-hand fire.
     const rightIsHand = !!input && input.isPrimary('hand', 'right');
+    const tipSpace = this.player?.indexTipSpaces?.right;
+    const tipOk = rightIsHand && !!tipSpace;
+    if (tipOk) tipSpace!.getWorldPosition(this.tip);
     const pausedNow = this.paused?.peek() === true;
 
     if (!pausedNow) {
