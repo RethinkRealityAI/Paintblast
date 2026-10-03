@@ -1,4 +1,4 @@
-// Shared enums and constants for PaintBlast-MR.
+// Shared enums and constants for Splotopia (repo: PaintBlast-MR).
 // No IWSDK imports — this file is pure TS data used by both systems
 // (which run inside the World) and unit tests (which do not).
 
@@ -90,7 +90,9 @@ export type BlasterMode = typeof BlasterMode[keyof typeof BlasterMode];
 export const BLASTER_MODE_LABELS: Readonly<Record<BlasterMode, string>> = {
   [BlasterMode.Hand]: 'HAND',
   [BlasterMode.Paint]: 'BLASTER',
-  [BlasterMode.Web]: 'WEB',
+  // Round 9 rebrand: the web launcher is GOO (sticky paint strands). The
+  // identifier stays BlasterMode.Web until the identifier-rename pass.
+  [BlasterMode.Web]: 'GOO',
 };
 
 /** Mode pads on the palette, left to right. */
@@ -275,7 +277,8 @@ export function ammoLabel(
   kind: BallKind,
 ): string {
   if (style === BallStyle.Web) {
-    return subMode === WebSubMode.Tether ? 'TETHER' : 'WEB';
+    // Round 9: GOO is the player-facing name for web ammo; TETHER stays.
+    return subMode === WebSubMode.Tether ? 'TETHER' : 'GOO';
   }
   return (BALL_KIND_NAMES[kind] ?? BALL_KIND_NAMES[BallKind.Normal])
     .toUpperCase();
@@ -295,7 +298,8 @@ export interface GameHudState {
 export const INITIAL_HUD_STATE: GameHudState = {
   score: 0,
   timer: '0:00',
-  status: 'Press START to play, or CHILL MODE to just paint',
+  // Round 9: matches the PLAY button (was a stale "Press START").
+  status: 'Press PLAY to start, or CHILL MODE to just paint',
 };
 
 /**
@@ -418,6 +422,20 @@ export const GameEvent = {
    * `data` = pool slot. A cue for an announcer bark / boss music sting.
    */
   BossEntered: 21,
+
+  // ---- Onboarding + coaching (round 9) ---------------------------------------
+  /**
+   * A Neatnik woke up (spawn director, boss split, debug spawn). Position =
+   * where it appeared; `data` = {@link packPopData}(slot, archetype, 0), so
+   * {@link unpackPopSlot} / {@link unpackPopArchetype} read it. CoachSystem's
+   * first-encounter tips key off it.
+   */
+  BotSpawned: 22,
+  /**
+   * The first-run tutorial finished a step. `data` = the step just completed
+   * ({@link TutorialStep}). Emitted by TutorialSystem for any cue that wants it.
+   */
+  TutorialStepDone: 23,
 } as const;
 
 export type GameEvent = typeof GameEvent[keyof typeof GameEvent];
@@ -724,11 +742,14 @@ export function unpackPopPoints(data: number): number {
 // without a panel or a World.
 // ---------------------------------------------------------------------------
 
-/** One line per launcher for the Armory's description row. ASCII (gotcha 24). */
+/**
+ * One line per launcher for the LOADOUT screen's description row. ASCII
+ * (gotcha 24), short enough for one line at the round-9 minimum font size.
+ */
 export const BLASTER_MODE_DESCRIPTIONS: Readonly<Record<BlasterMode, string>> = {
-  [BlasterMode.Hand]: 'Bare hands. Paint flies straight from your fingertips.',
-  [BlasterMode.Paint]: 'Paint blaster gauntlet. Hold to auto-fire.',
-  [BlasterMode.Web]: 'Web shooters. Splat walls, or tether a bot and reel it in.',
+  [BlasterMode.Hand]: 'Bare hands. Paint flies from your fingertips.',
+  [BlasterMode.Paint]: 'Paint gauntlet. Hold the pinch to auto-fire.',
+  [BlasterMode.Web]: 'Sticky goo. SPLAT walls or TETHER a Neatnik.',
 };
 
 /**
@@ -810,9 +831,10 @@ export function formatScore(score: number): string {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-/** Bot count with the right plural. */
+/** Neatnik count with the right plural (round 9 rebrand; was "bots"). */
 export function botsLabel(alive: number): string {
-  return alive === 1 ? '1 bot' : `${Math.max(0, Math.round(alive))} bots`;
+  const n = Number.isFinite(alive) ? Math.max(0, Math.round(alive)) : 0;
+  return n === 1 ? '1 Neatnik' : `${n} Neatniks`;
 }
 
 /** Strictly beat the best that stood when the round began (a tie is not a record). */
@@ -927,4 +949,317 @@ export function appearFrame(
   out.scale = fromScale + (1 - fromScale) * easeOutBack(t, 1.4);
   out.glow = easeOutCubic(t);
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Round 9: onboarding, coaching and the results card. Pure, so they test
+// without a panel or a World. Player-facing copy follows the round-9 rebrand:
+// the game is Splotopia, the robot gang are the Neatniks (identifiers such as
+// `Splotbot` keep their old names until the identifier-rename pass).
+// ---------------------------------------------------------------------------
+
+/** Neatnik names as the results card prints them, indexed by {@link Splotbot}. */
+export const NEATNIK_SHORT_NAMES: readonly string[] = [
+  'MOPSY',
+  'SQUEEGEE',
+  'PEEKABOO',
+  'DUKE',
+];
+
+/** Full Neatnik names (coaching labels), indexed by {@link Splotbot}. */
+export const NEATNIK_NAMES: readonly string[] = [
+  'MOPSY',
+  'SQUEEGEE',
+  'PEEKABOO',
+  'DUSTER DUKE',
+];
+
+/**
+ * The first-run tutorial's steps (TutorialSystem). Off = no tutorial running.
+ * Goo / Tether / Haul are one player-facing step ("use the goo tether") split
+ * so each sub-action gets its own one-line instruction.
+ */
+export const TutorialStep = {
+  Off: 0,
+  /** Pinch to fire at the ring on your wall. */
+  Fire: 1,
+  /** Tap a colour on the wrist palette. */
+  Palette: 2,
+  /** Pop one Mopsy. */
+  Pop: 3,
+  /** Load GOO on the palette's mode pad. */
+  Goo: 4,
+  /** Pick the TETHER sub-mode. */
+  Tether: 5,
+  /** Hook a Mopsy and pull it in. */
+  Haul: 6,
+  /** "You're ready" - hands over to the title with PLAY lit. */
+  Ready: 7,
+} as const;
+
+export type TutorialStep = typeof TutorialStep[keyof typeof TutorialStep];
+
+/** How many player-facing steps the tutorial has (Goo+Tether+Haul are one). */
+export const TUTORIAL_STEP_COUNT = 5;
+
+/** 1-based player-facing step number for the HUD's "STEP 2 OF 5" (0 when off). */
+export function tutorialStepNumber(step: number): number {
+  switch (step) {
+    case TutorialStep.Fire:
+      return 1;
+    case TutorialStep.Palette:
+      return 2;
+    case TutorialStep.Pop:
+      return 3;
+    case TutorialStep.Goo:
+    case TutorialStep.Tether:
+    case TutorialStep.Haul:
+      return 4;
+    case TutorialStep.Ready:
+      return 5;
+    default:
+      return 0;
+  }
+}
+
+/** The step after `step` (Ready is last; anything unknown ends the tutorial). */
+export function nextTutorialStep(step: number): TutorialStep {
+  switch (step) {
+    case TutorialStep.Fire:
+      return TutorialStep.Palette;
+    case TutorialStep.Palette:
+      return TutorialStep.Pop;
+    case TutorialStep.Pop:
+      return TutorialStep.Goo;
+    case TutorialStep.Goo:
+      return TutorialStep.Tether;
+    case TutorialStep.Tether:
+      return TutorialStep.Haul;
+    case TutorialStep.Haul:
+      return TutorialStep.Ready;
+    default:
+      return TutorialStep.Off;
+  }
+}
+
+/** Steps that need live Neatniks, i.e. run inside a practice round. */
+export function tutorialStepNeedsBots(step: number): boolean {
+  return (
+    step === TutorialStep.Pop ||
+    step === TutorialStep.Goo ||
+    step === TutorialStep.Tether ||
+    step === TutorialStep.Haul
+  );
+}
+
+/** The minimal Storage surface the round-9 flags touch (same as skins). */
+export type FlagStorage = SkinStorage;
+
+/** A persisted boolean ("1"). Never throws (private mode, blocked storage). */
+export function readFlag(storage: FlagStorage | undefined, key: string): boolean {
+  try {
+    return storage?.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** Persist a boolean. Never throws; returns false when storage refused it. */
+export function writeFlag(
+  storage: FlagStorage | undefined,
+  key: string,
+  value: boolean,
+): boolean {
+  if (!storage) return false;
+  try {
+    storage.setItem(key, value ? '1' : '0');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A persisted small bitmask. Junk reads as 0. Never throws. */
+export function readMask(storage: FlagStorage | undefined, key: string): number {
+  try {
+    const raw = storage?.getItem(key);
+    if (raw == null || !/^\d{1,4}$/.test(raw.trim())) return 0;
+    return Number.parseInt(raw.trim(), 10) & 0xff;
+  } catch {
+    return 0;
+  }
+}
+
+/** Persist a small bitmask. Never throws; false when storage refused it. */
+export function writeMask(
+  storage: FlagStorage | undefined,
+  key: string,
+  mask: number,
+): boolean {
+  if (!storage) return false;
+  try {
+    storage.setItem(key, String(mask & 0xff));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * First-encounter coaching: should a spawn of `archetype` show its tip?
+ * Mopsy never does (the tutorial teaches it); every other Neatnik does once,
+ * until its bit is in `seenMask` (this session, or remembered from earlier
+ * ones so veterans are not nagged).
+ */
+export function shouldCoach(archetype: number, seenMask: number): boolean {
+  if (archetype <= Splotbot.Mopsy || archetype >= SPLOTBOT_COUNT) return false;
+  return (seenMask & (1 << archetype)) === 0;
+}
+
+/** `seenMask` with `archetype` marked seen. */
+export function markSeen(seenMask: number, archetype: number): number {
+  if (archetype < 0 || archetype >= SPLOTBOT_COUNT) return seenMask;
+  return (seenMask | (1 << archetype)) & 0xff;
+}
+
+/**
+ * Everything the GameOver results card shows, gathered from one round's
+ * GameEvents by {@link recordRoundEvent}. One object per GameStateSystem,
+ * reset at each round start; a detached copy is published at GameOver.
+ */
+export interface RoundStats {
+  /** Pops per archetype, indexed by {@link Splotbot}. */
+  pops: number[];
+  /** Balls fired (paint and goo). */
+  shots: number;
+  /** Shots that landed on a Neatnik (damage or a tether latch). */
+  hits: number;
+  /** Highest combo multiplier reached. 1 = never chained. */
+  bestCombo: number;
+  /** Duster Duke showed up this round. */
+  bossSeen: boolean;
+  /** Final score. */
+  score: number;
+  /** Best score that stood when the round began. */
+  bestBefore: number;
+}
+
+export function createRoundStats(): RoundStats {
+  return {
+    pops: new Array<number>(SPLOTBOT_COUNT).fill(0),
+    shots: 0,
+    hits: 0,
+    bestCombo: 1,
+    bossSeen: false,
+    score: 0,
+    bestBefore: 0,
+  };
+}
+
+/** Zero `stats` in place for a fresh round. */
+export function resetRoundStats(stats: RoundStats, bestBefore: number): void {
+  stats.pops.fill(0);
+  stats.shots = 0;
+  stats.hits = 0;
+  stats.bestCombo = 1;
+  stats.bossSeen = false;
+  stats.score = 0;
+  stats.bestBefore = bestBefore;
+}
+
+/** A detached copy (the published GameOver snapshot). */
+export function copyRoundStats(stats: RoundStats): RoundStats {
+  return { ...stats, pops: stats.pops.slice() };
+}
+
+/** Fold one GameEvent into the round's stats. Unknown events are ignored. */
+export function recordRoundEvent(
+  stats: RoundStats,
+  type: number,
+  data: number,
+): void {
+  switch (type) {
+    case GameEvent.BallFired:
+      stats.shots++;
+      break;
+    case GameEvent.TargetHit:
+    case GameEvent.TetherAttached:
+      stats.hits++;
+      break;
+    case GameEvent.TargetPopped: {
+      const arch = unpackPopArchetype(data);
+      if (arch >= 0 && arch < stats.pops.length) stats.pops[arch]++;
+      break;
+    }
+    case GameEvent.ComboMilestone:
+      if (data > stats.bestCombo) stats.bestCombo = data;
+      break;
+    case GameEvent.BossEntered:
+      stats.bossSeen = true;
+      break;
+    default:
+      break;
+  }
+}
+
+/** Accuracy as a whole percentage, 0..100. No shots = 0. */
+export function accuracyPercent(hits: number, shots: number): number {
+  if (!(shots > 0)) return 0;
+  return Math.round((Math.min(Math.max(0, hits), shots) / shots) * 100);
+}
+
+/** Total pops across the cast. */
+export function totalPops(stats: RoundStats): number {
+  let n = 0;
+  for (const p of stats.pops) n += p;
+  return n;
+}
+
+/** The next multiple of `step` strictly above `score` (a tidy target). */
+export function nextMilestone(score: number, step = 500): number {
+  const s = Math.max(0, Math.floor(Number.isFinite(score) ? score : 0));
+  return (Math.floor(s / step) + 1) * step;
+}
+
+/**
+ * The results card's one "next goal" line (<= ~40 chars, ASCII). First rule
+ * that applies wins:
+ *
+ * 1. Popped nothing: teach the verb.
+ * 2. The Duke showed up and walked away: name the tool that beats him.
+ * 3. A new best: a tidy milestone above it.
+ * 4. Short of the best: exactly how far.
+ * 5. Otherwise (a tie): the next milestone.
+ */
+export function nextGoalLine(stats: RoundStats): string {
+  if (totalPops(stats) === 0) return 'Next: pinch at a Neatnik to pop it';
+  if (stats.bossSeen && (stats.pops[Splotbot.DusterDuke] ?? 0) === 0) {
+    return 'Next: pop the Duke - GOO TETHER helps';
+  }
+  if (isNewBest(stats.score, stats.bestBefore)) {
+    return `Next: crack ${formatScore(nextMilestone(stats.score))}`;
+  }
+  if (stats.bestBefore > stats.score) {
+    return `Next: ${formatScore(stats.bestBefore - stats.score + 1)} more beats your best`;
+  }
+  return `Next: crack ${formatScore(nextMilestone(stats.score))}`;
+}
+
+/**
+ * Where Pip should fly to and point at (round 9). Written by TutorialSystem
+ * (the active step's subject: the wall ring, the wrist palette, a Mopsy),
+ * read by PipSystem. A struct in `world.globals` rather than a system call so
+ * PipSystem keeps knowing nothing about the tutorial.
+ */
+export class PipFocus {
+  /** 1 while Pip should leave the HUD and hover by `position`. */
+  active = 0;
+  /** World-space point of interest, xyz. */
+  readonly position = new Float32Array(3);
+  /**
+   * Where Pip hovers relative to `position`, metres, in the viewer's frame:
+   * [to the viewer's left, up, toward the viewer]. So he sits beside the
+   * subject, never on top of it or in the line of fire.
+   */
+  readonly offset = new Float32Array(3);
 }

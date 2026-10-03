@@ -116,10 +116,11 @@ describe('HUD readouts', () => {
     expect(formatScore(Number.NaN)).toBe('0');
   });
 
-  it('pluralises bots', () => {
-    expect(botsLabel(1)).toBe('1 bot');
-    expect(botsLabel(0)).toBe('0 bots');
-    expect(botsLabel(4)).toBe('4 bots');
+  it('pluralises Neatniks (round 9 rebrand)', () => {
+    expect(botsLabel(1)).toBe('1 Neatnik');
+    expect(botsLabel(0)).toBe('0 Neatniks');
+    expect(botsLabel(4)).toBe('4 Neatniks');
+    expect(botsLabel(Number.NaN)).toBe('0 Neatniks');
   });
 
   it('only a strictly higher score is a NEW BEST', () => {

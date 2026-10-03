@@ -19,8 +19,12 @@ import {
   GameEvent,
   GameEventBuffer,
   GamePhase,
+  SPLOTBOT_COUNT,
+  TUTORIAL_STEP_COUNT,
+  TutorialStep,
   WEB_BALL_COLOR,
   WebSubMode,
+  accuracyPercent,
   ammoLabel,
   botsLabel,
   clampIndex,
@@ -28,14 +32,17 @@ import {
   formatScore,
   hexToInt,
   isNewBest,
+  nextGoalLine,
   skinCounterLabel,
+  tutorialStepNumber,
   writeSkin,
 } from '../types';
-import type { SkinStorage } from '../types';
+import type { RoundStats, SkinStorage } from '../types';
 import { EaselSystem } from './EaselSystem';
 import { GameStateSystem, isTimedPhase } from './GameStateSystem';
 import { SceneScanSystem } from './SceneScanSystem';
 import { SplatterSystem } from './SplatterSystem';
+import { TutorialSystem } from './TutorialSystem';
 
 /** Must match the PanelUI.config main.ts seeds the HUD entity with. */
 const HUD_CONFIG_PATH = './ui/hud.json';
@@ -58,7 +65,24 @@ const ACCENT_SILVER = 0xc9d2dc;
 /** How many skin dots the markup declares (btn-skin-0 .. btn-skin-N-1). */
 const SKIN_DOT_COUNT = 5;
 
-/** Armory launcher cards, in markup order. */
+/** Progress dots the tutorial card declares (tut-dot-0 .. N-1). */
+const TUT_DOT_COUNT = TUTORIAL_STEP_COUNT;
+
+/**
+ * Round 9: is the tutorial card up for this step? Fire..Haul show the docked
+ * card; Ready hands back to the title (PLAY pulsing); Off is no tutorial.
+ * Pure and exported for tests.
+ */
+export function tutorialCardShown(step: number): boolean {
+  return step >= TutorialStep.Fire && step <= TutorialStep.Haul;
+}
+
+/** "STEP 2 OF 5" for the tutorial card. Pure and exported for tests. */
+export function tutorialCounterLabel(step: number): string {
+  return `STEP ${tutorialStepNumber(step)} OF ${TUTORIAL_STEP_COUNT}`;
+}
+
+/** LOADOUT launcher cards, in markup order. */
 const MODE_CARDS: ReadonlyArray<{ id: string; mode: BlasterMode }> = [
   { id: 'btn-mode-hand', mode: BlasterMode.Hand },
   { id: 'btn-mode-blaster', mode: BlasterMode.Paint },
@@ -203,7 +227,8 @@ function safeLocalStorage(): SkinStorage | undefined {
  *
  * ### Round 8: techno-paint + the Armory
  *
- * The title screen gained a sub-screen, the ARMORY (BLASTERS button): pick
+ * The title screen gained a sub-screen, the ARMORY (round 9: renamed
+ * LOADOUT on screen; the ids keep "armory"): pick
  * the launcher (HAND / BLASTER / WEB, i.e. `globals.blasterMode`, which
  * BallSpawnSystem keeps in sync with the paint style) and the gauntlet skin
  * (`globals.blasterSkin`, persisted to localStorage under
@@ -236,12 +261,22 @@ export class HudSystem extends createSystem({
   /** Session out of focus. Written by GameStateSystem. @see applyPaused */
   private paused!: Signal<boolean>;
   private events!: GameEventBuffer;
+  // Round 9 (all optional so a world without them still binds).
+  private tutorialStep?: Signal<number>;
+  private tutorialLine?: Signal<string>;
+  private coachLine?: Signal<string>;
+  private roundStats?: Signal<RoundStats | null>;
 
   /** Every wired button, so a selection change can repaint the affected ones. */
   private readonly buttons = new Map<string, ButtonRecord>();
 
   /** True while the Idle phase is showing the Armory instead of the title. */
   private armoryOpen = false;
+  /** Round 9: the tutorial card is what the panel shows (and it is docked). */
+  private tutorialCard = false;
+  /** Seconds of PLAY-button pulse left (after the tutorial hands over). */
+  private playHighlightLeft = 0;
+  private playHighlightClock = 0;
   /** Best score when the current round started; NEW BEST compares against it. */
   private bestAtRoundStart = 0;
   /** Last urgency painted on the timer, so the per-tick subscription is a compare. */
@@ -282,6 +317,19 @@ export class HudSystem extends createSystem({
   private armorySkinName?: HudElement;
   private armorySkinIndex?: HudElement;
   private pausedBanner?: HudElement;
+  // Round 9: tutorial card, coaching tip, results card.
+  private sectionTutorial?: HudElement;
+  private tutStepText?: HudElement;
+  private tutLineText?: HudElement;
+  private readonly tutDots: (HudElement | undefined)[] = [];
+  private coachText?: HudElement;
+  private readonly resPops: (HudElement | undefined)[] = [];
+  private resShots?: HudElement;
+  private resHits?: HudElement;
+  private resAcc?: HudElement;
+  private resCombo?: HudElement;
+  private resGoal?: HudElement;
+  private startButton?: HudElement;
 
   init() {
     this.gamePhase = this.globals.gamePhase as Signal<GamePhase>;
@@ -304,6 +352,10 @@ export class HudSystem extends createSystem({
     this.sceneScanMissing = this.globals.sceneScanMissing as Signal<boolean>;
     this.paused = this.globals.paused as Signal<boolean>;
     this.events = this.globals.gameEvents as GameEventBuffer;
+    this.tutorialStep = this.globals.tutorialStep as Signal<number> | undefined;
+    this.tutorialLine = this.globals.tutorialLine as Signal<string> | undefined;
+    this.coachLine = this.globals.coachLine as Signal<string> | undefined;
+    this.roundStats = this.globals.roundStats as Signal<RoundStats | null> | undefined;
 
     this.cleanupFuncs.push(() => {
       for (const record of this.buttons.values()) {
@@ -352,6 +404,31 @@ export class HudSystem extends createSystem({
       this.sceneScanMissing.subscribe(() => this.applyScanNotice()),
       this.paused.subscribe(() => this.applyPaused()),
     );
+    if (this.tutorialStep) {
+      let last = this.tutorialStep.peek();
+      this.cleanupFuncs.push(
+        this.tutorialStep.subscribe((step) => {
+          const was = last;
+          last = step;
+          this.applyTutorial(step, was);
+        }),
+      );
+    }
+    if (this.tutorialLine) {
+      this.cleanupFuncs.push(
+        this.tutorialLine.subscribe((line) => this.setText(this.tutLineText, line)),
+      );
+    }
+    if (this.coachLine) {
+      this.cleanupFuncs.push(
+        this.coachLine.subscribe(() => this.applyCoach()),
+      );
+    }
+    if (this.roundStats) {
+      this.cleanupFuncs.push(
+        this.roundStats.subscribe((stats) => this.applyResults(stats)),
+      );
+    }
   }
 
   /**
@@ -360,6 +437,7 @@ export class HudSystem extends createSystem({
    * every other frame this returns immediately.
    */
   update(delta: number) {
+    if (this.playHighlightLeft > 0) this.stepPlayHighlight(delta);
     const section = this.fadingSection;
     if (!section) return;
     this.fadeElapsed += delta;
@@ -374,6 +452,79 @@ export class HudSystem extends createSystem({
       opacity: eased,
       transformTranslateY: (1 - eased) * HUD.sectionRiseCm,
     });
+  }
+
+  // ---- Round 9: tutorial card, PLAY highlight, coaching, results ------------
+
+  /**
+   * The tutorial changed step. The card replaces the phase section from
+   * Fire to Haul (and docks low, out of the firing line); Ready hands back to
+   * the title with PLAY pulsing.
+   */
+  private applyTutorial(step: number, was: number): void {
+    const card = tutorialCardShown(step);
+    const changed = card !== this.tutorialCard;
+    this.tutorialCard = card;
+    if (card) this.armoryOpen = false;
+    this.setText(this.tutStepText, tutorialCounterLabel(step));
+    const n = tutorialStepNumber(step);
+    for (let i = 0; i < this.tutDots.length; i++) {
+      this.tutDots[i]?.setProperties({
+        backgroundColor:
+          i < n - 1 ? ACCENT_LIME : i === n - 1 ? ACCENT_AMBER : tint(ACCENT_WHITE, 0.18),
+      });
+    }
+    if (step === TutorialStep.Ready && was !== TutorialStep.Ready) this.highlightPlay();
+    if (changed) this.applyPhase(this.gamePhase.peek(), true);
+  }
+
+  /** Pulse the title's PLAY button for HUD.playHighlightSec. */
+  highlightPlay(): void {
+    if (!(HUD.playHighlightSec > 0)) return;
+    this.playHighlightLeft = HUD.playHighlightSec;
+    this.playHighlightClock = 0;
+  }
+
+  private stepPlayHighlight(delta: number): void {
+    this.playHighlightLeft -= delta;
+    this.playHighlightClock += delta;
+    const button = this.startButton;
+    if (!button) return;
+    if (this.playHighlightLeft <= 0 || this.gamePhase.peek() !== GamePhase.Idle) {
+      this.playHighlightLeft = 0;
+      button.setProperties({ borderColor: 0xfff3b8 });
+      this.refreshButton('btn-start');
+      return;
+    }
+    const wave = 0.5 + 0.5 * Math.sin(this.playHighlightClock * Math.PI * 2 * HUD.playHighlightHz);
+    const record = this.buttons.get('btn-start');
+    const busy = record?.hovering === true || record?.timer !== undefined;
+    button.setProperties({ borderColor: wave > 0.5 ? ACCENT_WHITE : ACCENT_CORAL });
+    if (!busy) {
+      const scale = 1 + 0.035 * wave;
+      button.setProperties({ transformScaleX: scale, transformScaleY: scale });
+    }
+  }
+
+  /** Coaching tip: replaces the status line while it is up. */
+  private applyCoach(): void {
+    const tip = this.coachLine?.peek() ?? '';
+    this.coachText?.setProperties({ display: tip ? 'flex' : 'none', text: tip || ' ' });
+    this.statusText?.setProperties({ display: tip ? 'none' : 'flex' });
+  }
+
+  /** The results card, from GameStateSystem's GameOver snapshot. */
+  private applyResults(stats: RoundStats | null | undefined): void {
+    if (!stats) return;
+    for (let i = 0; i < this.resPops.length; i++) {
+      this.setText(this.resPops[i], String(stats.pops[i] ?? 0));
+    }
+    this.setText(this.resShots, String(stats.shots));
+    this.setText(this.resHits, String(Math.min(stats.hits, stats.shots)));
+    this.setText(this.resAcc, `${accuracyPercent(stats.hits, stats.shots)}%`);
+    // 'x', not U+00D7 (gotcha 24).
+    this.setText(this.resCombo, `x${Math.max(1, stats.bestCombo)}`);
+    this.setText(this.resGoal, nextGoalLine(stats));
   }
 
   // ---- Public API (harness + future callers) -------------------------------
@@ -437,6 +588,24 @@ export class HudSystem extends createSystem({
     this.armorySkinName = element(document, 'armory-skin-name');
     this.armorySkinIndex = element(document, 'armory-skin-index');
     this.pausedBanner = element(document, 'hud-paused');
+    this.sectionTutorial = element(document, 'section-tutorial');
+    this.tutStepText = element(document, 'tut-step');
+    this.tutLineText = element(document, 'tut-line');
+    this.tutDots.length = 0;
+    for (let i = 0; i < TUT_DOT_COUNT; i++) {
+      this.tutDots.push(element(document, `tut-dot-${i}`));
+    }
+    this.coachText = element(document, 'hud-coach');
+    this.resPops.length = 0;
+    for (let i = 0; i < SPLOTBOT_COUNT; i++) {
+      this.resPops.push(element(document, `res-pops-${i}`));
+    }
+    this.resShots = element(document, 'res-shots');
+    this.resHits = element(document, 'res-hits');
+    this.resAcc = element(document, 'res-acc');
+    this.resCombo = element(document, 'res-combo');
+    this.resGoal = element(document, 'res-goal');
+    this.startButton = element(document, 'btn-start');
     this.shownSection = undefined;
   }
 
@@ -476,6 +645,18 @@ export class HudSystem extends createSystem({
     this.armorySkinName = undefined;
     this.armorySkinIndex = undefined;
     this.pausedBanner = undefined;
+    this.sectionTutorial = undefined;
+    this.tutStepText = undefined;
+    this.tutLineText = undefined;
+    this.tutDots.length = 0;
+    this.coachText = undefined;
+    this.resPops.length = 0;
+    this.resShots = undefined;
+    this.resHits = undefined;
+    this.resAcc = undefined;
+    this.resCombo = undefined;
+    this.resGoal = undefined;
+    this.startButton = undefined;
   }
 
   /** Every button on the panel, each through the one press affordance. */
@@ -491,12 +672,18 @@ export class HudSystem extends createSystem({
     this.wireInteractiveButton(document, 'btn-chill', () => outlineStates(ACCENT_CYAN), () =>
       game()?.startChill(),
     );
-    // WEB MODE is a shortcut, not a phase. @see startWebMode
-    this.wireInteractiveButton(document, 'btn-web', () => outlineStates(ACCENT_CORAL), () =>
-      this.startWebMode(),
+    // Round 9: the separate WEB MODE button is gone - GOO is a launcher,
+    // picked on the LOADOUT screen or the palette's mode pad.
+    this.wireInteractiveButton(document, 'btn-tutorial', () => outlineStates(ACCENT_LIME), () =>
+      this.world.getSystem(TutorialSystem)?.start(),
     );
     this.wireInteractiveButton(document, 'btn-armory', () => outlineStates(ACCENT_VIOLET), () =>
       this.openArmory(),
+    );
+
+    // ---- Tutorial card -------------------------------------------------------
+    this.wireInteractiveButton(document, 'btn-tut-skip', glassStates, () =>
+      this.world.getSystem(TutorialSystem)?.skip(),
     );
     // The only thing in the game that ever calls initiateRoomCapture, and it
     // does so from inside a click handler — a user gesture by construction.
@@ -694,26 +881,6 @@ export class HudSystem extends createSystem({
   // ---- Actions ---------------------------------------------------------------
 
   /**
-   * The title screen's WEB MODE button: drop into the chill sandbox with web
-   * ammo already loaded.
-   *
-   * ### Why this is a shortcut and not a phase
-   *
-   * Round 4 shipped a real `GamePhase.Web` and round 5 deleted it, because a
-   * mode you have to leave cannot give you "web mode AND chill mode". Round 6's
-   * field note was "I want web on the title screen as well", so the button is
-   * two existing things done together, and nothing else: `startChill()` plus
-   * `activeStyle = Web`. EXIT CHILL leaves the way it always did, and touching
-   * any paint dab or chip switches ammo the way it always did.
-   */
-  private startWebMode(): void {
-    const game = this.world.getSystem(GameStateSystem);
-    if (!game) return;
-    game.startChill();
-    this.activeStyle.value = BallStyle.Web;
-  }
-
-  /**
    * Turn the canvas on its side, and own up to the cost in the status line —
    * a browser canvas clears whenever its width or height is written.
    */
@@ -756,7 +923,8 @@ export class HudSystem extends createSystem({
     const show =
       this.sceneScanMissing.peek() &&
       this.gamePhase.peek() === GamePhase.Idle &&
-      !this.armoryOpen;
+      !this.armoryOpen &&
+      !this.tutorialCard;
     this.scanNotice?.setProperties({ display: show ? 'flex' : 'none' });
   }
 
@@ -772,6 +940,13 @@ export class HudSystem extends createSystem({
     this.applyStatus(this.hudStatus.peek());
     this.setText(this.bestText, `BEST ${formatScore(this.bestScore.peek())}`);
     this.setText(this.targetsText, botsLabel(this.targetsAlive.peek()));
+    if (this.tutorialStep) {
+      this.tutorialCard = tutorialCardShown(this.tutorialStep.peek());
+      this.applyTutorial(this.tutorialStep.peek(), this.tutorialStep.peek());
+    }
+    this.setText(this.tutLineText, this.tutorialLine?.peek() ?? '');
+    this.applyCoach();
+    this.applyResults(this.roundStats?.peek());
   }
 
   /** One status signal, two places to show it (live round and chill). */
@@ -793,8 +968,9 @@ export class HudSystem extends createSystem({
       this.bestAtRoundStart = this.bestScore.peek();
     }
 
-    const target =
-      phase === GamePhase.Idle
+    const target = this.tutorialCard
+      ? this.sectionTutorial
+      : phase === GamePhase.Idle
         ? this.armoryOpen
           ? this.sectionArmory
           : this.sectionIdle
@@ -824,6 +1000,7 @@ export class HudSystem extends createSystem({
       this.sectionPlaying,
       this.sectionGameOver,
       this.sectionChill,
+      this.sectionTutorial,
     ];
     for (const section of sections) {
       if (section && section !== target) section.setProperties({ display: 'none' });
@@ -886,7 +1063,9 @@ export class HudSystem extends createSystem({
    * discards the Y offset, so the low dock needs face-target following.
    */
   private applyDock(phase: GamePhase): void {
-    const docked = phase === GamePhase.Playing || phase === GamePhase.Chill;
+    // Round 9: the tutorial card docks too - its whole point is the room.
+    const docked =
+      phase === GamePhase.Playing || phase === GamePhase.Chill || this.tutorialCard;
     const offset = docked ? HUD.playOffset : HUD.menuOffset;
     const faceTarget = docked ? HUD.playFaceTarget : HUD.menuFaceTarget;
 

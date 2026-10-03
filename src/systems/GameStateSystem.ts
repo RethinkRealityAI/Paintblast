@@ -7,8 +7,13 @@ import {
   GameEventBuffer,
   GamePhase,
   INITIAL_HUD_STATE,
+  copyRoundStats,
+  createRoundStats,
+  recordRoundEvent,
+  resetRoundStats,
   unpackPopPoints,
 } from '../types';
+import type { RoundStats } from '../types';
 
 /**
  * Base points a TargetPopped event is worth before the combo multiplier.
@@ -432,6 +437,15 @@ export class GameStateSystem extends createSystem({}) {
   private hudTimer!: Signal<string>;
   private hudStatus!: Signal<string>;
   private paused!: Signal<boolean>;
+  /** Round 9: true during the tutorial's practice round. Optional in tests. */
+  private practice?: Signal<boolean>;
+  /** Round 9: the results card's numbers, published at GameOver. Optional in tests. */
+  private roundStats?: Signal<RoundStats | null>;
+
+  /** This round's running stats (reset at startGame). @see recordRoundEvent */
+  private readonly stats: RoundStats = createRoundStats();
+  /** Round 9: a practice round is running. @see startPractice */
+  private practiceActive = false;
 
   private comboTracker!: ComboTracker;
   private tick!: PhaseTick;
@@ -454,6 +468,10 @@ export class GameStateSystem extends createSystem({}) {
     this.hudTimer = this.globals.hudTimer as Signal<string>;
     this.hudStatus = this.globals.hudStatus as Signal<string>;
     this.paused = this.globals.paused as Signal<boolean>;
+    this.practice = this.globals.practice as Signal<boolean> | undefined;
+    this.roundStats = this.globals.roundStats as
+      | Signal<RoundStats | null>
+      | undefined;
 
     this.comboTracker = new ComboTracker(GAME.comboWindowSec, GAME.comboCap);
     this.tick = createPhaseTick();
@@ -483,6 +501,15 @@ export class GameStateSystem extends createSystem({}) {
     // Spent every frame, paused or not, so the frame that ends a pause has its
     // delta (which was measured across the pause) discarded exactly once.
     const step = this.pauseClock.consumeFrame(delta);
+
+    // A practice round (the tutorial's bot steps) is Playing with the clock
+    // stopped: no timer, no score, no combo, no stats. Its only exits are
+    // endPractice() and endRound(); if anything else moved the phase on, the
+    // practice is over.
+    if (this.practiceActive) {
+      if (phase !== GamePhase.Playing) this.clearPractice();
+      else return;
+    }
 
     if (this.paused.peek()) {
       // Frozen: no clock, no countdown, no combo decay, no start button. The
@@ -548,6 +575,7 @@ export class GameStateSystem extends createSystem({}) {
     this.timeLeft.value = GAME.roundSec;
     this.publishTimer(GAME.roundSec);
     this.phaseElapsed = 0;
+    resetRoundStats(this.stats, this.bestScore.peek());
 
     this.gamePhase.value = GamePhase.Countdown;
     // advancePhase only fires on integer crossings, so without this the first
@@ -581,10 +609,72 @@ export class GameStateSystem extends createSystem({}) {
   }
 
   /**
+   * Round 9: a practice round for the tutorial's bot steps.
+   *
+   * ### Why "Playing with the clock stopped" and not a new phase
+   *
+   * TargetSystem only wakes its pool, animates and hit-tests during Playing,
+   * and BallSpawnSystem's aim assist is Playing-only. A `GamePhase.Tutorial`
+   * would have needed both of them (and every phase subscriber) taught a new
+   * phase. Instead the practice round *is* Playing, with this system holding
+   * its clock at `GAME.roundSec`: the wave director stays in wave 0
+   * (Mopsy-only), the Duke never comes (his cue is 20 s left), nothing scores
+   * and no RoundStart / RoundEnd is broadcast. `globals.practice` tells the
+   * HUD, Pip and the coach which kind of Playing this is.
+   *
+   * Valid from Idle only. @returns true when the practice round started.
+   */
+  startPractice(): boolean {
+    if (this.gamePhase.peek() !== GamePhase.Idle) return false;
+    this.practiceActive = true;
+    if (this.practice && this.practice.peek() !== true) this.practice.value = true;
+    this.score.value = 0;
+    this.hudScore.value = 0;
+    this.comboTracker.reset();
+    this.combo.value = 1;
+    this.timeLeft.value = GAME.roundSec;
+    this.publishTimer(GAME.roundSec);
+    this.phaseElapsed = 0;
+    // Straight to Playing: TargetSystem wakes its pool on this write.
+    this.gamePhase.value = GamePhase.Playing;
+    this.refreshStatus();
+    return true;
+  }
+
+  /** True while a practice round is running. */
+  get inPractice(): boolean {
+    return this.practiceActive;
+  }
+
+  /** End a practice round and return to the title. A no-op otherwise. */
+  endPractice(): void {
+    if (!this.practiceActive) return;
+    this.clearPractice();
+    this.score.value = 0;
+    this.hudScore.value = 0;
+    this.comboTracker.reset();
+    this.combo.value = 1;
+    this.phaseElapsed = 0;
+    if (this.gamePhase.peek() === GamePhase.Playing) {
+      this.enterPhase(GamePhase.Idle);
+    }
+  }
+
+  private clearPractice(): void {
+    this.practiceActive = false;
+    if (this.practice && this.practice.peek() !== false) this.practice.value = false;
+  }
+
+  /**
    * Cut the round short and go straight to the summary. Valid from Countdown
-   * or Playing; a no-op anywhere else.
+   * or Playing; a no-op anywhere else. A practice round just ends (there is
+   * nothing to summarise).
    */
   endRound(): void {
+    if (this.practiceActive) {
+      this.endPractice();
+      return;
+    }
     const phase = this.gamePhase.peek();
     if (phase !== GamePhase.Playing && phase !== GamePhase.Countdown) return;
 
@@ -616,6 +706,10 @@ export class GameStateSystem extends createSystem({}) {
 
       case GamePhase.GameOver: {
         const finalScore = this.score.peek();
+        // The results card: a detached snapshot, so the next round's running
+        // stats can never repaint a card that is still up.
+        this.stats.score = finalScore;
+        if (this.roundStats) this.roundStats.value = copyRoundStats(this.stats);
         if (finalScore > this.bestScore.peek()) {
           this.bestScore.value = finalScore;
           writeBestScore(finalScore);
@@ -651,7 +745,9 @@ export class GameStateSystem extends createSystem({}) {
     let gained = 0;
 
     for (let i = 0; i < count; i++) {
-      switch (events.typeAt(i)) {
+      const type = events.typeAt(i);
+      recordRoundEvent(this.stats, type, events.dataAt(i));
+      switch (type) {
         case GameEvent.BallImpact:
           // One point award per contact, not per decal — a Splash ball paints
           // nine SplatPainted events off a single BallImpact.
@@ -663,6 +759,10 @@ export class GameStateSystem extends createSystem({}) {
           gained += popBasePoints(events.dataAt(i)) * multiplier;
           if (this.comboTracker.current !== this.combo.peek()) {
             this.combo.value = this.comboTracker.current;
+            // Emitted below, after this loop's count: record it here.
+            if (this.comboTracker.current > this.stats.bestCombo) {
+              this.stats.bestCombo = this.comboTracker.current;
+            }
             // data = the new multiplier.
             this.events.emit(
               GameEvent.ComboMilestone,
@@ -753,7 +853,9 @@ export class GameStateSystem extends createSystem({}) {
         this.hudStatus.value = 'Get ready...';
         break;
       case GamePhase.Playing:
-        this.hudStatus.value = `${this.targetsAlive.peek()} bots active`;
+        // Round 9: the Neatnik count has its own pill; coaching tips take
+        // this line over for a few seconds (HudSystem).
+        this.hudStatus.value = GAME.playingStatusText;
         break;
       case GamePhase.GameOver:
         // ASCII separator: the bundled MSDF font has no em-dash glyph.

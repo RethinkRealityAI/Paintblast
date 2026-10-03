@@ -168,8 +168,13 @@ export const GAME = {
   countdownSec: 3,
   /** Length of a round, seconds. */
   roundSec: 90,
-  /** Seconds the game-over summary stays up before returning to Idle. */
-  gameOverSec: 8,
+  /**
+   * Seconds the game-over results card stays up before returning to Idle.
+   * Round 9: 12 (was 8) - the card now carries pops per Neatnik, accuracy,
+   * best combo and a next-goal line, which takes longer than a score to read.
+   * PLAY AGAIN works the whole time.
+   */
+  gameOverSec: 12,
   /** Seconds after a hit during which the next hit extends the combo. */
   comboWindowSec: 3,
   /** Combo multiplier ceiling. */
@@ -185,6 +190,12 @@ export const GAME = {
    * the normal line comes straight back. ASCII only (MSDF font).
    */
   pausedStatusText: 'Paused - the round waits for you',
+  /**
+   * Round 9: the live status line under the score (the Neatnik count has its
+   * own pill beside it). First-encounter coaching tips replace it for
+   * COACH.showSec. ASCII only.
+   */
+  playingStatusText: 'Paint the Neatniks out!',
   /**
    * The longest single frame, seconds, that still counts as play time.
    *
@@ -364,8 +375,13 @@ export const HUD = {
 
   /** Offset from the head, metres, in Playing / Chill. Below the sight line. */
   playOffset: [0, -0.52, -0.95],
-  /** Size multiplier while playing — smaller footprint, less occlusion. */
-  playScale: 0.75,
+  /**
+   * Size multiplier while playing — smaller footprint, less occlusion.
+   * Round 9: 0.9 (was 0.75) with the minimum font raised to ~1.8 panel units;
+   * the docked strip is only the score row, so the bigger size still sits
+   * well below the sight line (playOffset y -0.52).
+   */
+  playScale: 0.9,
   /** Metres of slack while playing — loose, so the panel drifts rather than chases. */
   playTolerance: 0.35,
   /** Lerp speed while playing — low, so it lags behind fast head turns. */
@@ -398,6 +414,15 @@ export const HUD = {
   pressFlashMs: 140,
   /** Seconds left in a round at which the clock turns coral. */
   timerUrgentSec: 10,
+
+  // ---- Round 9: onboarding ---------------------------------------------------
+  /**
+   * Seconds the title's PLAY button pulses after the tutorial hands over
+   * ("You're ready" -> title). 0 = no pulse.
+   */
+  playHighlightSec: 6,
+  /** Pulses per second of that highlight. */
+  playHighlightHz: 1.6,
 } as const;
 
 /**
@@ -1874,6 +1899,143 @@ export const INTRO = {
   splatVolume: 0.9,
   chimeSrc: '/audio/chime.mp3',
   chimeVolume: 0.5,
+
+  // ---- Round 9: splat it on your real wall -----------------------------------
+  /**
+   * Stick the logo splat onto the nearest real wall in front (scene planes /
+   * meshes, Space Setup). false = always float at `distance`. With no scene
+   * data, or no wall in range, it floats as before.
+   */
+  wallSnap: true,
+  /** Walls nearer than this (metres from the head) are too close to read. */
+  wallMinDist: 0.9,
+  /** Walls further than this are ignored (the logo floats instead). */
+  wallMaxDist: 3.2,
+  /** Metres the splat stands off the wall (no z-fighting with the paint). */
+  wallStandoff: 0.05,
+  /**
+   * A surface counts as a wall when its normal is within this many degrees
+   * of horizontal (rejects floors, ceilings and table tops).
+   */
+  wallMaxTiltDeg: 30,
+  /**
+   * On a wall the logo keeps the same apparent size as at `distance`: it is
+   * scaled by wallDistance / distance, clamped to this range.
+   */
+  wallScaleMin: 0.8,
+  wallScaleMax: 1.7,
+} as const;
+
+/**
+ * Round 9: the first-run tutorial, led by Pip (TutorialSystem). Hands-only,
+ * seated, skippable, about a minute. Steps: pinch-fire at a ring on your own
+ * wall, tap a colour on the wrist palette, pop a Mopsy, load GOO + TETHER and
+ * haul one in, then the title with PLAY lit. Fire and Palette run in the Idle
+ * sandbox; the bot steps run in a *practice round* (GameStateSystem
+ * `startPractice`: Playing with the clock frozen at wave 0, so only Mopsys
+ * spawn, nothing scores and the Duke never comes).
+ */
+export const TUTORIAL = {
+  /** Master switch. false = no auto-start and no TUTORIAL button effect. */
+  enabled: true,
+  /**
+   * Run automatically the first time a session reaches the title on this
+   * device. Completion (or SKIP) is remembered under `storageKey`; the
+   * TUTORIAL button on the title replays it any time.
+   */
+  autoStart: true,
+  /** localStorage key of the "tutorial done" flag. */
+  storageKey: 'splotopia.tutorialDone',
+  /** Seconds after the intro hands over before the tutorial starts. */
+  startDelaySec: 0.8,
+  /**
+   * One short line per step (ASCII, <= ~40 chars), shown on Pip's speech
+   * bubble and on the docked HUD card. Keys match TutorialStep names.
+   */
+  lines: {
+    fire: 'Pinch to fire at the ring!',
+    palette: 'Tap a colour on your left wrist',
+    pop: 'Pop a Mopsy!',
+    goo: 'Tap GOO on your wrist palette',
+    tether: 'Now tap TETHER',
+    haul: 'Hook a Mopsy, then pull it in!',
+    ready: "You're ready! Press PLAY",
+  },
+  /** Seconds the "You're ready" line holds before the title comes back. */
+  readySec: 2.2,
+  /** Seconds a finished step's line lingers (with a chime) before the next. */
+  stepPauseSec: 0.7,
+
+  // ---- Step 1: the wall ring ----------------------------------------------
+  /** Outer radius of the target ring, metres. */
+  ringRadius: 0.22,
+  /** Walls nearer / further than this (metres) are not used for the ring. */
+  ringMinDist: 0.8,
+  ringMaxDist: 3.5,
+  /** With no wall in range the ring floats this far ahead, metres. */
+  ringFallbackDist: 1.5,
+  /** Metres the ring stands off the wall. */
+  ringStandoff: 0.03,
+  /** Ring centre height relative to the eyes, metres (slightly low = seated comfort). */
+  ringHeightOffset: -0.1,
+  /** A paint impact within this many metres of the ring centre counts as a hit. */
+  ringHitRadius: 0.35,
+  /**
+   * Shots that land anywhere also finish step 1 after this many, so nobody
+   * gets stuck on a hard angle. 0 = only ring hits count.
+   */
+  fireAnyImpacts: 4,
+
+  // ---- Skipping -------------------------------------------------------------
+  /**
+   * Hold BOTH pinches (or both triggers) this long to skip, as well as the
+   * SKIP button. 0 disables the gesture. Long enough not to trip during
+   * two-handed auto-fire in the Pop step.
+   */
+  skipHoldSec: 2.5,
+
+  // ---- Pip -----------------------------------------------------------------
+  /** Metres beside the step's subject Pip hovers (to its left, toward you). */
+  pipBeside: 0.32,
+  /** Metres above the subject. */
+  pipAbove: 0.12,
+  /** Metres toward the viewer. */
+  pipToward: 0.15,
+  /** Over the wrist palette Pip hovers this far above the left hand, metres. */
+  pipWristAbove: 0.16,
+
+  /** Step-complete chime (existing file) and its volume. 0 mutes it. */
+  chimeSrc: '/audio/chime.mp3',
+  chimeVolume: 0.45,
+} as const;
+
+/**
+ * Round 9: first-encounter coaching (CoachSystem). The first time each
+ * Neatnik type appears in a round - Squeegee, Peekaboo, Duster Duke; Mopsy is
+ * the tutorial's - a short tip replaces the HUD status line for `showSec` and
+ * floats over the bot. Seen types are remembered on the device under
+ * `storageKey`, so veterans are not nagged.
+ */
+export const COACH = {
+  /** Master switch. */
+  enabled: true,
+  /** localStorage key of the seen-types bitmask (bit = archetype index). */
+  storageKey: 'splotopia.coachSeen',
+  /** Seconds a tip stays up. */
+  showSec: 3.2,
+  /** Tips by archetype index (Mopsy, Squeegee, Peekaboo, Duster Duke). ASCII. */
+  lines: [
+    '',
+    'Shield! Hit its side or bank a shot',
+    'Hiding! Hit it when it peeks',
+    'BOSS! GOO > TETHER hauls him in',
+  ] as readonly string[],
+  /** Show the floating label over the bot as well as the HUD line. */
+  floatingLabel: true,
+  /** Floating label width, metres (height follows its 8:1 texture). */
+  labelWidth: 0.62,
+  /** Metres above the bot's centre the label floats. */
+  labelAbove: 0.38,
 } as const;
 
 /**

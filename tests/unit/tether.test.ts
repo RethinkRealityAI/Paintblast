@@ -188,11 +188,11 @@ describe('ammoLabel', () => {
 
   it('lets webbing override the paint kind', () => {
     expect(ammoLabel(BallStyle.Web, WebSubMode.Splat, BallKind.Sticky)).toBe(
-      'WEB',
+      'GOO',
     );
   });
 
-  it('lets the sub-mode override the word WEB', () => {
+  it('lets the sub-mode override the word GOO', () => {
     expect(ammoLabel(BallStyle.Web, WebSubMode.Tether, BallKind.Sticky)).toBe(
       'TETHER',
     );

@@ -75,6 +75,8 @@ import { Gauntlet, GauntletSystem } from './systems/GauntletSystem';
 import { Target, TargetSystem, ROBOT_ASSET_KEY } from './systems/TargetSystem';
 import { GameStateSystem } from './systems/GameStateSystem';
 import { HudSystem } from './systems/HudSystem';
+import { TutorialSystem } from './systems/TutorialSystem';
+import { CoachSystem } from './systems/CoachSystem';
 import { FeedbackSystem } from './systems/FeedbackSystem';
 import {
   PaletteRoot,
@@ -110,8 +112,10 @@ import {
   rampColor,
   srgbToLinear,
   superellipsePoint,
+  PipFocus,
+  TutorialStep,
 } from './types';
-import type { PaletteChipSpec } from './types';
+import type { PaletteChipSpec, RoundStats } from './types';
 
 const DEG_TO_RAD = Math.PI / 180;
 
@@ -198,6 +202,18 @@ function seedGlobals(world: World) {
   // frame of a round, BallSpawnSystem reads it per shot. A struct rather than
   // a system call for the same import-cycle reason as tetheredHands.
   globals.aimTargets = new AimTargets(TARGETS.poolSize);
+
+  // Round 9: onboarding + coaching + results.
+  // TutorialSystem owns tutorialStep / tutorialLine / pipFocus; the HUD card
+  // and Pip's speech bubble read them. GameStateSystem owns `practice` (the
+  // tutorial's clock-stopped Playing) and `roundStats` (the GameOver card's
+  // numbers). CoachSystem owns `coachLine` (first-encounter tips).
+  globals.tutorialStep = signal<number>(TutorialStep.Off);
+  globals.tutorialLine = signal('');
+  globals.pipFocus = new PipFocus();
+  globals.practice = signal(false);
+  globals.roundStats = signal<RoundStats | null>(null);
+  globals.coachLine = signal('');
 }
 
 /**
@@ -1308,6 +1324,11 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
     .registerSystem(SplatterSystem, { priority: 15 })
     .registerSystem(EaselSystem, { priority: 16 })
     .registerSystem(GameStateSystem, { priority: 30 })
+    // Round 9: the tutorial reads this frame's events and drives
+    // GameStateSystem's practice round; the coach reads spawn events. Both
+    // write signals the HUD (35) and Pip (39) paint this same frame.
+    .registerSystem(TutorialSystem, { priority: 32 })
+    .registerSystem(CoachSystem, { priority: 33 })
     .registerSystem(HudSystem, { priority: 35 })
     .registerSystem(FeedbackSystem, { priority: 36 })
     // Round 7 particle juice: another read-only event consumer, so it sits in

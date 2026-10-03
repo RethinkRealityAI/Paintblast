@@ -1,9 +1,14 @@
 <style>
-  /* PaintBlast HUD - round 8 "techno-paint" theme.
+  /* Splotopia HUD - round 9 (round 8 "techno-paint" theme, onboarding pass).
 
      UIKitML units are CENTIMETRES. The whole panel is one document; HudSystem
-     shows exactly one phase section at a time (plus the Armory, which is a
-     sub-screen of the title) and leaves the footer up.
+     shows exactly one section at a time (the LOADOUT screen is a sub-screen of
+     the title, the tutorial card replaces whatever the phase would show) and
+     leaves the footer up.
+
+     Round 9 legibility rule: no player-facing text below 1.8 units. Copy was
+     trimmed to fit rather than shrunk; the title lost its how-to tiles (Pip's
+     tutorial teaches by doing now).
 
      Design tokens (keep in sync with HudSystem's ACCENT_* constants):
        graphite glass  rgba(11, 12, 20, 0.88)   off-white #f4f1ea
@@ -64,45 +69,45 @@
     flex-direction: column;
     align-items: center;
     width: 100%;
-    gap: 1.1;
+    gap: 1.2;
   }
-  /* Every non-idle section starts hidden so the panel never flashes all of
+  /* Every non-title section starts hidden so the panel never flashes all of
      them at once on the frame before HudSystem binds. */
   .section-hidden {
     display: none;
     flex-direction: column;
     align-items: center;
     width: 100%;
-    gap: 1.1;
+    gap: 1.2;
   }
 
   /* --- Shared type -------------------------------------------------------- */
   .kicker {
-    font-size: 1.25;
+    font-size: 1.9;
     font-weight: bold;
     letter-spacing: 0.32;
     color: #48dbfb;
   }
   .kicker-coral {
-    font-size: 1.25;
+    font-size: 1.9;
     font-weight: bold;
     letter-spacing: 0.32;
     color: #ff4f81;
   }
-  .kicker-violet {
-    font-size: 1.25;
+  .kicker-lime {
+    font-size: 1.9;
     font-weight: bold;
     letter-spacing: 0.32;
-    color: #b84dff;
+    color: #b6ff3b;
   }
   .label {
-    font-size: 1.15;
+    font-size: 1.8;
     font-weight: bold;
-    letter-spacing: 0.26;
+    letter-spacing: 0.24;
     color: #9a9cb0;
   }
   .tagline {
-    font-size: 2.1;
+    font-size: 2.3;
     font-weight: medium;
     color: #f4f1ea;
     text-align: center;
@@ -115,18 +120,13 @@
     gap: 0.7;
   }
   .hint {
-    font-size: 1.35;
+    font-size: 1.8;
     color: #9a9cb0;
     text-align: center;
   }
-  .hint-strong {
-    font-size: 1.35;
-    font-weight: bold;
-    color: #f4f1ea;
-  }
   .icon-s {
-    width: 1.8;
-    height: 1.8;
+    width: 2.2;
+    height: 2.2;
   }
   .icon-m {
     width: 2.8;
@@ -140,14 +140,14 @@
      flex-grow 1), so a spacer the icon's width on the far side keeps the
      label optically centred in the pill. */
   .btn-text {
-    font-size: 3;
+    font-size: 3.2;
     font-weight: bold;
     letter-spacing: 0.3;
     color: #0b0c14;
     text-align: center;
   }
   .btn-text-s {
-    font-size: 2.2;
+    font-size: 2.4;
     font-weight: bold;
     letter-spacing: 0.24;
     color: #0b0c14;
@@ -158,7 +158,7 @@
     height: 0.1;
   }
   .spacer-s {
-    width: 1.8;
+    width: 2.2;
     height: 0.1;
   }
 
@@ -181,39 +181,11 @@
   .bar-short-lime { width: 2.4; height: 0.4; border-radius: 0.2; background-color: #b6ff3b; }
   .bar-short-violet { width: 2.4; height: 0.4; border-radius: 0.2; background-color: #b84dff; }
 
-  /* --- Title layout: logo across the top, then two columns -------------- */
+  /* --- Title -------------------------------------------------------------- */
   .logo {
-    width: 54;
+    width: 50;
     margin-top: -0.4;
-    margin-bottom: -0.6;
-  }
-  .cols {
-    display: flex;
-    flex-direction: row;
-    align-items: stretch;
-    width: 100%;
-    gap: 2;
-  }
-  .col-left {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    flex-grow: 1;
-    flex-basis: 0;
-    gap: 1.4;
-  }
-  .col-right {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    flex-grow: 1;
-    flex-basis: 0;
-    gap: 0.8;
-  }
-  .col-divider {
-    width: 0.12;
-    background-color: rgba(72, 219, 251, 0.3);
+    margin-bottom: -0.4;
   }
   .btn-row-fill {
     display: flex;
@@ -225,60 +197,6 @@
   .btn-half {
     flex-grow: 1;
     flex-basis: 0;
-    font-size: 1.65;
-    letter-spacing: 0.1;
-  }
-
-  /* --- How-to tiles: icon well, verb, how ------------------------------- */
-  .tile-row {
-    display: flex;
-    flex-direction: row;
-    align-items: stretch;
-    justify-content: center;
-    gap: 1;
-    width: 100%;
-    margin-top: 0.4;
-  }
-  .tile {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 1.2;
-    padding-y: 0.8;
-    padding-x: 1;
-    background-color: rgba(255, 255, 255, 0.035);
-    border-radius: 1.6;
-    border-width: 0.1;
-  }
-  .tile-text {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2;
-  }
-  .icon-well {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 4.4;
-    height: 4.4;
-    border-radius: 2.2;
-    border-width: 0.12;
-  }
-  .well-coral { background-color: rgba(255, 79, 129, 0.12); border-color: #ff4f81; }
-  .well-amber { background-color: rgba(255, 210, 63, 0.12); border-color: #ffd23f; }
-  .well-cyan { background-color: rgba(72, 219, 251, 0.12); border-color: #48dbfb; }
-  .tile-coral { border-color: rgba(255, 79, 129, 0.55); }
-  .tile-amber { border-color: rgba(255, 210, 63, 0.55); }
-  .tile-cyan { border-color: rgba(72, 219, 251, 0.55); }
-  .tile-verb {
-    font-size: 1.7;
-    font-weight: bold;
-    letter-spacing: 0.18;
-    color: #f4f1ea;
-  }
-  .tile-how {
-    font-size: 1.35;
-    color: #b4b6c6;
   }
 
   /* --- Buttons ------------------------------------------------------------ */
@@ -301,14 +219,14 @@
     gap: 1;
     width: 100%;
     padding-x: 2.4;
-    padding-y: 1.7;
-    font-size: 3;
+    padding-y: 1.6;
+    font-size: 3.2;
     font-weight: bold;
     letter-spacing: 0.3;
     color: #0b0c14;
     background-color: #ffd23f;
     border-radius: 3;
-    border-width: 0.18;
+    border-width: 0.3;
     border-color: #fff3b8;
   }
   .btn-play-small {
@@ -317,10 +235,10 @@
     align-items: center;
     justify-content: center;
     gap: 0.8;
-    width: 17;
+    width: 18;
     padding-x: 1.8;
     padding-y: 1;
-    font-size: 2.2;
+    font-size: 2.4;
     font-weight: bold;
     letter-spacing: 0.24;
     color: #0b0c14;
@@ -337,8 +255,8 @@
     gap: 0.9;
     width: 36;
     padding-x: 2.4;
-    padding-y: 1.4;
-    font-size: 2.6;
+    padding-y: 1.3;
+    font-size: 2.8;
     font-weight: bold;
     letter-spacing: 0.26;
     color: #0b0c14;
@@ -355,9 +273,9 @@
     align-items: center;
     justify-content: center;
     gap: 0.7;
-    width: 16.4;
-    padding-y: 0.95;
-    font-size: 1.8;
+    width: 18;
+    padding-y: 1;
+    font-size: 2.1;
     font-weight: bold;
     letter-spacing: 0.16;
     color: #f4f1ea;
@@ -371,7 +289,7 @@
   .line-lime { background-color: rgba(182, 255, 59, 0.08); border-color: #b6ff3b; }
   .line-glass { background-color: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.28); }
   .btn-chill {
-    width: 23;
+    width: 26;
   }
   .btn-glass {
     display: flex;
@@ -381,7 +299,7 @@
     gap: 0.5;
     padding-x: 1.6;
     padding-y: 0.7;
-    font-size: 1.3;
+    font-size: 1.8;
     font-weight: bold;
     letter-spacing: 0.14;
     color: #c9cad6;
@@ -396,27 +314,27 @@
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 0.9;
+    gap: 1;
     padding-left: 1.6;
     padding-right: 0.6;
     padding-y: 0.6;
     background-color: rgba(255, 255, 255, 0.04);
-    border-radius: 1.6;
+    border-radius: 1.8;
     border-width: 0.08;
     border-color: rgba(255, 255, 255, 0.12);
   }
   .loadout-value {
-    font-size: 1.35;
+    font-size: 1.9;
     font-weight: bold;
     letter-spacing: 0.14;
     color: #f4f1ea;
   }
   .loadout-dot {
-    width: 1.4;
-    height: 1.4;
-    border-radius: 0.7;
+    width: 1.8;
+    height: 1.8;
+    border-radius: 0.9;
     background-color: #ff4f81;
-    border-width: 0.14;
+    border-width: 0.16;
     border-color: #ffb347;
   }
   .btn-armory {
@@ -424,9 +342,9 @@
     align-items: center;
     justify-content: center;
     margin-left: 0.8;
-    width: 15;
-    padding-y: 0.75;
-    font-size: 1.5;
+    width: 17;
+    padding-y: 0.8;
+    font-size: 1.9;
     font-weight: bold;
     letter-spacing: 0.2;
     color: #f4f1ea;
@@ -437,7 +355,7 @@
   }
   .sep {
     width: 0.1;
-    height: 1.4;
+    height: 1.8;
     background-color: rgba(255, 255, 255, 0.18);
   }
 
@@ -459,7 +377,7 @@
   }
   .scan-text {
     flex-shrink: 1;
-    font-size: 1.3;
+    font-size: 1.8;
     color: #ffd23f;
   }
   .btn-scan {
@@ -469,7 +387,7 @@
     flex-shrink: 0;
     padding-x: 1.6;
     padding-y: 0.7;
-    font-size: 1.3;
+    font-size: 1.8;
     font-weight: bold;
     letter-spacing: 0.14;
     color: #ffd23f;
@@ -479,9 +397,9 @@
     border-radius: 1.6;
   }
 
-  /* --- Armory ------------------------------------------------------------- */
+  /* --- LOADOUT screen (ids keep their round-8 "armory" names) ------------ */
   .armory-title {
-    font-size: 5.2;
+    font-size: 4.6;
     font-weight: bold;
     letter-spacing: 0.4;
     color: #f4f1ea;
@@ -508,17 +426,17 @@
     border-color: rgba(255, 255, 255, 0.18);
   }
   .mode-name {
-    font-size: 1.9;
+    font-size: 2.2;
     font-weight: bold;
     letter-spacing: 0.2;
     color: #f4f1ea;
   }
   .mode-sub {
-    font-size: 1.15;
+    font-size: 1.8;
     color: #9a9cb0;
   }
   .desc {
-    font-size: 1.35;
+    font-size: 1.9;
     color: #c9cad6;
     text-align: center;
   }
@@ -572,7 +490,7 @@
     gap: 0.3;
   }
   .skin-name {
-    font-size: 2.2;
+    font-size: 2.3;
     font-weight: bold;
     letter-spacing: 0.18;
     color: #f4f1ea;
@@ -639,7 +557,7 @@
     display: none;
     padding-x: 1.4;
     padding-y: 0.45;
-    font-size: 2;
+    font-size: 2.2;
     font-weight: bold;
     letter-spacing: 0.12;
     color: #0b0c14;
@@ -659,19 +577,32 @@
     border-radius: 1.4;
   }
   .bots-text {
-    font-size: 1.7;
+    font-size: 2.1;
     font-weight: bold;
     color: #f4f1ea;
   }
   .status {
-    font-size: 1.6;
+    font-size: 2;
     color: #c9cad6;
     text-align: center;
   }
+  /* First-encounter coaching tip: replaces the status line for ~3 s. */
+  .coach {
+    display: none;
+    padding-x: 1.4;
+    padding-y: 0.5;
+    font-size: 2.1;
+    font-weight: bold;
+    color: #ffd23f;
+    background-color: rgba(255, 210, 63, 0.1);
+    border-width: 0.14;
+    border-color: #ffd23f;
+    border-radius: 1.4;
+  }
 
-  /* --- Round over --------------------------------------------------------- */
+  /* --- Results card (round over) ----------------------------------------- */
   .final {
-    font-size: 9.6;
+    font-size: 8.4;
     font-weight: bold;
     color: #f4f1ea;
     text-align: center;
@@ -680,7 +611,7 @@
     display: none;
     padding-x: 1.4;
     padding-y: 0.4;
-    font-size: 1.5;
+    font-size: 1.9;
     font-weight: bold;
     letter-spacing: 0.3;
     color: #0b0c14;
@@ -688,11 +619,89 @@
     border-radius: 1.2;
   }
   .best {
-    font-size: 1.6;
+    font-size: 1.9;
     font-weight: bold;
     letter-spacing: 0.18;
     color: #9a9cb0;
     text-align: center;
+  }
+  .cell-row {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    width: 100%;
+    gap: 1;
+  }
+  .cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-grow: 1;
+    flex-basis: 0;
+    gap: 0.2;
+    padding-y: 0.7;
+    background-color: rgba(255, 255, 255, 0.04);
+    border-radius: 1.6;
+    border-width: 0.1;
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+  .cell-coral { border-color: rgba(255, 79, 129, 0.6); }
+  .cell-cyan { border-color: rgba(72, 219, 251, 0.6); }
+  .cell-violet { border-color: rgba(184, 77, 255, 0.6); }
+  .cell-amber { border-color: rgba(255, 210, 63, 0.6); }
+  .cell-value {
+    font-size: 3.2;
+    font-weight: bold;
+    color: #f4f1ea;
+  }
+  .cell-name {
+    font-size: 1.8;
+    font-weight: bold;
+    letter-spacing: 0.16;
+    color: #9a9cb0;
+  }
+  .goal {
+    font-size: 2.1;
+    font-weight: bold;
+    color: #b6ff3b;
+    text-align: center;
+  }
+
+  /* --- Tutorial card (docked low while Pip teaches) ----------------------- */
+  .tut-head {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+  .tut-count {
+    font-size: 1.9;
+    font-weight: bold;
+    letter-spacing: 0.2;
+    color: #9a9cb0;
+  }
+  .tut-line {
+    font-size: 3.4;
+    font-weight: bold;
+    color: #f4f1ea;
+    text-align: center;
+  }
+  .tut-dot {
+    width: 5;
+    height: 0.8;
+    border-radius: 0.4;
+    background-color: rgba(255, 255, 255, 0.18);
+  }
+  .tut-foot {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+  .btn-skip {
+    width: 14;
   }
 
   /* --- Chill -------------------------------------------------------------- */
@@ -710,7 +719,7 @@
     display: none;
     padding-x: 2;
     padding-y: 0.5;
-    font-size: 2;
+    font-size: 2.2;
     font-weight: bold;
     letter-spacing: 0.4;
     color: #0b0c14;
@@ -742,7 +751,7 @@
     align-items: center;
     padding-x: 1.2;
     padding-y: 0.5;
-    font-size: 1.25;
+    font-size: 1.8;
     font-weight: bold;
     letter-spacing: 0.2;
     color: #ff4f81;
@@ -764,15 +773,15 @@
     border-radius: 1.4;
   }
   .swatch {
-    width: 1.5;
-    height: 1.5;
-    border-radius: 0.75;
+    width: 1.8;
+    height: 1.8;
+    border-radius: 0.9;
     background-color: #ff6b6b;
     border-width: 0.12;
     border-color: rgba(255, 255, 255, 0.6);
   }
   .ammo {
-    font-size: 1.25;
+    font-size: 1.8;
     font-weight: bold;
     letter-spacing: 0.2;
     color: #f4f1ea;
@@ -786,58 +795,27 @@
 
   <!-- ===== Title ======================================================= -->
   <div id="section-idle" class="section">
-    <span class="kicker">MIXED REALITY PAINTBALL</span>
+    <span class="kicker">YOUR ROOM IS THE ARENA</span>
     <img class="logo" src="./brand/logo.png" />
-    <div class="cols">
-      <div class="col-left">
-        <span class="tagline">Rogue bots detected in your room. Paint them out.</span>
-        <button id="btn-start" class="btn-play"><svg class="icon-m" viewBox="0 0 24 24"><path fill="#0b0c14" d="M6 3.5 L21 12 L6 20.5 Z"/></svg><span class="btn-text">PLAY</span><div class="spacer-m"></div></button>
-        <div class="btn-row-fill">
-          <button id="btn-chill" class="btn-line line-cyan btn-half">CHILL MODE</button>
-          <button id="btn-web" class="btn-line line-coral btn-half">WEB MODE</button>
-        </div>
-        <span class="hint">Webs: press WEB MODE, or load the WEB chip on your palette</span>
-      </div>
-      <div class="col-divider"></div>
-      <div class="col-right">
-        <span class="label">HOW TO PLAY</span>
-        <div class="tile tile-coral">
-          <div class="icon-well well-coral"><svg class="icon-m" viewBox="0 0 24 24"><path fill="#ff4f81" d="M12 2.5 A9.5 9.5 0 1 1 11.99 2.5 Z M12 5 A7 7 0 1 0 12.01 5 Z"/><path fill="#ff4f81" d="M10.8 0 H13.2 V7 H10.8 Z M10.8 17 H13.2 V24 H10.8 Z M0 10.8 H7 V13.2 H0 Z M17 10.8 H24 V13.2 H17 Z"/><path fill="#f4f1ea" d="M12 9.6 A2.4 2.4 0 1 1 11.99 9.6 Z"/></svg></div>
-          <div class="tile-text">
-            <span class="tile-verb">FIRE</span>
-            <span class="tile-how">Pinch or trigger = fire</span>
-          </div>
-        </div>
-        <div class="tile tile-amber">
-          <div class="icon-well well-amber"><svg class="icon-m" viewBox="0 0 24 24"><path fill="#ff4f81" d="M6.5 1.5 A5 5 0 1 1 6.49 1.5 Z"/><path fill="#ffd23f" d="M17.5 1.5 A5 5 0 1 1 17.49 1.5 Z"/><path fill="#48dbfb" d="M6.5 12.5 A5 5 0 1 1 6.49 12.5 Z"/><path fill="#b6ff3b" d="M17.5 12.5 A5 5 0 1 1 17.49 12.5 Z"/></svg></div>
-          <div class="tile-text">
-            <span class="tile-verb">SWAP PAINT</span>
-            <span class="tile-how">Tap your wrist palette</span>
-          </div>
-        </div>
-        <div class="tile tile-cyan">
-          <div class="icon-well well-cyan"><svg class="icon-m" viewBox="0 0 24 24"><path fill="#48dbfb" d="M11 0 H13 V24 H11 Z M0 11 H24 V13 H0 Z"/><path fill="#48dbfb" d="M3.2 4.6 L4.6 3.2 L20.8 19.4 L19.4 20.8 Z M19.4 3.2 L20.8 4.6 L4.6 20.8 L3.2 19.4 Z"/><path fill="#48dbfb" fill-rule="evenodd" d="M12 3 A9 9 0 1 1 11.99 3 Z M12 4.6 A7.4 7.4 0 1 0 12.01 4.6 Z"/><path fill="#48dbfb" fill-rule="evenodd" d="M12 7.5 A4.5 4.5 0 1 1 11.99 7.5 Z M12 9 A3 3 0 1 0 12.01 9 Z"/></svg></div>
-          <div class="tile-text">
-            <span class="tile-verb">THWIP</span>
-            <span class="tile-how">Curl middle+ring, or thrust</span>
-          </div>
-        </div>
-      </div>
+    <span class="tagline">The Neatniks are tidying your room. Paint them out!</span>
+    <button id="btn-start" class="btn-play"><svg class="icon-m" viewBox="0 0 24 24"><path fill="#0b0c14" d="M6 3.5 L21 12 L6 20.5 Z"/></svg><span class="btn-text">PLAY</span><div class="spacer-m"></div></button>
+    <div class="btn-row-fill">
+      <button id="btn-chill" class="btn-line line-cyan btn-half">CHILL MODE</button>
+      <button id="btn-tutorial" class="btn-line line-lime btn-half">TUTORIAL</button>
     </div>
     <div class="loadout">
-      <span class="label">LOADOUT</span>
       <span id="hud-loadout-mode" class="loadout-value">BLASTER</span>
       <div class="sep"></div>
       <div id="hud-loadout-swatch" class="loadout-dot"></div>
       <span id="hud-loadout-skin" class="loadout-value">NEON CORAL</span>
-      <button id="btn-armory" class="btn-armory">BLASTERS &gt;</button>
+      <button id="btn-armory" class="btn-armory">LOADOUT &gt;</button>
     </div>
     <div class="hint-row">
       <svg class="icon-s" viewBox="0 0 24 24"><path fill="#48dbfb" d="M9 2 A1.6 1.6 0 0 1 12.2 2 V11 H13 V8.6 A1.6 1.6 0 0 1 16.2 8.6 V11.4 H16.8 V9.8 A1.6 1.6 0 0 1 20 9.8 V16 C20 20.5 17 23.5 13 23.5 C9.5 23.5 7.6 21.8 6 19 L3 13.6 A1.6 1.6 0 0 1 5.8 12 L9 16 Z"/></svg>
-      <span class="hint">Press buttons with your RIGHT hand: point at one, then pinch</span>
+      <span class="hint">Buttons: point your RIGHT hand, then pinch</span>
     </div>
     <div id="scan-notice" class="scan-notice">
-      <span id="scan-notice-text" class="scan-text">No room scan found - paint has no walls to stick to</span>
+      <span id="scan-notice-text" class="scan-text">No room scan - paint has no walls to stick to</span>
       <button id="btn-scan-room" class="btn-scan">SCAN ROOM</button>
     </div>
   </div>
@@ -860,31 +838,40 @@
       <span id="hud-combo" class="combo">x1</span>
       <div class="bots">
         <svg class="icon-s" viewBox="0 0 24 24"><path fill="#ff4f81" d="M11 0.5 H13 V4 H11 Z"/><path fill="#ff4f81" d="M4 4 H20 A3 3 0 0 1 23 7 V17 A3 3 0 0 1 20 20 H4 A3 3 0 0 1 1 17 V7 A3 3 0 0 1 4 4 Z"/><path fill="#0b0c14" d="M6 9 H10 V13 H6 Z M14 9 H18 V13 H14 Z M8 15.5 H16 V17 H8 Z"/></svg>
-        <span id="hud-targets" class="bots-text">0 bots</span>
+        <span id="hud-targets" class="bots-text">0 Neatniks</span>
       </div>
       <span id="hud-status" class="status">Get ready</span>
+      <span id="hud-coach" class="coach">Tip</span>
     </div>
   </div>
 
-  <!-- ===== Round over ================================================== -->
+  <!-- ===== Results card (round over) =================================== -->
   <div id="section-gameover" class="section-hidden">
     <span class="kicker-coral">ROUND OVER</span>
     <span id="hud-final" class="final">0</span>
-    <div class="stripe">
-      <div class="bar-coral"></div>
-      <div class="bar-amber"></div>
-      <div class="bar-cyan"></div>
-      <div class="bar-lime"></div>
-      <div class="bar-violet"></div>
+    <div class="row-center">
+      <span id="hud-newbest" class="newbest">NEW BEST</span>
+      <span id="hud-best" class="best">BEST 0</span>
     </div>
-    <span id="hud-newbest" class="newbest">NEW BEST</span>
-    <span id="hud-best" class="best">BEST 0</span>
+    <div class="cell-row">
+      <div class="cell cell-coral"><span id="res-pops-0" class="cell-value">0</span><span class="cell-name">MOPSY</span></div>
+      <div class="cell cell-cyan"><span id="res-pops-1" class="cell-value">0</span><span class="cell-name">SQUEEGEE</span></div>
+      <div class="cell cell-violet"><span id="res-pops-2" class="cell-value">0</span><span class="cell-name">PEEKABOO</span></div>
+      <div class="cell cell-amber"><span id="res-pops-3" class="cell-value">0</span><span class="cell-name">DUKE</span></div>
+    </div>
+    <div class="cell-row">
+      <div class="cell"><span id="res-shots" class="cell-value">0</span><span class="cell-name">SHOTS</span></div>
+      <div class="cell"><span id="res-hits" class="cell-value">0</span><span class="cell-name">HITS</span></div>
+      <div class="cell"><span id="res-acc" class="cell-value">0%</span><span class="cell-name">ACCURACY</span></div>
+      <div class="cell"><span id="res-combo" class="cell-value">x1</span><span class="cell-name">BEST COMBO</span></div>
+    </div>
+    <span id="res-goal" class="goal">Next: pinch at a Neatnik to pop it</span>
     <button id="btn-restart" class="btn-lime"><svg class="icon-m" viewBox="0 0 24 24"><path fill="#0b0c14" d="M6 3.5 L21 12 L6 20.5 Z"/></svg><span class="btn-text">PLAY AGAIN</span><div class="spacer-m"></div></button>
   </div>
 
   <!-- ===== Chill ======================================================= -->
   <div id="section-chill" class="section-hidden">
-    <span class="kicker">NO TIMER - NO BOTS - JUST PAINT</span>
+    <span class="kicker">NO TIMER - NO NEATNIKS - JUST PAINT</span>
     <span class="chill-title">CHILL MODE</span>
     <div class="stripe">
       <div class="bar-short-coral"></div>
@@ -894,7 +881,7 @@
       <div class="bar-short-violet"></div>
     </div>
     <span id="hud-chill-status" class="status">Hold trigger or pinch to spray. Tap the palette to change paint.</span>
-    <span class="hint">Paint the easel in front of you, then save the picture. THWIP or thrust fires whatever is loaded.</span>
+    <span class="hint">Paint the easel, then save the picture</span>
     <span class="hint">Pinch or squeeze the easel with both hands to move it</span>
     <div class="btn-row">
       <button id="btn-save-painting" class="btn-line line-amber btn-chill">SAVE PAINTING</button>
@@ -906,10 +893,9 @@
     </div>
   </div>
 
-  <!-- ===== Armory (title sub-screen) =================================== -->
+  <!-- ===== LOADOUT (title sub-screen; ids keep the round-8 armory names) == -->
   <div id="section-armory" class="section-hidden">
-    <span class="kicker-violet">GAUNTLET LOADOUT</span>
-    <span class="armory-title">ARMORY</span>
+    <span class="armory-title">LOADOUT</span>
     <div class="stripe">
       <div class="bar-short-violet"></div>
       <div class="bar-short-coral"></div>
@@ -917,7 +903,6 @@
       <div class="bar-short-cyan"></div>
       <div class="bar-short-lime"></div>
     </div>
-    <span class="label">LAUNCHER</span>
     <div class="mode-row">
       <button id="btn-mode-hand" class="mode-card">
         <svg class="icon-l" viewBox="0 0 24 24"><path fill="#f4f1ea" d="M9 2 A1.6 1.6 0 0 1 12.2 2 V11 H13 V3.4 A1.6 1.6 0 0 1 16.2 3.4 V11.4 H16.8 V6 A1.6 1.6 0 0 1 20 6 V16 C20 20.5 17 23.5 13 23.5 C9.5 23.5 7.6 21.8 6 19 L2.6 12.6 A1.6 1.6 0 0 1 5.4 11 L9 15 Z"/></svg>
@@ -927,16 +912,16 @@
       <button id="btn-mode-blaster" class="mode-card">
         <svg class="icon-l" viewBox="0 0 24 24"><path fill="#ff4f81" d="M2 7 H17 L22 9.5 V12.5 L17 15 H2 A1 1 0 0 1 1 14 V8 A1 1 0 0 1 2 7 Z"/><path fill="#f4f1ea" d="M5 15 H10 L8.5 22 H4 Z"/><path fill="#ffd23f" d="M8 9 H14 V13 H8 Z"/></svg>
         <span class="mode-name">BLASTER</span>
-        <span class="mode-sub">Paint gauntlet</span>
+        <span class="mode-sub">Auto-fire</span>
       </button>
       <button id="btn-mode-web" class="mode-card">
-        <svg class="icon-l" viewBox="0 0 24 24"><path fill="#48dbfb" d="M11 0 H13 V24 H11 Z M0 11 H24 V13 H0 Z"/><path fill="#48dbfb" d="M3.2 4.6 L4.6 3.2 L20.8 19.4 L19.4 20.8 Z M19.4 3.2 L20.8 4.6 L4.6 20.8 L3.2 19.4 Z"/><path fill="#48dbfb" fill-rule="evenodd" d="M12 3 A9 9 0 1 1 11.99 3 Z M12 4.6 A7.4 7.4 0 1 0 12.01 4.6 Z"/><path fill="#48dbfb" fill-rule="evenodd" d="M12 7.5 A4.5 4.5 0 1 1 11.99 7.5 Z M12 9 A3 3 0 1 0 12.01 9 Z"/></svg>
-        <span class="mode-name">WEB</span>
-        <span class="mode-sub">Web shooters</span>
+        <svg class="icon-l" viewBox="0 0 24 24"><path fill="#48dbfb" d="M7 2 C10 2 11 4.5 11 7 C11 9 10 10 10 12 C10 14 11.5 15 11.5 17 A2.5 2.5 0 0 1 6.5 17 C6.5 15 8 14 8 12 C8 10 3 9.5 3 6 C3 3.5 4.8 2 7 2 Z"/><path fill="#48dbfb" d="M17 4 C19.5 4 21 6 21 8.5 C21 11 19 12 19 14 C19 15.5 20 16.5 20 18 A2 2 0 0 1 16 18 C16 16.5 17 15.5 17 14 C17 12 13.5 11.5 13.5 8 C13.5 5.8 15 4 17 4 Z"/><path fill="#48dbfb" d="M9 20.5 A1.5 1.5 0 1 1 8.99 20.5 Z"/></svg>
+        <span class="mode-name">GOO</span>
+        <span class="mode-sub">Sticky strands</span>
       </button>
     </div>
-    <span id="armory-mode-desc" class="desc">Paint blaster gauntlet. Hold to auto-fire.</span>
-    <span class="label">GAUNTLET SKIN</span>
+    <span id="armory-mode-desc" class="desc">Paint gauntlet. Hold the pinch to auto-fire.</span>
+    <span class="label">SKIN</span>
     <div class="skin-row">
       <button id="btn-skin-prev" class="btn-arrow">&lt;</button>
       <div id="armory-skin-card" class="skin-card">
@@ -958,6 +943,26 @@
     <div class="btn-row">
       <button id="btn-armory-back" class="btn-line line-glass">&lt; BACK</button>
       <button id="btn-armory-play" class="btn-play-small"><svg class="icon-s" viewBox="0 0 24 24"><path fill="#0b0c14" d="M6 3.5 L21 12 L6 20.5 Z"/></svg><span class="btn-text-s">PLAY</span><div class="spacer-s"></div></button>
+    </div>
+  </div>
+
+  <!-- ===== Tutorial card (Pip leads; replaces the phase section) ======== -->
+  <div id="section-tutorial" class="section-hidden">
+    <div class="tut-head">
+      <span class="kicker-lime">PIP'S TRAINING</span>
+      <span id="tut-step" class="tut-count">STEP 1 OF 5</span>
+    </div>
+    <span id="tut-line" class="tut-line">Pinch to fire at the ring!</span>
+    <div class="dot-row">
+      <div id="tut-dot-0" class="tut-dot"></div>
+      <div id="tut-dot-1" class="tut-dot"></div>
+      <div id="tut-dot-2" class="tut-dot"></div>
+      <div id="tut-dot-3" class="tut-dot"></div>
+      <div id="tut-dot-4" class="tut-dot"></div>
+    </div>
+    <div class="tut-foot">
+      <span class="hint">Or hold both pinches to skip</span>
+      <button id="btn-tut-skip" class="btn-line line-glass btn-skip">SKIP</button>
     </div>
   </div>
 

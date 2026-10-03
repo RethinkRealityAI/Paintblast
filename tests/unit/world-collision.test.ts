@@ -185,23 +185,28 @@ describe('title screen copy', () => {
     markup.indexOf('id="section-playing"'),
   );
 
-  it('offers WEB MODE as a title-screen button', () => {
-    // Round 5 left webbing discoverable only as one chip in a row of five on
-    // your own wrist, and the field report was that nobody found it. The button
-    // is a signpost, not a phase — see HudSystem.startWebMode.
-    expect(idle).toContain('id="btn-web"');
-    expect(idle).toContain('>WEB MODE<');
+  it('reaches GOO through LOADOUT, not a separate WEB MODE button (round 9)', () => {
+    // Round 6 put a WEB MODE shortcut on the title because nobody found the
+    // web chip. Round 9 made GOO a launcher with its own palette pad and a
+    // tutorial step that has you tap it, so the title keeps one way in.
+    expect(idle).not.toContain('id="btn-web"');
+    expect(idle).not.toContain('WEB MODE');
+    expect(idle).toContain('id="btn-armory"');
+    expect(idle).toContain('LOADOUT &gt;');
   });
 
-  it('teaches the palette chip as well, so the button is not the only route', () => {
-    expect(idle).toMatch(/WEB chip/);
+  it('uses the round-9 names only (Splotopia / Neatniks / GOO / FLICK)', () => {
+    const body = markup.slice(markup.indexOf('</style>'));
+    for (const stale of ['PaintBlast', 'Splotbot', 'THWIP', 'ARMORY', 'BLASTERS', 'Web shooter', 'Spider', '>WEB<']) {
+      expect(body, stale).not.toContain(stale);
+    }
+    expect(body).toContain('>GOO<');
+    expect(body).toContain('Neatnik');
   });
 
-  it('teaches the gestures without tying them to web ammo', () => {
-    // Round 6 made the gestures universal: they fire the loadout, so copy that
-    // says "with WEB loaded" would now be wrong.
-    expect(idle).toContain('THWIP');
-    expect(idle).not.toMatch(/with WEB loaded/i);
+  it('offers the tutorial replay on the title', () => {
+    expect(idle).toContain('id="btn-tutorial"');
+    expect(idle).toContain('>TUTORIAL<');
   });
 
   it('keeps every rendered string ASCII (the MSDF font has no fancy glyphs)', () => {

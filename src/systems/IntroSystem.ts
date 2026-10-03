@@ -21,10 +21,15 @@ import {
   SRGBColorSpace,
   Vector3,
   VisibilityState,
+  XRMesh,
+  XRPlane,
 } from '@iwsdk/core';
-import type { Entity, Texture } from '@iwsdk/core';
+import type { Entity, Object3D, Texture } from '@iwsdk/core';
+import type { Signal } from '@preact/signals-core';
 
 import { INTRO } from '../config';
+import { RoomProbe, apparentScale, isWallNormal, yawFacingNormal } from '../room-probe';
+import { GamePhase } from '../types';
 import { SPLAT_TEXTURE_KEY } from './SplatterSystem';
 
 /** AssetManifest key main.ts registers public/brand/logo.png under. */
@@ -167,6 +172,15 @@ export function faceYaw(forwardX: number, forwardZ: number): number {
   return Math.atan2(-forwardX, -forwardZ);
 }
 
+/**
+ * Round 9 (verified bug): the intro may only play over the title screen.
+ * Re-entering AR mid-round (the session ended, the round paused, ENTER AR
+ * again) used to replay it and hide the HUD over a live round. Pure.
+ */
+export function introAllowedInPhase(phase: GamePhase): boolean {
+  return phase === GamePhase.Idle;
+}
+
 // ---- system ---------------------------------------------------------------
 
 const Phase = { Idle: 0, Waiting: 1, Playing: 2, Finished: 3 } as const;
@@ -193,6 +207,9 @@ const ORDER = { ring: 990, splat: 991, particles: 996, logo: 997, tagline: 998 }
  */
 export class IntroSystem extends createSystem({
   hud: { required: [PanelUI], where: [eq(PanelUI, 'config', HUD_CONFIG_PATH)] },
+  // Round 9: real walls to splat the logo onto (spawn-time raycast only).
+  planes: { required: [XRPlane] },
+  meshes: { required: [XRMesh] },
 }) {
   private phase: Phase = Phase.Idle;
   private visible = false;
@@ -246,10 +263,29 @@ export class IntroSystem extends createSystem({
   private scl!: Vector3;
   private headPos!: Vector3;
   private origin!: Vector3;
+  private probe?: RoomProbe;
+  private probeDir?: Vector3;
+  private probeOrigin?: Vector3;
+  private gamePhase?: Signal<GamePhase>;
+  /** Round 9: the logo landed on a real wall this time (diagnostics / harness). */
+  onWall = false;
+
+  /** True once this session's intro is over (or was never going to play). */
+  get finished(): boolean {
+    return this.phase === Phase.Finished || (!INTRO.enabled && this.visible);
+  }
 
   init() {
     this.frame = createIntroFrame();
-    if (!INTRO.enabled) return;
+    this.gamePhase = this.globals.gamePhase as Signal<GamePhase> | undefined;
+    if (!INTRO.enabled) {
+      this.cleanupFuncs.push(
+        this.world.visibilityState.subscribe((state) => {
+          this.visible = state === VisibilityState.Visible;
+        }),
+      );
+      return;
+    }
 
     this.matrix = new Matrix4();
     this.quat = new Quaternion();
@@ -278,8 +314,14 @@ export class IntroSystem extends createSystem({
           this.endIntro();
           this.phase = Phase.Idle;
         } else if (state === VisibilityState.Visible && this.phase === Phase.Idle) {
-          this.phase = Phase.Waiting;
-          this.wait = INTRO.startDelaySec;
+          const phase = this.gamePhase?.peek() ?? GamePhase.Idle;
+          if (introAllowedInPhase(phase)) {
+            this.phase = Phase.Waiting;
+            this.wait = INTRO.startDelaySec;
+          } else {
+            // Back into AR mid-round: straight to the HUD, no intro.
+            this.endIntro();
+          }
         }
       }),
     );
@@ -488,9 +530,18 @@ export class IntroSystem extends createSystem({
       eyeY + INTRO.heightOffset,
       this.headPos.z + fz * INTRO.distance,
     );
+    let yaw = faceYaw(fx, fz);
+    this.baseScale = 1;
+    this.onWall = false;
+    // Round 9: splat it onto the real wall in front when there is one, so
+    // the very first thing the player sees is paint on THEIR room.
+    if (INTRO.wallSnap && this.snapToWall(fx, fz, eyeY + INTRO.heightOffset)) {
+      yaw = this.wallYaw;
+      this.onWall = true;
+    }
     root.position.copy(this.origin);
-    root.rotation.set(0, faceYaw(fx, fz), 0);
-    root.scale.setScalar(1);
+    root.rotation.set(0, yaw, 0);
+    root.scale.setScalar(this.baseScale);
     root.visible = true;
 
     this.t = 0;
@@ -502,6 +553,51 @@ export class IntroSystem extends createSystem({
     this.phase = Phase.Playing;
     this.setHudVisible(false);
     this.playCue(this.whoosh, INTRO.whooshVolume);
+  }
+
+  private baseScale = 1;
+  private wallYaw = 0;
+
+  /**
+   * Cast level from the eyes along the gaze; on a wall within
+   * [wallMinDist, wallMaxDist] move `origin` onto it (stood off along its
+   * normal), face the logo out of the wall and keep its apparent size.
+   * @returns false (origin untouched) with no scene data or no wall in range.
+   */
+  private snapToWall(fx: number, fz: number, y: number): boolean {
+    this.probe ??= new RoomProbe();
+    this.probeDir ??= new Vector3();
+    this.probeOrigin ??= new Vector3();
+    this.probeDir.set(fx, 0, fz);
+    this.probeOrigin.set(this.headPos.x, y, this.headPos.z);
+    const objects: Array<Object3D | undefined> = [];
+    for (const e of this.queries.planes.entities) objects.push(e.object3D);
+    for (const e of this.queries.meshes.entities) objects.push(e.object3D);
+    if (objects.length === 0) return false;
+    const dist = this.probe.cast(
+      this.probeOrigin,
+      this.probeDir,
+      objects,
+      INTRO.wallMinDist,
+      INTRO.wallMaxDist,
+      (_x, ny) => isWallNormal(ny, INTRO.wallMaxTiltDeg),
+    );
+    if (!Number.isFinite(dist)) return false;
+    const n = this.probe.hitNormal;
+    const p = this.probe.point;
+    this.origin.set(
+      p.x + n.x * INTRO.wallStandoff,
+      y,
+      p.z + n.z * INTRO.wallStandoff,
+    );
+    this.wallYaw = yawFacingNormal(n.x, n.z);
+    this.baseScale = apparentScale(
+      dist,
+      INTRO.distance,
+      INTRO.wallScaleMin,
+      INTRO.wallScaleMax,
+    );
+    return true;
   }
 
   private endIntro(): void {
@@ -585,6 +681,11 @@ export class IntroSystem extends createSystem({
     const dt = Math.min(Math.max(delta, 0), 0.1);
 
     if (this.phase === Phase.Waiting) {
+      // A round may have started during the start delay (A button): bail.
+      if (!introAllowedInPhase(this.gamePhase?.peek() ?? GamePhase.Idle)) {
+        this.endIntro();
+        return;
+      }
       this.wait -= dt;
       if (this.wait <= 0) this.beginIntro();
       return;
@@ -624,7 +725,7 @@ export class IntroSystem extends createSystem({
   private apply(f: IntroFrame): void {
     const root = this.root!;
     root.position.set(this.origin.x, this.origin.y + f.rise, this.origin.z);
-    root.scale.setScalar(Math.max(1e-3, f.groupScale));
+    root.scale.setScalar(Math.max(1e-3, f.groupScale * this.baseScale));
 
     for (let i = 0; i < this.splats.length; i++) {
       const mesh = this.splats[i];

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
-import { CHILL } from '../../src/config';
+import { CHILL, TUTORIAL } from '../../src/config';
 
 /**
  * The competition's hands-first bar is "can someone finish the whole thing
@@ -16,8 +16,10 @@ describe('hands-first HUD copy', () => {
   const idle = section('section-idle', 'section-playing');
   const chill = body.slice(body.indexOf('id="section-chill"'));
 
-  it('names the pinch before the trigger for firing', () => {
-    expect(idle).toMatch(/Pinch or trigger = fire/);
+  it('teaches firing by the pinch (round 9: in the tutorial, not a title tile)', () => {
+    const tutorial = body.slice(body.indexOf('id="section-tutorial"'));
+    expect(tutorial.toLowerCase()).toContain('pinch');
+    expect(TUTORIAL.lines.fire.toLowerCase()).toContain('pinch');
   });
 
   it('tells a hands-only player which hand presses buttons', () => {

@@ -1,7 +1,12 @@
 import {
   AssetManager,
   Box3,
+  CanvasTexture,
   CylinderGeometry,
+  DoubleSide,
+  MeshBasicMaterial,
+  PlaneGeometry,
+  SRGBColorSpace,
   Group,
   Mesh,
   MeshStandardMaterial,
@@ -17,6 +22,7 @@ import type { Signal } from '@preact/signals-core';
 
 import { SPLOTBOTS } from '../config';
 import { GamePhase } from '../types';
+import type { PipFocus } from '../types';
 
 const TAU = Math.PI * 2;
 const DEG_TO_RAD = Math.PI / 180;
@@ -118,6 +124,50 @@ export function pipHoverPoint(
 }
 
 /**
+ * Round 9: where Pip hovers when the tutorial points him at something (the
+ * wall ring, the wrist palette, a Mopsy): beside the subject in the viewer's
+ * frame - `left` metres to the viewer's left, `up` above, `toward` metres
+ * toward the viewer - so he never sits on the target or in the line of fire.
+ *
+ * @param px,py,pz  the subject (world)
+ * @param hx,hz     the viewer's head on the floor plane
+ */
+export function focusHoverPoint(
+  px: number,
+  py: number,
+  pz: number,
+  hx: number,
+  hz: number,
+  left: number,
+  up: number,
+  toward: number,
+  out: Float32Array,
+): void {
+  let tx = hx - px;
+  let tz = hz - pz;
+  const len = Math.sqrt(tx * tx + tz * tz);
+  if (len > 1e-4) {
+    tx /= len;
+    tz /= len;
+  } else {
+    tx = 0;
+    tz = 1;
+  }
+  // Viewer looks along -t; their right is (-t) x +Y = (tz, 0, -tx).
+  const rx = tz;
+  const rz = -tx;
+  out[0] = px - rx * left + tx * toward;
+  out[1] = py + up;
+  out[2] = pz - rz * left + tz * toward;
+}
+
+/** Speech-bubble width, metres, for a bubble `dist` metres from the eyes. */
+export function bubbleWidth(dist: number): number {
+  const w = 0.2 * (Number.isFinite(dist) ? dist : 1);
+  return w < 0.28 ? 0.28 : w > 0.75 ? 0.75 : w;
+}
+
+/**
  * Pitch that leans Pip's face toward a head `dy` metres above it and
  * `horizontal` metres away, clamped to ±`maxRad`. Positive = nose up.
  */
@@ -148,6 +198,15 @@ export class PipSystem extends createSystem({
 }) {
   private gamePhase!: Signal<GamePhase>;
   private bestScore?: Signal<number>;
+  /** Round 9: the tutorial's point of interest. @see focusHoverPoint */
+  private focus?: PipFocus;
+  /** Round 9: the tutorial line Pip says in his speech bubble. */
+  private tutorialLine?: Signal<string>;
+  private bubble?: Mesh;
+  private bubbleTexture?: CanvasTexture;
+  private bubbleCanvas?: HTMLCanvasElement;
+  private bubbleText = '';
+  private focusTarget!: Vector3;
 
   private holder!: Group;
   private rig!: Group;
@@ -180,6 +239,9 @@ export class PipSystem extends createSystem({
   init() {
     this.gamePhase = this.globals.gamePhase as Signal<GamePhase>;
     this.bestScore = this.globals.bestScore as Signal<number> | undefined;
+    this.focus = this.globals.pipFocus as PipFocus | undefined;
+    this.tutorialLine = this.globals.tutorialLine as Signal<string> | undefined;
+    this.focusTarget = new Vector3();
     this.pos = new Vector3();
     this.target = new Float32Array(3);
     this.spin = new Float32Array(2);
@@ -209,6 +271,12 @@ export class PipSystem extends createSystem({
       parent: this.world.sceneEntity,
       persistent: true,
     });
+    this.buildBubble();
+    if (this.tutorialLine) {
+      this.cleanupFuncs.push(
+        this.tutorialLine.subscribe((line) => this.drawBubble(line)),
+      );
+    }
 
     if (this.bestScore) {
       this.lastBest = this.bestScore.peek();
@@ -236,10 +304,15 @@ export class PipSystem extends createSystem({
       }
     }
 
-    const shown = pipShownInPhase(this.gamePhase.peek());
+    // Round 9: the tutorial keeps Pip out (and pointing) even in its
+    // practice round, which is a Playing phase.
+    const focused = this.focus?.active === 1;
+    const talking = this.bubbleText !== '';
+    const shown = pipShownInPhase(this.gamePhase.peek()) || focused || talking;
     this.presence = stepPresence(this.presence, shown, pip.flySec, delta);
     if (this.presence <= 0) {
       this.holder.visible = false;
+      if (this.bubble) this.bubble.visible = false;
       this.placed = false;
       return;
     }
@@ -250,6 +323,7 @@ export class PipSystem extends createSystem({
     // never hovers beside an empty spot in front of the logo burst.
     if (!hudObject || !hudObject.visible) {
       this.holder.visible = false;
+      if (this.bubble) this.bubble.visible = false;
       return;
     }
 
@@ -281,21 +355,39 @@ export class PipSystem extends createSystem({
       );
     }
     const halfWidth = this.panelHalfWidth;
-    pipHoverPoint(
-      this.scratch.x,
-      this.scratch.y,
-      this.scratch.z,
-      this.right.x,
-      this.right.y,
-      this.right.z,
-      tx,
-      tz,
-      halfWidth,
-      pip.besidePanel,
-      pip.abovePanel,
-      pip.towardViewer,
-      this.target,
-    );
+    const focus = this.focus;
+    if (focused && focus) {
+      const fp = focus.position;
+      const fo = focus.offset;
+      this.focusTarget.set(fp[0], fp[1], fp[2]);
+      focusHoverPoint(
+        fp[0],
+        fp[1],
+        fp[2],
+        this.headPos.x,
+        this.headPos.z,
+        fo[0],
+        fo[1],
+        fo[2],
+        this.target,
+      );
+    } else {
+      pipHoverPoint(
+        this.scratch.x,
+        this.scratch.y,
+        this.scratch.z,
+        this.right.x,
+        this.right.y,
+        this.right.z,
+        tx,
+        tz,
+        halfWidth,
+        pip.besidePanel,
+        pip.abovePanel,
+        pip.towardViewer,
+        this.target,
+      );
+    }
 
     if (!this.placed) {
       this.pos.set(this.target[0], this.target[1], this.target[2]);
@@ -330,7 +422,20 @@ export class PipSystem extends createSystem({
     const dx = this.headPos.x - this.holder.position.x;
     const dz = this.headPos.z - this.holder.position.z;
     const horizontal = Math.sqrt(dx * dx + dz * dz);
-    this.holder.rotation.set(0, Math.atan2(dx, dz) + this.spin[0], 0);
+    // Pointing: while the tutorial has him on a subject he turns half-way
+    // toward it - the player still sees his face, and his nose says "there".
+    let yaw = Math.atan2(dx, dz);
+    if (focused) {
+      const fx = this.focusTarget.x - this.holder.position.x;
+      const fz = this.focusTarget.z - this.holder.position.z;
+      if (fx * fx + fz * fz > 1e-4) {
+        let d = Math.atan2(fx, fz) - yaw;
+        while (d > Math.PI) d -= TAU;
+        while (d < -Math.PI) d += TAU;
+        yaw += d * 0.5;
+      }
+    }
+    this.holder.rotation.set(0, yaw + this.spin[0], 0);
     const pitch = lookTilt(
       this.headPos.y - this.holder.position.y,
       horizontal,
@@ -347,6 +452,106 @@ export class PipSystem extends createSystem({
     for (let i = 0; i < this.rotors.length; i++) {
       this.rotors[i].rotation.y += i % 2 === 0 ? rotorStep : -rotorStep;
     }
+
+    this.placeBubble(horizontal);
+  }
+
+  // ---- Round 9: the speech bubble -------------------------------------------
+
+  private buildBubble(): void {
+    if (typeof document === 'undefined') return;
+    this.bubbleCanvas = document.createElement('canvas');
+    this.bubbleCanvas.width = 1024;
+    this.bubbleCanvas.height = 192;
+    this.bubbleTexture = new CanvasTexture(this.bubbleCanvas);
+    this.bubbleTexture.colorSpace = SRGBColorSpace;
+    const material = new MeshBasicMaterial({
+      map: this.bubbleTexture,
+      transparent: true,
+      depthWrite: false,
+      toneMapped: false,
+      side: DoubleSide,
+    });
+    const mesh = new Mesh(new PlaneGeometry(1, 192 / 1024), material);
+    mesh.name = 'PipBubble';
+    mesh.visible = false;
+    mesh.renderOrder = 996;
+    mesh.raycast = () => {};
+    this.bubble = mesh;
+    this.world.createTransformEntity(mesh, {
+      parent: this.world.sceneEntity,
+      persistent: true,
+    });
+  }
+
+  /** A white rounded bubble with a tail toward Pip, dark bold text. */
+  private drawBubble(text: string): void {
+    this.bubbleText = text;
+    const canvas = this.bubbleCanvas;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx || !this.bubbleTexture) return;
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    if (!text) {
+      this.bubbleTexture.needsUpdate = true;
+      return;
+    }
+    ctx.font = "800 64px Rubik, 'Arial Black', 'Helvetica Neue', Arial, sans-serif";
+    const tw = Math.min(w - 16, ctx.measureText(text).width + 80);
+    const x0 = (w - tw) / 2;
+    const top = 8;
+    const bottom = h - 46;
+    const r = 40;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.96)';
+    ctx.strokeStyle = '#48dbfb';
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(x0 + r, top);
+    ctx.lineTo(x0 + tw - r, top);
+    ctx.arcTo(x0 + tw, top, x0 + tw, top + r, r);
+    ctx.lineTo(x0 + tw, bottom - r);
+    ctx.arcTo(x0 + tw, bottom, x0 + tw - r, bottom, r);
+    // Tail down toward Pip, who hovers under the bubble's middle.
+    ctx.lineTo(w / 2 + 26, bottom);
+    ctx.lineTo(w / 2, h - 6);
+    ctx.lineTo(w / 2 - 26, bottom);
+    ctx.lineTo(x0 + r, bottom);
+    ctx.arcTo(x0, bottom, x0, bottom - r, r);
+    ctx.lineTo(x0, top + r);
+    ctx.arcTo(x0, top, x0 + r, top, r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#0b0c14';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, w / 2, (top + bottom) / 2 + 3, w - 60);
+    this.bubbleTexture.needsUpdate = true;
+  }
+
+  /** Above Pip, facing the head, sized for legibility at his distance. */
+  private placeBubble(horizontal: number): void {
+    const bubble = this.bubble;
+    if (!bubble) return;
+    const show = this.bubbleText !== '' && this.holder.visible && this.presence > 0.6;
+    bubble.visible = show;
+    if (!show) return;
+    const width = bubbleWidth(Math.max(horizontal, 0.3));
+    bubble.scale.set(width, width, 1);
+    bubble.position.set(
+      this.holder.position.x,
+      this.holder.position.y + SPLOTBOTS.pip.sizeMeters * 0.55 + width * 0.11,
+      this.holder.position.z,
+    );
+    bubble.rotation.set(
+      0,
+      Math.atan2(
+        this.headPos.x - bubble.position.x,
+        this.headPos.z - bubble.position.z,
+      ),
+      0,
+    );
   }
 
   /**

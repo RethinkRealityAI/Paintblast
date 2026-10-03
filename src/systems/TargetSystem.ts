@@ -1556,6 +1556,7 @@ export class TargetSystem extends createSystem({
         break;
       }
     }
+    this.events.emit(GameEvent.BotSpawned, this.slotWorldPos[slot * 3], this.slotWorldPos[slot * 3 + 1], this.slotWorldPos[slot * 3 + 2], packPopData(slot, archetype, 0)); // R9: first-encounter coaching (CoachSystem)
     return slot;
   }
 

@@ -180,7 +180,9 @@ describe('INITIAL_HUD_STATE', () => {
   it('starts at score 0 and points at both ways in', () => {
     expect(INITIAL_HUD_STATE.score).toBe(0);
     expect(INITIAL_HUD_STATE.timer).toMatch(/^\d+:\d{2}$/);
-    expect(INITIAL_HUD_STATE.status).toContain('START');
+    // Round 9: names the button that exists (PLAY), not a stale START.
+    expect(INITIAL_HUD_STATE.status).toContain('PLAY');
+    expect(INITIAL_HUD_STATE.status).not.toContain('START');
     expect(INITIAL_HUD_STATE.status).toContain('CHILL');
   });
 
