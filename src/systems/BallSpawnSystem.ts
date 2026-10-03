@@ -23,7 +23,7 @@ import {
   PhysicsShapeType,
   SRGBColorSpace,
 } from '@iwsdk/core';
-import type { Entity, Material, Object3D } from '@iwsdk/core';
+import type { Entity, Object3D } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
 import {
@@ -32,7 +32,7 @@ import {
   BLASTER,
   CHILL,
   FIRE,
-  PALETTE,
+  MENU,
   RENDER,
   WEB,
 } from '../config';
@@ -54,7 +54,9 @@ import {
   nextWebSubMode,
   packFiredData,
   TutorialStep,
+  WristMenuState,
 } from '../types';
+import { menuInteractive, menuRayHit } from '../wrist-menu';
 import { Easel } from './EaselSystem';
 
 const DEG_TO_RAD = Math.PI / 180;
@@ -125,77 +127,12 @@ export const Ball = createComponent('Ball', {
 });
 
 /**
- * One blob of paint on the palette board. Four are seeded at startup (see
- * `seedWristPalette` in src/main.ts). Pressing one sets the paint COLOUR and
- * nothing else.
- *
- * Rounds 1-2 had a single `PaletteSlot` component carrying both a colour and a
- * kind, which meant sixteen orbs to cover every combination. Splitting the two
- * axes turns that into four dabs plus four chips, and makes each press mean
- * exactly one thing.
+ * Round 10: the palette's PaintDab / KindChip / WebModePad / BlasterModePad
+ * components are gone with the palette. The summonable wrist menu
+ * (WristMenuSystem) hit-tests its own buttons and writes the loadout signals
+ * directly; nothing it draws is an entity, so nothing here selects ammo any
+ * more except the controller's B shortcut.
  */
-export const PaintDab = createComponent('PaintDab', {
-  color: { type: Types.Color, default: [1, 1, 1, 1] },
-});
-
-/**
- * One ammo chip in the row along the palette's near edge. Five of them since
- * round 5: NORMAL / BOUNCY / STICKY / SPLASH pick a {@link BallKind}, and WEB
- * picks a {@link BallStyle}. Pressing any of them sets both signals at once —
- * a paint chip loads its kind *and* puts the style back to Paint — so the row
- * behaves as one five-way choice with exactly one chip lit.
- *
- * The component keeps its round-3 name because renaming it would rename the
- * ECS component id the MCP debugging tools query by, and "the chip that picks
- * what kind of thing comes out" is still what it is.
- *
- * @see PALETTE_CHIP_ORDER in types.ts — the table main.ts builds these from.
- */
-export const KindChip = createComponent('KindChip', {
-  kind: { type: Types.Int8, default: BallKind.Normal },
-  /** @see BallStyle — Paint on the four kind chips, Web on the web chip. */
-  style: { type: Types.Int8, default: BallStyle.Paint },
-});
-
-/**
- * One pad on the wrist sub-mode selector — the little two-button holo gadget
- * WebShooterSystem floats above the left shooter while web ammo is loaded.
- *
- * The pads are built and posed by WebShooterSystem (it owns the shooter they
- * hang off), but the component and the selection logic live here with
- * {@link PaintDab} and {@link KindChip} for two reasons. One is that this
- * system is where "things you press to change what comes out of the barrel"
- * already lives, and the sub-mode is exactly that. The other is concrete:
- * WebShooterSystem imports this module, so declaring the component there and
- * pressing it from here would close an import cycle.
- */
-export const WebModePad = createComponent('WebModePad', {
-  /** @see WebSubMode */
-  mode: { type: Types.Int8, default: WebSubMode.Splat },
-});
-
-/**
- * One of the palette's three launcher pads — HAND / BLASTER / WEB (round 8).
- * Built in main.ts's `seedWristPalette`; pressed, proximity-selected and
- * relit here with the dabs and chips, through the same paths.
- */
-export const BlasterModePad = createComponent('BlasterModePad', {
-  /** @see BlasterMode */
-  mode: { type: Types.Int8, default: BlasterMode.Paint },
-});
-
-/** Scale applied to the currently selected paint dab / ammo chip. */
-export const SELECTED_SLOT_SCALE = 1.3;
-
-/**
- * Scale applied to the selected sub-mode pad. Gentler than the chips' 1.3:
- * two pads sitting 3 cm apart have far less room to swell into than a chip
- * with a whole board behind it.
- *
- * Re-exported from config rather than declared, so the number a test asserts
- * and the number the pad is built at cannot drift.
- */
-export const SELECTED_PAD_SCALE = WEB.selectorSelectedScale;
 
 /**
  * Everything one trigger pull needs to know, written into a caller-owned object
@@ -326,55 +263,6 @@ export function resolveFireGate(
   return out;
 }
 
-/**
- * Paint one chip as selected or not: the swell, plus an emissive lift in the
- * chip's own identity colour.
- *
- * The lift is why every chip owns its material rather than sharing one — a
- * shared material would light the whole row at once. Within a chip the material
- * *is* shared across child meshes (the Bouncy hoop, the web ball's rings), which
- * is exactly what you want: those parts light together.
- *
- * Only `emissiveIntensity` moves. The emissive colour itself is baked at build
- * time in main.ts, so this never has to know what colour a chip is.
- *
- * Round 6 made the scale and the two intensities arguments so the wrist
- * sub-mode pads can wear the identical treatment: a pad is a chip in every way
- * that matters here, it is just smaller and it glows faintly even when it is
- * not the one selected (a dark holo panel reads as broken).
- */
-function paintChipSelection(
-  object3D: Object3D | undefined,
-  selected: boolean,
-  // Explicitly `number`, not inferred: config is declared `as const`, so an
-  // inferred default narrows the parameter to the literal 0.35 and the pads'
-  // brighter lift becomes a type error.
-  selectedScale: number = SELECTED_SLOT_SCALE,
-  onIntensity: number = PALETTE.chipSelectedEmissive,
-  offIntensity = 0,
-): void {
-  if (!object3D) return;
-  object3D.scale.setScalar(selected ? selectedScale : 1);
-
-  const intensity = selected ? onIntensity : offIntensity;
-  const lift = (material: Material) => {
-    const standard = material as MeshStandardMaterial;
-    // Unlit materials (the labels, if one ever ends up under a chip) have no
-    // emissive channel at all; skip rather than inventing one.
-    if (!standard.emissive) return;
-    standard.emissiveIntensity = intensity;
-  };
-
-  object3D.traverse((child) => {
-    const material = (child as Mesh).material as
-      | Material
-      | Material[]
-      | undefined;
-    if (!material) return;
-    if (Array.isArray(material)) material.forEach(lift);
-    else lift(material);
-  });
-}
 
 /**
  * Is this object actually on screen, ancestors included?
@@ -503,41 +391,16 @@ interface PanelDocumentLike {
  * that the next ball still needs.
  */
 export class BallSpawnSystem extends createSystem({
-  dabs: { required: [PaintDab] },
-  chips: { required: [KindChip] },
-  // Two pressed queries rather than one: a dab press and a chip press write
-  // different signals, and neither should touch the other's highlight.
-  //
-  // Neither requires an interaction tag. The elements carry RayInteractable,
-  // PokeInteractable and OneHandGrabbable, and InputSystem's single pointerdown
-  // listener adds `Pressed` whichever of the three pointers landed the hit —
-  // so keying purely off `Pressed` means a fingertip poke, a squeeze and a
-  // pinch all arrive down the same path.
-  pressedDabs: { required: [PaintDab, Pressed] },
-  pressedChips: { required: [KindChip, Pressed] },
-  // The wrist sub-mode selector, on exactly the same footing as the chip row:
-  // one query to relight the pair and one to catch a press, whichever pointer
-  // landed it.
-  pads: { required: [WebModePad] },
-  pressedPads: { required: [WebModePad, Pressed] },
-  modePads: { required: [BlasterModePad] },
-  pressedModePads: { required: [BlasterModePad, Pressed] },
-  // Anything under a pointer that is not a ball or part of the palette blocks
-  // the trigger, so clicking UI never also fires.
-  //
-  // Balls must be excluded: a ball we just launched sits directly on our own
-  // ray for several frames and would otherwise jam the trigger shut.
-  //
-  // Dabs and chips must be excluded because the palette rides the left wrist.
-  // GrabSystem sets `pointerEventsType = { deny: 'ray' }` on grabbables, so a
-  // dab never sees the ray pointer at all — but the *grab* pointer still tags
-  // it Hovered, and (since round 3) so does the touch pointer, whose fingertip
-  // sphere reaches 15 cm. Both of those live on the very hand the palette is
-  // strapped to. That is a hover that never ends, and this check is global, so
-  // it would lock BOTH triggers for the whole session.
+  // Anything under a pointer that is not a ball blocks the trigger, so
+  // clicking UI never also fires. Balls must be excluded: a ball we just
+  // launched sits directly on our own ray for several frames and would
+  // otherwise jam the trigger shut. (Round 10: the wrist palette's dabs, chips
+  // and pads used to need excluding too — their touch / grab hover never
+  // ended. The wrist menu has no Interactable at all, so there is nothing to
+  // exclude; it blocks shots geometrically, and only while open.)
   hoveredUI: {
     required: [Interactable, Hovered],
-    excluded: [Ball, PaintDab, KindChip, WebModePad, BlasterModePad],
+    excluded: [Ball],
   },
   // PanelUI panels run their own pointer pipeline and never receive the
   // Hovered tag, so pointing at the HUD is tested geometrically per shot
@@ -556,8 +419,8 @@ export class BallSpawnSystem extends createSystem({
   private scratchQuaternion!: Quaternion;
   private scratchDirection!: Vector3;
   private scratchPanelMatrix!: Matrix4;
-  private scratchGripPosition!: Vector3;
-  private scratchElementPosition!: Vector3;
+  /** Scratch for {@link menuRayHit}. */
+  private readonly menuScratch = new Float32Array(3);
   /** Round 9: each panel document's buttons, found once. @see panelButtons */
   private readonly buttonCache = new WeakMap<object, UiComponentLike[]>();
 
@@ -601,6 +464,8 @@ export class BallSpawnSystem extends createSystem({
    * wrist — and in Chill, sprayed for as long as the pinch was held.
    */
   private pressConsumed!: Uint8Array;
+  /** Round 10: the wrist menu's live state (WristMenuSystem, priority 8). */
+  private wristMenu?: WristMenuState;
 
   // Per-hand cooldown timestamps (performance.now() ms) and the entity indices
   // needed to move the "selected" highlights, kept as scalars so the system
@@ -614,8 +479,6 @@ export class BallSpawnSystem extends createSystem({
    * Bound on first use: GauntletSystem creates it in its own init().
    */
   private gauntletMuzzles?: GauntletMuzzles;
-  private selectedDabIndex = -1;
-  private previousDabIndex = -1;
 
   init() {
     this.sharedGeometry = new SphereGeometry(BALLS.radius, 16, 12);
@@ -625,8 +488,6 @@ export class BallSpawnSystem extends createSystem({
     this.scratchQuaternion = new Quaternion();
     this.scratchDirection = new Vector3();
     this.scratchPanelMatrix = new Matrix4();
-    this.scratchGripPosition = new Vector3();
-    this.scratchElementPosition = new Vector3();
 
     this.activeKind = this.globals.activeKind as Signal<BallKind>;
     this.activeStyle = this.globals.activeStyle as Signal<BallStyle>;
@@ -644,6 +505,7 @@ export class BallSpawnSystem extends createSystem({
     this.loadout = createShotLoadout();
     this.aimTargets = this.globals.aimTargets as AimTargets | undefined;
     this.pressConsumed = new Uint8Array(2);
+    this.wristMenu = this.globals.wristMenu as WristMenuState | undefined;
     this.assistScratch = new Float32Array(3);
     this.assistOut = new Float32Array(3);
     this.paintAssist = {
@@ -659,44 +521,10 @@ export class BallSpawnSystem extends createSystem({
       maxRange: FIRE.aimAssistMaxRange,
     };
 
-    // main.ts seeds activeColor from INITIAL_PALETTE_SELECTION and pre-scales
-    // the first dab, and dabs are created in PALETTE_DAB_ORDER — so the first
-    // one to qualify IS the default colour. Recording the index here (without
-    // touching the mesh) means the first real press knows which to shrink.
-    //
-    // Chips need no such bookkeeping: their highlight is derived from the two
-    // ammo signals rather than remembered, so it is correct by construction
-    // however the signals were last written. Relighting the row when one
-    // qualifies covers the load order, since the entities appear after init().
     this.cleanupFuncs.push(
-      this.queries.dabs.subscribe('qualify', (dab) => {
-        if (this.selectedDabIndex === -1) {
-          this.selectedDabIndex = dab.index;
-        }
-      }),
-      this.queries.chips.subscribe('qualify', () => this.applyChipHighlight()),
-      this.queries.pads.subscribe('qualify', () => this.applyPadHighlight()),
-      this.queries.pressedDabs.subscribe('qualify', (dab) => {
-        this.consumeActivePinches();
-        this.selectColor(dab);
-      }),
-      this.queries.pressedChips.subscribe('qualify', (chip) => {
-        this.consumeActivePinches();
-        this.selectChip(chip);
-      }),
-      this.queries.modePads.subscribe('qualify', () =>
-        this.applyModePadHighlight(),
-      ),
-      this.queries.pressedModePads.subscribe('qualify', (pad) => {
-        this.consumeActivePinches();
-        this.selectBlasterMode(
-          (pad.getValue(BlasterModePad, 'mode') ??
-            BlasterMode.Paint) as BlasterMode,
-        );
-      }),
-      // The two axes stay in sync whoever writes either: the palette's WEB
-      // chip, the HUD's WEB MODE button and a dab all write activeStyle; the
-      // mode pads and the Armory write blasterMode. @see syncBlasterMode
+      // The two axes stay in sync whoever writes either: the wrist menu's
+      // AMMO row writes activeStyle (a paint kind leaves GOO); its LAUNCHER
+      // row and the HUD's LOADOUT screen write blasterMode. @see syncBlasterMode
       this.activeStyle.subscribe((style) => {
         const next = syncBlasterMode(
           this.blasterMode.peek(),
@@ -708,26 +536,9 @@ export class BallSpawnSystem extends createSystem({
       this.blasterMode.subscribe((mode) => {
         if (mode !== BlasterMode.Web) this.lastPaintMode = mode;
         this.loadStyle(mode === BlasterMode.Web ? BallStyle.Web : BallStyle.Paint);
-        this.applyModePadHighlight();
       }),
-      this.queries.pressedPads.subscribe('qualify', (pad) => {
-        this.consumeActivePinches();
-        this.selectSubMode(
-          (pad.getValue(WebModePad, 'mode') ?? WebSubMode.Splat) as WebSubMode,
-        );
-      }),
-      // Like the chip row, the pad pair is derived from its signal rather than
-      // remembered — the B button and a poke both move the same value.
-      this.webSubMode.subscribe(() => this.applyPadHighlight()),
-      // The chip row follows the two ammo signals wherever they are written
-      // from, not just from a press on this system's own queries. Round 6
-      // needed that: the title screen's WEB MODE button loads web ammo from
-      // HudSystem, and without this the WEB chip would stay dark while the
-      // shooters were plainly on the player's wrists.
-      this.activeStyle.subscribe(() => this.applyChipHighlight()),
-      this.activeKind.subscribe(() => this.applyChipHighlight()),
       // Round 9: the pinch that grabs the easel is spent, exactly like a
-      // pinch on a dab — Chill's spray is level-triggered, so without this
+      // pinch on a menu button — Chill's spray is level-triggered, so without this
       // every grab painted a stripe while you moved the easel.
       this.queries.pressedEasel.subscribe('qualify', () => {
         this.consumeActivePinches();
@@ -736,24 +547,18 @@ export class BallSpawnSystem extends createSystem({
   }
 
   update() {
-    // A press spent on the palette stays spent until it is released.
+    // Round 10: presses the wrist menu spent this frame (a controller trigger
+    // that clicked a menu button, a pinch held while poking one) join the
+    // consumed-press latch, so a menu click never also fires.
+    const menu = this.wristMenu;
+    if (menu && menu.consumeMask) {
+      if (menu.consumeMask & 1) this.pressConsumed[0] = 1;
+      if (menu.consumeMask & 2) this.pressConsumed[1] = 1;
+      menu.consumeMask = 0;
+    }
+    // A press spent on the menu (or the easel) stays spent until released.
     this.releaseConsumedPresses();
 
-    // Palette selection by squeeze works in EVERY phase, and deliberately does
-    // not go through the pointer pipeline: near the wrist palette the touch
-    // pointer's 15 cm hover sphere outranks the grab pointer (MultiPointer
-    // priority is touch > grab > ray), which can swallow squeeze-grabs
-    // entirely. A plain nearest-element-within-reach test on the squeeze-down
-    // frame cannot be outranked by anything.
-    this.trySelectByProximity('left');
-    this.trySelectByProximity('right');
-    // Round 7: the same guarantee for a tracked hand's pinch, measured at the
-    // fingertip — and that pinch is then spent, so it never also fires.
-    // Right hand only: the palette and the selector pads both ride the LEFT
-    // arm, and the left hand's own fingertip sits a few centimetres from its
-    // dabs — so a left pinch (firing, or gripping the easel) would otherwise
-    // change ammo and eat the press.
-    this.trySelectByPinch('right');
     // Round 9: while the easel is held, a fresh pinch from either tracked
     // hand is the second hand joining the two-handed grab (the Pressed tag is
     // already on, so the qualify above does not fire again): spend it too.
@@ -771,7 +576,7 @@ export class BallSpawnSystem extends createSystem({
     // would otherwise keep spraying from where the arm used to be.
     if (this.pausedSignal?.peek()) return;
 
-    // The controller shortcut for the wrist selector. Checked before the UI
+    // The controller shortcut for the GOO sub-mode. Checked before the UI
     // gate on purpose: pointing at the menu is a reason not to *shoot*, never a
     // reason a face button should stop working.
     this.trySubModeButton();
@@ -794,62 +599,8 @@ export class BallSpawnSystem extends createSystem({
   }
 
   /**
-   * Squeeze-to-select that bypasses the pointer pipeline: on the frame this
-   * hand's squeeze goes down, pick the nearest dab, chip or sub-mode pad within
-   * PALETTE.grabSelectRadius of the grip and select it. Runs only on the
-   * squeeze-down edge — eleven squared-distance checks at button-press rate.
-   * The Pressed-tag path (fingertip poke, hand pinch) stays as-is; if both
-   * land in one frame they agree on the result, so double-firing is harmless.
-   *
-   * **Not while that hand is reeling in a tether.** Holding the squeeze is how
-   * you reel, and the squeeze-DOWN edge at the start of a reel would otherwise
-   * change your ammo if the gadget happened to be within 9 cm. The pads live on
-   * the left wrist and you reel with whichever hand fired, so the collision is
-   * rare — but "rare" is exactly the kind of bug that only shows up on device.
-   */
-  private trySelectByProximity(side: 'left' | 'right'): void {
-    const gamepad = this.input.gamepads[side];
-    if (!gamepad || !gamepad.getButtonDown(InputComponent.Squeeze)) return;
-    if (this.tetheredHands.peek() & (side === 'right' ? 2 : 1)) return;
-
-    const grip = this.player.gripSpaces[side];
-    if (!grip) return;
-    grip.getWorldPosition(this.scratchGripPosition);
-    this.selectNearest(this.scratchGripPosition, PALETTE.grabSelectRadius);
-  }
-
-  /**
-   * Pinch-to-select at the fingertip, for tracked hands (round 7).
-   *
-   * Hands have no squeeze button, so {@link trySelectByProximity} never ran for
-   * them: a hand player's only routes were a precise fingertip poke, or a pinch
-   * that had to win the pointer-priority fight described there — and when it
-   * lost, the same pinch fired a paintball at their own wrist. This is the
-   * squeeze path's guarantee, measured from the index fingertip (which meets
-   * the thumb in a pinch) with the tighter {@link PALETTE.pinchSelectRadius},
-   * and a pinch that selects something is marked spent so {@link tryFire}
-   * ignores it until it is released.
-   *
-   * Not on a hand that holds a tether: its pinch reels (WebShooterSystem).
-   */
-  private trySelectByPinch(side: 'left' | 'right'): void {
-    if (!this.input.isPrimary('hand', side)) return;
-    const gamepad = this.input.gamepads[side];
-    if (!gamepad?.getSelectStart()) return;
-    const hand = side === 'right' ? 1 : 0;
-    if (this.tetheredHands.peek() & (hand === 1 ? 2 : 1)) return;
-
-    const tip = this.player.indexTipSpaces?.[side];
-    if (!tip) return;
-    tip.getWorldPosition(this.scratchGripPosition);
-    if (this.selectNearest(this.scratchGripPosition, PALETTE.pinchSelectRadius)) {
-      this.pressConsumed[hand] = 1;
-    }
-  }
-
-  /**
-   * A palette element was just pressed through the pointer pipeline (a poke,
-   * a ray-pinch, the touch sphere): spend the pinch of every tracked hand that
+   * The easel was just grabbed through the pointer pipeline (round 9; the
+   * palette used the same path until round 10): spend the pinch of every tracked hand that
    * is mid-pinch right now, so the same pinch cannot also fire this frame. The
    * pipeline runs at priority -4, well before {@link tryFire} at 10 — which is
    * how round 7's first cut, which only guarded its own fingertip path, still
@@ -883,102 +634,6 @@ export class BallSpawnSystem extends createSystem({
       const gamepad = this.input.gamepads[hand === 1 ? 'right' : 'left'];
       if (!gamepad?.getSelecting()) this.pressConsumed[hand] = 0;
     }
-  }
-
-  /**
-   * Select the nearest dab, chip or (visible) sub-mode pad within `radius` of
-   * `point`. Eleven squared-distance checks, on a press edge only.
-   *
-   * @returns true when something was selected.
-   */
-  private selectNearest(point: Vector3, radius: number): boolean {
-    const radiusSq = radius * radius;
-    let bestDab: Entity | undefined;
-    let bestChip: Entity | undefined;
-    let bestPad: Entity | undefined;
-    let bestDistSq = radiusSq;
-
-    // Round 9: dabs and chips get the same visibility test as the pads. The
-    // palette hides by `visible = false` + scaling its root to 1e-4, which
-    // collapses every element onto the root's origin — still a world position
-    // a squeeze or pinch near the wrist could "select" while it is hidden.
-    for (const dab of this.queries.dabs.entities) {
-      const object3D = dab.object3D;
-      if (!object3D || !visibleInWorld(object3D)) continue;
-      object3D.getWorldPosition(this.scratchElementPosition);
-      const distSq = this.scratchElementPosition.distanceToSquared(
-        point,
-      );
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestDab = dab;
-        bestChip = undefined;
-        bestPad = undefined;
-      }
-    }
-    for (const chip of this.queries.chips.entities) {
-      const object3D = chip.object3D;
-      if (!object3D || !visibleInWorld(object3D)) continue;
-      object3D.getWorldPosition(this.scratchElementPosition);
-      const distSq = this.scratchElementPosition.distanceToSquared(
-        point,
-      );
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestChip = chip;
-        bestDab = undefined;
-        bestPad = undefined;
-      }
-    }
-    // Pads are hidden with the shooters when paint is loaded, and a hidden
-    // object3D still reports a world position — so without this a squeeze near
-    // the left wrist could toggle a sub-mode the player cannot see. The test
-    // has to walk ancestors: WebShooterSystem hides the shooter HOLDER, and the
-    // pad hanging off it stays `visible = true` in its own right.
-    for (const pad of this.queries.pads.entities) {
-      const object3D = pad.object3D;
-      if (!object3D || !visibleInWorld(object3D)) continue;
-      object3D.getWorldPosition(this.scratchElementPosition);
-      const distSq = this.scratchElementPosition.distanceToSquared(
-        point,
-      );
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestPad = pad;
-        bestDab = undefined;
-        bestChip = undefined;
-      }
-    }
-
-    let bestModePad: Entity | undefined;
-    for (const pad of this.queries.modePads.entities) {
-      const object3D = pad.object3D;
-      if (!object3D || !visibleInWorld(object3D)) continue;
-      object3D.getWorldPosition(this.scratchElementPosition);
-      const distSq = this.scratchElementPosition.distanceToSquared(point);
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestModePad = pad;
-      }
-    }
-    if (bestModePad) {
-      this.selectBlasterMode(
-        (bestModePad.getValue(BlasterModePad, 'mode') ??
-          BlasterMode.Paint) as BlasterMode,
-      );
-      return true;
-    }
-
-    if (bestDab) this.selectColor(bestDab);
-    else if (bestChip) this.selectChip(bestChip);
-    else if (bestPad) {
-      this.selectSubMode(
-        (bestPad.getValue(WebModePad, 'mode') ?? WebSubMode.Splat) as WebSubMode,
-      );
-    } else {
-      return false;
-    }
-    return true;
   }
 
   /**
@@ -1117,6 +772,11 @@ export class BallSpawnSystem extends createSystem({
     // player is hauling — every ball from a hand lets go of its tether.
     if (this.tetheredHands.peek() & (hand === 1 ? 2 : 1)) return;
 
+    // Round 10: the OPEN wrist menu. The left hand holds it up (its fire
+    // pauses), the right fingertip poking it never pinch-fires, and a ray
+    // pointing at it is clicking it. A closed menu never blocks anything.
+    if (this.menuBlocksFire(side)) return;
+
     // This hand is clicking the HUD, not shooting. Checked per hand so a
     // left click on the panel never silences the right trigger.
     if (this.isPointingAtPanel(this.player.raySpaces[side])) return;
@@ -1175,6 +835,15 @@ export class BallSpawnSystem extends createSystem({
     if (!canFireInPhase(this.gamePhase.peek(), FIRE.sandboxFireInIdle)) {
       return undefined;
     }
+    // Round 10: the hand holding the open wrist menu does not gesture-fire.
+    if (
+      side === 'left' &&
+      MENU.pauseLeftFireWhileOpen &&
+      this.wristMenu &&
+      menuInteractive(this.wristMenu)
+    ) {
+      return undefined;
+    }
 
     const lastMs = side === 'left' ? this.lastFireLeftMs : this.lastFireRightMs;
     if (nowMs - lastMs < FIRE.cooldownMs) return undefined;
@@ -1185,6 +854,44 @@ export class BallSpawnSystem extends createSystem({
     }
 
     return this.launch(side, originX, originY, originZ, dirX, dirY, dirZ);
+  }
+
+  /**
+   * Round 10: does the open wrist menu stop `side` firing this frame?
+   *
+   * - Left: paused while the menu is open (`MENU.pauseLeftFireWhileOpen`) -
+   *   that hand is holding the menu up.
+   * - Right: while its index fingertip is in the panel's poke zone (a poke is
+   *   not a shot), or while its ray points at the panel (that is a click).
+   *
+   * Always false while the menu is closed or still opening: a closed menu
+   * never blocks a shot (`menuInteractive`).
+   */
+  menuBlocksFire(side: 'left' | 'right'): boolean {
+    const menu = this.wristMenu;
+    if (!menu || !menuInteractive(menu)) return false;
+    if (side === 'left') {
+      if (MENU.pauseLeftFireWhileOpen) return true;
+    } else if (menu.tipNear) {
+      return true;
+    }
+    const ray = this.player.raySpaces[side];
+    if (!ray) return false;
+    ray.getWorldPosition(this.scratchPosition);
+    ray.getWorldQuaternion(this.scratchQuaternion);
+    this.scratchDirection.set(0, 0, -1).applyQuaternion(this.scratchQuaternion);
+    return menuRayHit(
+      menu,
+      this.scratchPosition.x,
+      this.scratchPosition.y,
+      this.scratchPosition.z,
+      this.scratchDirection.x,
+      this.scratchDirection.y,
+      this.scratchDirection.z,
+      MENU.rayMaxMeters,
+      MENU.hitMarginMeters,
+      this.menuScratch,
+    );
   }
 
   /**
@@ -1475,62 +1182,9 @@ export class BallSpawnSystem extends createSystem({
   }
 
   /**
-   * Load a pressed dab's colour and move the colour highlight to it.
-   *
-   * Also drops web ammo. Round 4 made the dabs inert while webbing was loaded,
-   * because a squeeze near the left wrist could silently change a loadout the
-   * mode was ignoring anyway. Round 5 inverts that: with no Web phase to leave,
-   * touching a colour is one of the two ways *out* of webbing, and a palette
-   * that ignored you would be a trap rather than a safeguard.
-   */
-  private selectColor(dab: Entity): void {
-    // Vector/colour fields must be read through a view — getValue throws on them.
-    const color = dab.getVectorView(PaintDab, 'color') as Float32Array;
-    this.activeColor.value = [color[0], color[1], color[2], color[3]];
-    // Dropping web ammo un-lights the WEB chip and re-lights whichever kind
-    // chip was waiting — the chip row is derived from the signals, so it has to
-    // be told the signals moved even though no chip was touched.
-    if (this.loadStyle(BallStyle.Paint)) this.applyChipHighlight();
-
-    // Re-pressing the current dab still confirms the choice (FeedbackSystem
-    // plays a click off AmmoSelected) but must not shuffle the highlight onto
-    // itself, which would leave the previous index pointing at the selection.
-    if (dab.index !== this.selectedDabIndex) {
-      this.previousDabIndex = this.selectedDabIndex;
-      this.selectedDabIndex = dab.index;
-      this.applyDabHighlight();
-    }
-
-    // data stays the ball kind, as it has been since Wave B — the colour rides
-    // on globals.activeColor, which the HUD swatch already subscribes to.
-    this.events.emit(GameEvent.AmmoSelected, 0, 0, 0, this.activeKind.peek());
-  }
-
-  /**
-   * Load a pressed chip: its style always, and its kind when it is a paint
-   * chip. Picking NORMAL after WEB therefore does both halves of what the
-   * player means — "back to paint, and make it the plain kind".
-   */
-  private selectChip(chip: Entity): void {
-    const style = (chip.getValue(KindChip, 'style') ??
-      BallStyle.Paint) as BallStyle;
-
-    if (style === BallStyle.Paint) {
-      const kind = chip.getValue(KindChip, 'kind');
-      if (kind === null) return;
-      this.activeKind.value = kind as BallKind;
-    }
-    this.loadStyle(style);
-    this.applyChipHighlight();
-
-    this.events.emit(GameEvent.AmmoSelected, 0, 0, 0, this.activeKind.peek());
-  }
-
-  /**
    * Write activeStyle only on a real change, so subscribers see one edge.
    *
-   * @returns true when the style actually moved, which is the caller's cue to
-   *   relight the chip row.
+   * @returns true when the style actually moved.
    */
   private loadStyle(style: BallStyle): boolean {
     if (this.activeStyle.peek() === style) return false;
@@ -1538,84 +1192,14 @@ export class BallSpawnSystem extends createSystem({
     return true;
   }
 
-  /** Grow the selected dab and shrink whichever one it replaced. */
-  private applyDabHighlight(): void {
-    for (const dab of this.queries.dabs.entities) {
-      if (dab.index === this.selectedDabIndex) {
-        dab.object3D?.scale.setScalar(SELECTED_SLOT_SCALE);
-      } else if (dab.index === this.previousDabIndex) {
-        dab.object3D?.scale.setScalar(1);
-      }
-    }
-  }
-
   /**
-   * Relight the chip row from the two ammo signals.
-   *
-   * Derived rather than remembered, unlike the dabs, because a chip's selected
-   * state has two independent ways to change: pressing a chip, or pressing a
-   * *dab* (which puts the style back to Paint and therefore un-lights WEB). An
-   * index pair cannot track that without one of the two writers knowing about
-   * the other's bookkeeping; recomputing from the signals is always right.
-   *
-   * Five entities, on a press rather than per frame.
-   */
-  private applyChipHighlight(): void {
-    const style = this.activeStyle.peek();
-    const kind = this.activeKind.peek();
-
-    for (const chip of this.queries.chips.entities) {
-      const chipStyle = chip.getValue(KindChip, 'style') ?? BallStyle.Paint;
-      // A web chip is selected on style alone; a paint chip also has to be the
-      // loaded kind, since all four share the Paint style.
-      const selected =
-        chipStyle === style &&
-        (chipStyle !== BallStyle.Paint ||
-          chip.getValue(KindChip, 'kind') === kind);
-      paintChipSelection(chip.object3D, selected);
-    }
-  }
-
-  /**
-   * Load a launcher mode from a pad or the Armory. Writes only on a change
-   * (the activeStyle sync rides the subscription) and always clicks, like the
-   * other palette presses.
+   * Load a launcher mode (public for MCP smoke tests; the wrist menu and the
+   * LOADOUT screen write the signal directly). Writes only on a change (the
+   * activeStyle sync rides the subscription) and always clicks.
    */
   selectBlasterMode(mode: BlasterMode): void {
     if (this.blasterMode.peek() !== mode) this.blasterMode.value = mode;
     this.events.emit(GameEvent.AmmoSelected, 0, 0, 0, this.activeKind.peek());
-  }
-
-  /** Relight the three mode pads from `blasterMode`. Derived, like the chips. */
-  private applyModePadHighlight(): void {
-    const mode = this.blasterMode.peek();
-    for (const pad of this.queries.modePads.entities) {
-      paintChipSelection(
-        pad.object3D,
-        (pad.getValue(BlasterModePad, 'mode') ?? -1) === mode,
-      );
-    }
-  }
-
-  /**
-   * Relight the two sub-mode pads from `webSubMode`.
-   *
-   * Same derived-not-remembered rule as the chip row, and for the same reason:
-   * three inputs move this value (a poke, a squeeze, the B button) and none of
-   * them should have to know what the others did. Two entities, on a press.
-   */
-  private applyPadHighlight(): void {
-    const mode = this.webSubMode.peek();
-    for (const pad of this.queries.pads.entities) {
-      const padMode = pad.getValue(WebModePad, 'mode') ?? WebSubMode.Splat;
-      paintChipSelection(
-        pad.object3D,
-        padMode === mode,
-        SELECTED_PAD_SCALE,
-        WEB.selectorSelectedEmissive,
-        WEB.selectorIdleEmissive,
-      );
-    }
   }
 
   /**

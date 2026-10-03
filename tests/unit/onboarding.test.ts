@@ -292,7 +292,7 @@ describe('first-encounter coaching', () => {
   });
 
   it('ships the briefed tips, short and ASCII', () => {
-    expect(coachLineFor(Neatnik.Squeegee, COACH.lines)).toBe('Shield! Hit its side or bank a shot');
+    expect(coachLineFor(Neatnik.Squeegee, COACH.lines)).toBe('Shield! Hit it 3x to break it, or flank');
     expect(coachLineFor(Neatnik.Peekaboo, COACH.lines)).toBe('Hiding! Hit it when it peeks');
     expect(coachLineFor(Neatnik.DusterDuke, COACH.lines)).toBe('BOSS! GOO > TETHER hauls him in');
     expect(coachLineFor(Neatnik.Mopsy, COACH.lines)).toBe('');

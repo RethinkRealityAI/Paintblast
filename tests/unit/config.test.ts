@@ -10,7 +10,7 @@ import {
   HAPTICS,
   HUD,
   IMPACT,
-  PALETTE,
+  MENU,
   ROOM,
   SPLAT,
   TARGETS,
@@ -18,13 +18,7 @@ import {
   AUDIO,
   AUDIO_VOLUME,
 } from '../../src/config';
-import {
-  BallKind,
-  BALL_KIND_NAMES,
-  PALETTE_CHIP_COUNT,
-  PALETTE_DAB_COUNT,
-} from '../../src/types';
-import { SELECTED_SLOT_SCALE } from '../../src/systems/BallSpawnSystem';
+import { BallKind, BALL_KIND_NAMES } from '../../src/types';
 import { REST_SPLAT_MULT } from '../../src/systems/BallFlightSystem';
 import { FLOOR_GUARD_CENTRE_Y } from '../../src/systems/FloorGuardSystem';
 
@@ -246,162 +240,38 @@ describe('HUD', () => {
   });
 });
 
-describe('PALETTE', () => {
-  /** Whether a point in the board's plane lands on the wooden oval. */
-  const onBoard = (x: number, z: number) => {
-    const semiX = PALETTE.boardRadius;
-    const semiZ = PALETTE.boardRadius * PALETTE.boardOvalScale;
-    return (x / semiX) ** 2 + (z / semiZ) ** 2 <= 1;
-  };
-
-  /** Dab i's position in the board's XZ plane. Mirrors seedWristPalette. */
-  const dabAt = (i: number) => {
-    const span = PALETTE.dabArcEndDeg - PALETTE.dabArcStartDeg;
-    const angle =
-      ((PALETTE.dabArcStartDeg + (span * i) / (PALETTE_DAB_COUNT - 1)) *
-        Math.PI) /
-      180;
-    return {
-      x: Math.sin(angle) * PALETTE.dabArcRadius,
-      z: -Math.cos(angle) * PALETTE.dabArcRadius,
-    };
-  };
-
-  it('is small enough to wear and big enough to hit', () => {
-    expect(PALETTE.boardRadius).toBeGreaterThan(0);
-    expect(PALETTE.boardThickness).toBeGreaterThan(0);
-    expect(PALETTE.dabRadius).toBeGreaterThan(0);
-    expect(PALETTE.chipRadius).toBeGreaterThan(0);
-    // A whole forearm of palette would be unusable.
-    expect(PALETTE.boardRadius * 2).toBeLessThan(0.4);
-    // A board thicker than a dab is wide would read as a brick.
-    expect(PALETTE.boardThickness).toBeLessThan(PALETTE.dabRadius);
+describe('MENU (round 10 wrist menu)', () => {
+  it('opens and closes quickly, and closes when the hand is gone', () => {
+    expect(MENU.openSec).toBeGreaterThan(0.05);
+    expect(MENU.openSec).toBeLessThan(0.4);
+    expect(MENU.openFromScale).toBeGreaterThan(0);
+    expect(MENU.openFromScale).toBeLessThan(1);
+    expect(MENU.closeAfterLostSec).toBeGreaterThan(0.2);
+    expect(MENU.closeAfterLostSec).toBeLessThan(2);
+    expect(MENU.autoCloseIdleSec).toBeGreaterThanOrEqual(0);
   });
 
-  it('squashes the board into an oval rather than leaving it a disc', () => {
-    expect(PALETTE.boardOvalScale).toBeGreaterThan(0);
-    expect(PALETTE.boardOvalScale).toBeLessThan(1);
+  it('gem poke has hysteresis and a debounce', () => {
+    expect(MENU.gemPokeExitRadius).toBeGreaterThan(MENU.gemPokeEnterRadius);
+    expect(MENU.gemPokeEnterRadius).toBeGreaterThan(MENU.gemRadius);
+    expect(MENU.gemDebounceSec).toBeGreaterThan(0.1);
   });
 
-  it('spaces the dabs so neighbours never overlap, even when selected', () => {
-    // Arc length between adjacent dabs must clear the fattened diameter of the
-    // highlighted one, or picking a colour smears two together.
-    const span =
-      ((PALETTE.dabArcEndDeg - PALETTE.dabArcStartDeg) * Math.PI) / 180;
-    const spacing = (PALETTE.dabArcRadius * span) / (PALETTE_DAB_COUNT - 1);
-    expect(spacing).toBeGreaterThan(
-      PALETTE.dabRadius * 2 * SELECTED_SLOT_SCALE,
-    );
+  it('poke re-arms in front of the face, beyond the select depth', () => {
+    expect(MENU.selectDepthMeters).toBeGreaterThan(0);
+    expect(MENU.rearmMeters).toBeGreaterThan(0);
+    expect(MENU.hoverMeters).toBeGreaterThan(MENU.rearmMeters);
+    expect(MENU.maxBehindMeters).toBeGreaterThan(MENU.selectDepthMeters);
+    // The visible sink never pushes a button below the panel face.
+    expect(MENU.sinkMaxMeters).toBeLessThanOrEqual(MENU.buttonLift);
   });
 
-  it('keeps every dab on the board, arced toward its far edge', () => {
-    for (let i = 0; i < PALETTE_DAB_COUNT; i++) {
-      const { x, z } = dabAt(i);
-      expect(onBoard(x, z)).toBe(true);
-      // -Z is the far edge; dabs belong up there, not under the chip row.
-      expect(z).toBeLessThan(0);
-    }
+  it('hit slop stays well inside the gaps between buttons', () => {
+    expect(2 * MENU.hitMarginMeters).toBeLessThan(MENU.buttonGap);
   });
 
-  it('spaces the chips so neighbours never overlap, even when selected', () => {
-    expect(PALETTE.chipSpacing).toBeGreaterThan(
-      PALETTE.chipRadius * 2 * SELECTED_SLOT_SCALE,
-    );
-  });
-
-  it('puts the chip row on the near edge, clear of the paint dabs', () => {
-    const rowHalfWidth = ((PALETTE_CHIP_COUNT - 1) / 2) * PALETTE.chipSpacing;
-    expect(onBoard(rowHalfWidth, PALETTE.chipRowOffset)).toBe(true);
-    // +Z is the wrist side. Nearest dab edge must stay clear of the chip row.
-    expect(PALETTE.chipRowOffset).toBeGreaterThan(0);
-    const nearestDabEdge = Math.max(
-      ...Array.from({ length: PALETTE_DAB_COUNT }, (_, i) => dabAt(i).z),
-    ) + PALETTE.dabRadius;
-    expect(PALETTE.chipRowOffset - PALETTE.chipRadius).toBeGreaterThan(
-      nearestDabEdge,
-    );
-  });
-
-  it('flattens the dabs into paint rather than leaving them marbles', () => {
-    expect(PALETTE.dabFlatten).toBeGreaterThan(0);
-    expect(PALETTE.dabFlatten).toBeLessThan(1);
-  });
-
-  it('floats the board clear of the hand rather than inside it', () => {
-    expect(PALETTE.wristOffsetY).toBeGreaterThan(PALETTE.boardThickness);
-    expect(Math.abs(PALETTE.tiltDeg)).toBeLessThanOrEqual(90);
-  });
-
-  it('keeps the dabs glossy and the chips matte, so paint reads as paint', () => {
-    expect(PALETTE.dabRoughness).toBeGreaterThanOrEqual(0);
-    expect(PALETTE.dabRoughness).toBeLessThan(0.5);
-    expect(PALETTE.chipRoughness).toBeGreaterThan(PALETTE.dabRoughness);
-    expect(PALETTE.boardRoughness).toBeGreaterThan(PALETTE.dabRoughness);
-  });
-
-  it('lifts the chips off the board so they read as objects, not paint', () => {
-    expect(PALETTE.chipLift).toBeGreaterThan(0);
-  });
-
-  it('fits five labelled chips across the board without them touching', () => {
-    // Round 5's real geometric constraint: the row went from four chips to five
-    // AND grew a caption under each. Labels wider than the column overlap their
-    // neighbours, which is worse than no labels at all.
-    expect(PALETTE.chipLabelWidth).toBeLessThan(PALETTE.chipSpacing);
-    expect(PALETTE.chipLabelHeight).toBeGreaterThan(0);
-    expect(PALETTE.chipLabelWidth).toBeGreaterThan(PALETTE.chipLabelHeight);
-
-    const rowHalfWidth = ((PALETTE_CHIP_COUNT - 1) / 2) * PALETTE.chipSpacing;
-    expect(rowHalfWidth + PALETTE.chipRadius).toBeLessThan(
-      PALETTE.boardRadius,
-    );
-  });
-
-  it('parks each label between its chip and the paint, clear of both', () => {
-    const labelFarEdge =
-      PALETTE.chipRowOffset -
-      PALETTE.chipRadius -
-      PALETTE.chipLabelGap -
-      PALETTE.chipLabelHeight;
-    // Behind the chip (toward the board's far edge)...
-    expect(PALETTE.chipLabelGap).toBeGreaterThan(0);
-    // ...and still clear of the nearest paint dab.
-    const nearestDabEdge =
-      Math.max(
-        ...Array.from({ length: PALETTE_DAB_COUNT }, (_, i) => dabAt(i).z),
-      ) + PALETTE.dabRadius;
-    expect(labelFarEdge).toBeGreaterThan(nearestDabEdge);
-    // Floating off the board, not sunk into it or hovering above the chips.
-    expect(PALETTE.chipLabelLift).toBeGreaterThan(0);
-    expect(PALETTE.chipLabelLift).toBeLessThan(PALETTE.chipRadius);
-  });
-
-  it('bakes labels at a power-of-two texture matching the plane aspect', () => {
-    for (const px of [PALETTE.chipLabelPxW, PALETTE.chipLabelPxH]) {
-      expect(Number.isInteger(px)).toBe(true);
-      expect(px).toBeGreaterThan(0);
-      expect(Number.isInteger(Math.log2(px))).toBe(true);
-    }
-    const textureAspect = PALETTE.chipLabelPxW / PALETTE.chipLabelPxH;
-    const planeAspect = PALETTE.chipLabelWidth / PALETTE.chipLabelHeight;
-    // Mismatched aspects stretch the lettering. A few percent is invisible.
-    expect(Math.abs(textureAspect - planeAspect) / textureAspect).toBeLessThan(
-      0.05,
-    );
-  });
-
-  it('lifts the selected chip without blowing out its identity colour', () => {
-    // Emissive is the round-5 addition on top of the 1.3x swell. Past ~0.6 a
-    // chip renders as a featureless white ball in passthrough, which loses the
-    // colour that the lift was meant to draw attention to.
-    expect(PALETTE.chipSelectedEmissive).toBeGreaterThan(0);
-    expect(PALETTE.chipSelectedEmissive).toBeLessThan(0.6);
-  });
-
-  it('no longer declares one shared neutral chip colour', () => {
-    // Each chip owns its colour in PALETTE_CHIP_ORDER now, and it has to: the
-    // selected chip's emissive lift rides on its own material.
-    expect('chipColor' in PALETTE).toBe(false);
+  it('keeps the first-open flag under the splotopia namespace', () => {
+    expect(MENU.firstOpenStorageKey.startsWith('splotopia.')).toBe(true);
   });
 });
 
@@ -711,35 +581,9 @@ describe('WEB', () => {
     expect(WEB.tetherStruggleHz).toBeLessThan(20);
   });
 
-  it('sizes the selector pads for a fingertip on a wrist', () => {
-    expect(WEB.selectorPadMeters).toBeGreaterThan(0.012);
-    expect(WEB.selectorPadMeters).toBeLessThan(0.04);
-    expect(WEB.selectorPadGap).toBeGreaterThan(0);
-    // Two pads plus their gap must still fit across the band they sit on.
-    expect(2 * WEB.selectorPadMeters + WEB.selectorPadGap).toBeLessThan(
-      WEB.shooterBandMeters,
-    );
-  });
-
-  it('floats the selector clear of the gauntlet, on the palm side', () => {
-    // In the holder frame (origin = device centre): negative is the palm
-    // side, and further out than the ~1.6 cm body or the pads sit inside it.
-    expect(WEB.selectorOffsetY).toBeLessThan(-0.016);
-    expect(Math.abs(WEB.selectorOffsetY)).toBeLessThan(0.06);
-    // On the device, not past either end of it.
-    expect(Math.abs(WEB.selectorOffsetZ)).toBeLessThan(
-      WEB.shooterLengthMeters / 2,
-    );
-  });
-
-  it('lights the selected pad without blowing out the other one', () => {
-    expect(WEB.selectorSelectedScale).toBeGreaterThan(1);
-    expect(WEB.selectorSelectedEmissive).toBeGreaterThan(
-      WEB.selectorIdleEmissive,
-    );
-    // A holo panel is never fully dark, but the idle one must not compete.
-    expect(WEB.selectorIdleEmissive).toBeGreaterThan(0);
-    expect(WEB.selectorIdleEmissive).toBeLessThan(0.2);
+  it('no longer declares the round-6 wrist selector pads (round 10 menu)', () => {
+    expect('selectorPadMeters' in WEB).toBe(false);
+    expect('selectorOffsetY' in WEB).toBe(false);
   });
 });
 
@@ -754,7 +598,8 @@ describe('CHILL', () => {
 
   it('teaches both round-3 chill affordances in the status line', () => {
     expect(CHILL.statusText.toLowerCase()).toContain('spray');
-    expect(CHILL.statusText.toLowerCase()).toContain('palette');
+    // Round 10: the palette became the summonable wrist menu (tap the gem).
+    expect(CHILL.statusText.toLowerCase()).toContain('gem');
   });
 
   it('sprays faster than the one-per-pull trigger, but not for free', () => {

@@ -15,7 +15,8 @@
  *   01-first-person.png  right arm extended forward, palm down, seen from the eyes
  *   02-side-view.png     the same arm from the side — is the shooter parallel to it?
  *   03-thwip-pose.png    wrist bent back (palm forward), from the side
- *   04-palm-up.png       left forearm supinated under the eyes: pads + palette
+ *   04-palm-up.png       left forearm under the eyes with the round-10 wrist menu
+ *                        opened (gem + holo panel)
  *   05-aim-ray.png       a web fired from the right hand, mid-flight, from the side
  *   06-round-seated.png  a round started from a seat: robots in the forward arc
  *   07-hit.png           a web fired at the nearest robot (aim assist), on impact
@@ -500,6 +501,13 @@ await pose({
 });
 await page.screenshot({ path: join(outDir, '03-thwip-pose.png') });
 
+// Round 10: the always-on palette is gone; open the summonable wrist menu
+// (as a gem poke would) so the shot shows the gem and the holo panel.
+await page.evaluate(() => {
+  for (const s of window.__PB_WORLD.getSystems()) {
+    if (s.constructor?.name === 'WristMenuSystem') s.setOpen(true);
+  }
+});
 // Left forearm palm-up under the eyes.
 await pose({
   head: [0, 1.6, 0.05],
@@ -510,6 +518,11 @@ await pose({
   rightQ: ID,
 });
 await page.screenshot({ path: join(outDir, '04-palm-up.png') });
+await page.evaluate(() => {
+  for (const s of window.__PB_WORLD.getSystems()) {
+    if (s.constructor?.name === 'WristMenuSystem') s.setOpen(false);
+  }
+});
 
 // Fire a web from the right hand, extended forward; catch it in flight.
 await pose({ ...side, ...armForward });

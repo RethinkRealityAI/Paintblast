@@ -45,7 +45,7 @@ export const NEATNIKS = [
     role: 'Shield',
     accent: '#ffd23f',
     blurb:
-      'Holds a rubber blade that always turns to face you. Bank a bouncy shot off the wall, or hook it and haul it in.',
+      'Holds a rubber blade that always turns to face you. Hit the blade three times to shatter it, or flank it for a quick splat.',
   },
   {
     id: 'peekaboo',
@@ -61,7 +61,7 @@ export const NEATNIKS = [
     role: 'Boss',
     accent: '#ff4f81',
     blurb:
-      'Feather-duster crown, cleaning-cloth cape, six hits to topple. Pop him and he splits into two Mopsys.',
+      'Feather-duster crown, cleaning-cloth cape, eleven hits to topple, and he never stands still. Pop him and he splits into two Mopsys.',
   },
   {
     id: 'pip',

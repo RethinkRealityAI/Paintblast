@@ -631,6 +631,35 @@ export class VfxSystem extends createSystem({}) {
           break;
         }
 
+        case GameEvent.ShieldBroken: {
+          // Round 10: the blade shatters - a full pop-sized burst in the
+          // shield's cyan, plus the deflect streaks for the crack.
+          this.setRgb(0.35, 0.95, 1);
+          this.burst(
+            pool,
+            VFX.pop,
+            events.xAt(i),
+            events.yAt(i),
+            events.zAt(i),
+            0,
+            1,
+            0,
+            ColorMode.Fixed,
+          );
+          this.burst(
+            pool,
+            VFX.tether,
+            events.xAt(i),
+            events.yAt(i),
+            events.zAt(i),
+            0,
+            1,
+            0,
+            ColorMode.Fixed,
+          );
+          break;
+        }
+
         case GameEvent.BallFired: {
           if (VFX.muzzle.count <= 0) break;
           if (!headKnown) headKnown = this.readHead();

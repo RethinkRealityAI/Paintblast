@@ -298,6 +298,14 @@ export class FeedbackSystem extends createSystem({}) {
           this.playCueAt(this.uiClickCue, i, AUDIO_VOLUME.shieldPing);
           break;
 
+        // Round 10: the Squeegee's shield shattered - a pop crunch at the
+        // blade plus the chime's sparkle, and both hands feel it break.
+        case GameEvent.ShieldBroken:
+          this.playCueAt(this.popCue, i, AUDIO_VOLUME.pop);
+          this.playCueAt(this.webHitCue, i, AUDIO_VOLUME.shieldPing);
+          this.pulseBoth(HAPTICS.popIntensity, HAPTICS.popMs);
+          break;
+
         case GameEvent.BossEntered:
           this.playCue(this.countdownCue, AUDIO_VOLUME.bossEnter);
           this.pulseBoth(HAPTICS.hitIntensity, HAPTICS.hitMs);
