@@ -50,6 +50,7 @@ specs: `docs/superpowers/specs/`.
 28. Headless SwiftShader renders **no uikit panel or glyph** (`smoothstep(e, e, x)` returns 0, and uikit clips with `smoothstep(-fwidth, fwidth, d)`) — `scripts/headless-verify.mjs` injects `scripts/swiftshader-smoothstep-patch.js`; any new Playwright harness must too.
 29. IWSDK's pointer cursor eases with `lerp(a, b, 30 * delta)` (`xr-input/dist/pointer/cursor-visual.js`), which diverges once frames exceed ~66 ms — a screen-filling white disc in headless runs is that, not game art. Harmless at 72 Hz; the harness hides it via `material.visible`.
 30. IWER grants the `depth-sensing` feature but implements **no depth API** (`getDepthInformation`), so the stock `DepthSensingSystem` throws every frame and aborts the whole world update (no round ever starts) — register `RobotDepthSensingSystem` (TargetSystem.ts), which checks the API, catches, and self-disables per session.
+31. three r181 allocates a texture's GPU storage at its **first upload size** — resizing a `CanvasTexture`'s canvas later never re-uploads (the old picture stays). `dispose()` the texture on resize (EaselSystem does).
 
 ## Build / test / troubleshoot workflow
 

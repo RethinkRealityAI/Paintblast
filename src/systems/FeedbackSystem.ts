@@ -306,6 +306,18 @@ export class FeedbackSystem extends createSystem({}) {
           this.pulseBoth(HAPTICS.popIntensity, HAPTICS.popMs);
           break;
 
+        // Round 10 Studio. The target pop already rides a TargetPopped (pop
+        // cue + rumble); these add the studio's own beats from existing cues.
+        case GameEvent.StudioActivityChanged:
+          this.playCue(this.uiClickCue, AUDIO_VOLUME.uiClick);
+          break;
+
+        case GameEvent.StudioStencilScored:
+        case GameEvent.StudioArtSaved:
+          this.playCue(this.chimeCue, AUDIO_VOLUME.chime);
+          this.pulseBoth(HAPTICS.hitIntensity, HAPTICS.hitMs);
+          break;
+
         case GameEvent.BossEntered:
           this.playCue(this.countdownCue, AUDIO_VOLUME.bossEnter);
           this.pulseBoth(HAPTICS.hitIntensity, HAPTICS.hitMs);
