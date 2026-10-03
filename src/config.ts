@@ -2122,8 +2122,8 @@ export const COACH = {
   floatingLabel: true,
   /** Floating label width, metres (height follows its 8:1 texture). */
   labelWidth: 0.62,
-  /** Metres above the bot's centre the label floats. */
-  labelAbove: 0.38,
+  /** Metres above the bot's centre the label floats. 0.58 clears the R10 HP pip bars (Duke is 0.75 m tall). */
+  labelAbove: 0.58,
 } as const;
 
 /**

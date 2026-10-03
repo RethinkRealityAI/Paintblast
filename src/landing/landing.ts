@@ -61,7 +61,7 @@ export const NEATNIKS = [
     role: 'Boss',
     accent: '#ff4f81',
     blurb:
-      'Feather-duster crown, cleaning-cloth cape, six hits to topple. Pop him and he splits into two Mopsys.',
+      'Feather-duster crown, cleaning-cloth cape, eleven hits to topple, and he won't stand still. Pop him and he splits into two Mopsys.',
   },
   {
     id: 'pip',
