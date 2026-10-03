@@ -32,6 +32,7 @@ import {
   PipFocus,
   TutorialStep,
   WebSubMode,
+  WristMenuState,
   nextTutorialStep,
   readFlag,
   tutorialStepNeedsBots,
@@ -54,7 +55,7 @@ export interface TutorialObservation {
   ringHit: boolean;
   /** Impacts anywhere (walls, floor, furniture). */
   impacts: number;
-  /** A palette dab / chip / pad was tapped. */
+  /** Something on the wrist menu was picked (colour, ammo, launcher, GOO mode). */
   ammoPicked: boolean;
   /** Neatniks popped. */
   pops: number;
@@ -142,22 +143,27 @@ export function tutorialRegress(
   return step as TutorialStep;
 }
 
-/** The one-line instruction for `step` ('' when off). */
+/**
+ * The one-line instruction for `step` ('' when off). Round 10: the menu steps
+ * have two lines — "open the menu" while it is closed, "tap X" while it is
+ * open (`menuOpen`).
+ */
 export function tutorialLineFor(
   step: number,
   lines: typeof TUTORIAL.lines,
+  menuOpen = false,
 ): string {
   switch (step) {
     case TutorialStep.Fire:
       return lines.fire;
     case TutorialStep.Palette:
-      return lines.palette;
+      return menuOpen ? lines.paletteOpen : lines.palette;
     case TutorialStep.Pop:
       return lines.pop;
     case TutorialStep.Goo:
-      return lines.goo;
+      return menuOpen ? lines.gooOpen : lines.goo;
     case TutorialStep.Tether:
-      return lines.tether;
+      return menuOpen ? lines.tetherOpen : lines.tether;
     case TutorialStep.Haul:
       return lines.haul;
     case TutorialStep.Ready:
@@ -235,9 +241,10 @@ function safeStorage(): FlagStorage | undefined {
  * 1. **Fire** - a neon target ring appears ON the nearest real wall in front
  *    (scene planes/meshes; 1.5 m ahead without them). Pinch to paint it: the
  *    first paint of the session lands on the player's own wall.
- * 2. **Palette** - tap a colour on the left-wrist palette.
+ * 2. **Palette** - tap the gem on the left wrist to open the menu, tap a colour.
  * 3. **Pop** - pop a Mopsy.
- * 4. **Goo / Tether / Haul** - tap GOO, tap TETHER, hook a Mopsy and pull it in.
+ * 4. **Goo / Tether / Haul** - open the menu, tap GOO, tap TETHER, hook a
+ *    Mopsy and pull it in.
  * 5. **Ready** - back to the title with PLAY pulsing.
  *
  * Steps 1-2 run in the Idle sandbox (firing is allowed there). Steps 3-4
@@ -266,6 +273,8 @@ export class TutorialSystem extends createSystem({
   private blasterMode?: Signal<BlasterMode>;
   private webSubMode?: Signal<WebSubMode>;
   private focus?: PipFocus;
+  /** Round 10: the wrist menu (open state for the lines, gem / panel for Pip). */
+  private menu?: WristMenuState;
   private aim?: AimTargets;
   private events!: GameEventBuffer;
 
@@ -299,6 +308,7 @@ export class TutorialSystem extends createSystem({
     this.blasterMode = this.globals.blasterMode as Signal<BlasterMode> | undefined;
     this.webSubMode = this.globals.webSubMode as Signal<WebSubMode> | undefined;
     this.focus = this.globals.pipFocus as PipFocus | undefined;
+    this.menu = this.globals.wristMenu as WristMenuState | undefined;
     this.aim = this.globals.aimTargets as AimTargets | undefined;
     this.events = this.globals.gameEvents as GameEventBuffer;
     this.headPos = new Vector3();
@@ -381,6 +391,7 @@ export class TutorialSystem extends createSystem({
 
     this.animateRing(dt);
     this.updateFocus();
+    this.refreshLine();
 
     if (this.tickSkipHold(dt)) return;
 
@@ -514,7 +525,19 @@ export class TutorialSystem extends createSystem({
       this.ring.visible = false;
     }
     if (this.step && this.step.peek() !== step) this.step.value = step;
-    if (this.line) this.line.value = tutorialLineFor(step, TUTORIAL.lines);
+    if (this.line) this.line.value = tutorialLineFor(step, TUTORIAL.lines, this.menuOpen());
+  }
+
+  /** Is the wrist menu open (or opening)? */
+  private menuOpen(): boolean {
+    return !!this.menu && (this.menu.open === 1 || this.menu.opening === 1);
+  }
+
+  /** Round 10: swap a menu step's line as the menu opens / closes. */
+  private refreshLine(): void {
+    if (!this.line || this.pauseLeft > 0) return;
+    const next = tutorialLineFor(this.current, TUTORIAL.lines, this.menuOpen());
+    if (this.line.peek() !== next) this.line.value = next;
   }
 
   /**
@@ -557,9 +580,18 @@ export class TutorialSystem extends createSystem({
       case TutorialStep.Palette:
       case TutorialStep.Goo:
       case TutorialStep.Tether: {
-        const grip = this.player?.gripSpaces?.left;
-        if (!grip) break;
-        grip.getWorldPosition(this.scratch);
+        // Round 10: point at the open menu's panel, else at the summon gem
+        // (else the left grip, before the gem has a pose).
+        const menu = this.menu;
+        if (menu && (menu.open === 1 || menu.opening === 1)) {
+          this.scratch.set(menu.center[0], menu.center[1], menu.center[2]);
+        } else if (menu && menu.gemVisible === 1) {
+          this.scratch.set(menu.gem[0], menu.gem[1], menu.gem[2]);
+        } else {
+          const grip = this.player?.gripSpaces?.left;
+          if (!grip) break;
+          grip.getWorldPosition(this.scratch);
+        }
         focus.active = 1;
         p[0] = this.scratch.x;
         p[1] = this.scratch.y;

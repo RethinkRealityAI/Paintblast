@@ -443,290 +443,209 @@ export const HUD = {
 } as const;
 
 /**
- * The wrist palette: an actual painter's palette strapped to the left grip.
+ * The summonable holographic wrist menu (round 10) — WristMenuSystem.
  *
- * Round 1 seeded sixteen orbs at fixed world coordinates, which put them
- * behind or below half the players who tried it. Round 2 strapped that grid to
- * the wrist. Round 3 threw the grid away: field feedback was "make it look
- * like a real paint palette, and let me just tap a colour". So the board is a
- * flat oval you hold, four glossy **dabs** curve around its outer edge (colour
- * only), and four neutral **chips** sit in a row along the near edge (ammo
- * kind only). Eight pressables instead of sixteen, and each one means one
- * thing.
+ * History: rounds 1-9 kept an always-on painter's palette strapped to the left
+ * wrist (dabs, chips, launcher pads; every element pokeable, squeezable and
+ * pinch-selectable). Round 10 owner playtest: "the menu palette is completely
+ * interrupting the game ... there are always a bunch of accidental presses
+ * switching". So the palette is gone. A small glowing **gem** rides the left
+ * wrist; poke it with the RIGHT index fingertip (or press **Y** on the left
+ * controller) and a flat holo panel opens above the forearm, facing your eyes.
+ * Poke a button on it the way you poke the Quest's own menus. Poke the gem
+ * again (or wait, or drop the left hand) and it closes.
  *
- * The wrist offsets are in the **left grip's own frame**: +Y is out of the back
- * of the hand (where a watch face sits), -X is thumb-side-away, -Z is the
- * direction the controller points.
+ * While the menu is CLOSED nothing on it exists for input: no proximity
+ * squeeze, no pinch-select, no touch hover, no shot blocking. The left hand is
+ * an ordinary shooting hand.
+ *
+ * Panel geometry is in the panel's own frame: +X right, +Y up, +Z out of the
+ * face toward the eyes, origin at the panel centre. Metres throughout.
  */
-export const PALETTE = {
-  // ---- Board ---------------------------------------------------------------
-  //
-  // The board lies flat in the palette root's XZ plane with its face pointing
-  // +Y, the way you actually hold a palette. -Z is the far edge (pointing away
-  // from you), +Z is the near edge by your wrist.
-  /** Board radius, metres, before the oval squash below. */
-  boardRadius: 0.11,
-  /** Board thickness, metres. A palette is a plank, not a plate. */
-  boardThickness: 0.008,
-  /** Squash on the board's near-far axis — under 1 turns the disc into an oval. */
-  boardOvalScale: 0.85,
-  /** Board colour. Warm wood, so the paint on it reads as paint. */
-  boardColor: '#8a6a48',
-  /** Board roughness — matte, unlike the glossy dabs sitting on it. */
-  boardRoughness: 0.6,
+export const MENU = {
+  // ---- The summon gem --------------------------------------------------------
+  /** Radius of the gem's crystal core, metres. The glow halo is ~2.4x this. */
+  gemRadius: 0.0085,
+  /**
+   * Where the gem rides with a tracked hand, metres, in the LEFT wrist joint's
+   * frame: +X = the thumb side of a left hand, +Y = out of the back of the
+   * hand, +Z = up the forearm. Thumb-side top of the wrist, beside the BLASTER
+   * barrel and floating ~6.5 cm off the forearm axis so it clears the bracer
+   * shell (radius ~4 cm) with its glow: where the right index finger
+   * naturally lands when you reach across.
+   */
+  gemOffsetHand: [0.052, 0.04, 0.03] as readonly [number, number, number],
+  /** The same for a controller, in WristPose's controller wrist frame. */
+  gemOffsetController: [0.05, 0.045, 0.0] as readonly [number, number, number],
+  /**
+   * The right index fingertip inside this many metres of the gem centre is a
+   * press (toggles the menu). Larger than the gem itself: you aim at a glow.
+   */
+  gemPokeEnterRadius: 0.02,
+  /**
+   * ...and it must go back out beyond this many metres before the gem can be
+   * pressed again (hysteresis: a fingertip resting on the gem toggles once).
+   */
+  gemPokeExitRadius: 0.038,
+  /** Seconds after a toggle during which the gem ignores further presses. */
+  gemDebounceSec: 0.45,
+  /** Seconds the left hand may drop tracking before the gem hides. */
+  gemHideAfterLostSec: 0.5,
+  /** Resting glow (halo opacity) of the gem. */
+  gemGlowOpacity: 0.5,
+  /**
+   * First-time affordance: until the menu has been opened once on this device
+   * (`firstOpenStorageKey`), the gem pulses at this rate and swells by this
+   * fraction. 0 amplitude = no pulse.
+   */
+  gemPulseHz: 1.5,
+  gemPulseAmp: 0.4,
+  /** localStorage flag: '1' once the menu has been opened on this device. */
+  firstOpenStorageKey: 'splotopia.menuOpened',
 
-  // ---- Round 8: the techno-paint holo board ---------------------------------
-  //
-  // The wooden kidney became a dark glass slab with a glowing neon edge, glossy
-  // liquid paint wells and holo sockets under every chip and pad — the same
-  // art direction as the HUD (docs/concepts/techno-ui.jpg). Built in code, so
-  // nothing streams and nothing can fail to load.
+  // ---- Opening and closing -----------------------------------------------------
+  /** Seconds of the open (scale up + fade in) and close (reverse) animation. */
+  openSec: 0.15,
+  /** Scale the panel grows from when it opens (and shrinks to when it closes). */
+  openFromScale: 0.6,
   /**
-   * Which board to build: 'holo' (round 8 default), 'glb' (the Higgsfield
-   * palette-board.glb, still in the manifest, falls back to holo while it
-   * streams) or 'wood' (the round-3 primitive oval).
+   * Seconds with no hover or press on the open menu before it closes on its
+   * own. 0 = never auto-close.
    */
-  boardStyle: 'holo' as 'holo' | 'glb' | 'wood',
+  autoCloseIdleSec: 6,
+  /** Seconds the left hand may drop tracking before the open menu closes. */
+  closeAfterLostSec: 0.6,
   /**
-   * Squareness of the holo board's outline: 2 is the plain oval, 4 a rounded
-   * rectangle. ~3 reads as a modern "squircle" device and still hugs the dab
-   * arc. Its semi-axes are boardRadius and boardRadius * boardOvalScale.
+   * Which picks close the menu. Launcher picks close it (that is usually the
+   * whole errand) except GOO, whose SPLAT / TETHER row has just appeared and
+   * is very likely the next tap. Colour and ammo picks keep it open, because
+   * people pick both.
    */
-  holoSquareness: 3.2,
-  /** Glass face colour (sRGB) and how much passthrough shows through it. */
-  holoFaceColor: '#070912',
-  holoFaceOpacity: 0.84,
-  /** The bezel round the slab's side, a brushed graphite. */
-  holoBezelColor: '#3a3f4f',
-  /** Metres the neon line is inset from the slab's edge. */
-  holoEdgeInset: 0.0045,
-  /** Radius of the crisp neon line, metres. */
-  holoEdgeRadius: 0.0009,
-  /** Radius of the soft additive halo round it, metres. */
-  holoGlowRadius: 0.0032,
-  /** Resting opacity of that halo (the shimmer swings around it). */
-  holoGlowOpacity: 0.32,
-  /**
-   * Colours the neon edge runs through, in order round the board (it closes
-   * back onto the first). sRGB hex. A ramp on a 3D line is fine — the
-   * no-gradient rule is uikit's, not three's.
-   */
-  holoEdgeColors: ['#48dbfb', '#b84dff', '#ff4f81', '#48dbfb'] as readonly string[],
-  /** Paint splats baked onto the glass corners, sRGB hex. Empty for none. */
-  holoSplatColors: ['#b6ff3b', '#b84dff'] as readonly string[],
+  closeOnPick: {
+    launcher: true,
+    gooLauncher: false,
+    subMode: true,
+    colour: false,
+    ammo: false,
+  },
 
-  // ---- Paint wells under the dabs ------------------------------------------
-  /** Radius of a well's glowing rim as a multiple of dabRadius. */
-  wellRimScale: 1.2,
-  /** Tube radius of that rim, metres. */
-  wellRimTube: 0.0011,
-  /** Rim opacity for the dabs that are NOT loaded. */
-  wellRimOpacity: 0.45,
-  /** Rim opacity for the loaded dab — the obvious "this one" cue. */
-  wellRimSelectedOpacity: 1,
-  /** Soft colour pool under a dab: radius as a multiple of dabRadius. */
-  wellGlowScale: 1.55,
-  /** ...and its opacity (additive). */
-  wellGlowOpacity: 0.2,
-  /** The loaded dab's pool, brighter. */
-  wellGlowSelectedOpacity: 0.42,
-  /** Resting emissive on the liquid paint so it reads as lit from within. */
-  dabEmissive: 0.16,
-  /** How far the idle shimmer swings that emissive (0 = still). */
-  dabPulseAmp: 0.1,
-  /** Idle shimmer frequency, Hz. Slow: a breath, not a blink. */
-  shimmerHz: 0.45,
-  /** How far the shimmer swings the edge halo, as a fraction of its opacity. */
-  shimmerEdgeAmp: 0.35,
-
-  // ---- Holo sockets under chips and mode pads -----------------------------
-  /** Socket ring radius as a multiple of the chip / pad radius. */
-  socketRimScale: 1.25,
-  /** Socket rim opacity, unselected / selected. */
-  socketRimOpacity: 0.4,
-  socketRimSelectedOpacity: 1,
-
-  // ---- Appear animation -----------------------------------------------------
-  /** Seconds of the pop-in when the palette (re)appears. 0 = no animation. */
-  appearSec: 0.3,
-  /** Scale the palette pops up from (then overshoots 1 slightly and settles). */
-  appearFromScale: 0.35,
+  // ---- Where the open panel floats ----------------------------------------------
   /**
-   * Seconds the left hand may be untracked before the palette hides (and so
-   * pops back in when the hand returns). Long enough that a blink of lost
-   * tracking mid-poke never hides it; a parked (poked) palette never hides.
+   * Tracked hand: the panel's TOP edge sits this many metres above the left
+   * wrist joint plus the tall (GOO) panel's height, so the launcher row never
+   * moves when the SPLAT / TETHER row appears beneath it.
    */
-  hideAfterLostSec: 0.5,
-
-  // ---- Paint dabs (colour only) -------------------------------------------
-  /** Dab radius, metres, before the flatten below. Big enough to poke. */
-  dabRadius: 0.024,
-  /** Vertical squash on a dab — a blob of wet paint, not a marble. */
-  dabFlatten: 0.4,
-  /** Dab material roughness — low is glossy, like paint that has not dried. */
-  dabRoughness: 0.15,
-  /** Radius of the arc the dabs sit on, metres from the board centre. */
-  dabArcRadius: 0.076,
-  /** Angle of the first dab on that arc, degrees. 0 points at the far edge. */
-  dabArcStartDeg: -72,
-  /** Angle of the last dab. The rest are spaced evenly between the two. */
-  dabArcEndDeg: 72,
-
-  // ---- Ammo chips (ball kind and paint style) -----------------------------
-  //
-  // Five of them since round 5: four paint kinds and WEB. Each carries its own
-  // identity colour and a floating label — see PALETTE_CHIP_ORDER in types.ts,
-  // which is the table, while everything here is the geometry the table is laid
-  // out with.
-  /** Half-size of a chip, metres. Deliberately smaller than a paint dab. */
-  chipRadius: 0.0135,
-  /** Chip material roughness — matte, so chips never read as wet paint. */
-  chipRoughness: 0.4,
-  /** Centre-to-centre spacing along the chip row, metres. */
-  chipSpacing: 0.038,
-  /** How far toward the board's near (+Z) edge the chip row sits, metres. */
-  chipRowOffset: 0.05,
-  /** How far a chip floats above the board face, as a fraction of chipRadius. */
-  chipLift: 0.55,
+  handLift: 0.05,
+  /** Metres along the forearm toward the fingers from the wrist joint. */
+  handForward: 0.05,
+  /** Metres sideways away from the body (left of a left forearm). */
+  handOutward: 0.04,
+  /** Controller: metres above the left grip (same top-edge rule). */
+  controllerLift: 0.06,
   /**
-   * Emissive intensity on the selected chip, on top of the 1.3x scale.
-   *
-   * Deliberately a lift and not a glow: scale alone was ambiguous at a glance
-   * on a board this small (which of two nearly-equal blobs is bigger?), while a
-   * chip that actually emits light is unmistakable. Push it past ~0.6 and the
-   * chip blows out to a white ball in passthrough and loses its identity colour,
-   * which defeats the point.
+   * The panel parks in world space while the right fingertip is in its poke
+   * zone (Meta's hands guidance: a wrist menu must not slide under the poking
+   * finger), and rejoins the wrist this many seconds after the finger leaves.
    */
-  chipSelectedEmissive: 0.35,
-
-  // ---- Chip labels ---------------------------------------------------------
-  //
-  // Round 4 shipped silhouettes alone ("the board is far too small to letter").
-  // Field feedback said the row was unreadable, so round 5 letters it after all:
-  // one tiny plane per chip, lying flat on the board just behind its chip, with
-  // a CanvasTexture baked once at startup. Never an entity and never
-  // Interactable — a label must not eat the poke aimed at the chip above it.
-  /**
-   * Label plane width, metres.
-   *
-   * Must stay under `chipSpacing` or neighbouring labels overlap, which is the
-   * one constraint that decides this number: five chips across a 22 cm board
-   * leaves 3.8 cm per column and the label has to live inside that.
-   */
-  chipLabelWidth: 0.036,
-  /** Label plane height, metres. Matches the texture's 4:1 aspect. */
-  chipLabelHeight: 0.009,
-  /**
-   * Gap between the chip's near edge and the label's far edge, metres.
-   *
-   * Tuned in the emulator rather than guessed: the chips stand proud of the
-   * board (STICKY's cube is 23 mm on a side), so at a steep viewing angle a
-   * tight gap lets the chip occlude its own caption. 5 mm clears it.
-   */
-  chipLabelGap: 0.005,
-  /** Lift off the board face, metres — enough to beat z-fighting, no more. */
-  chipLabelLift: 0.0015,
-  /** Baked label texture width, pixels. Power of two, read at a hand's length. */
-  chipLabelPxW: 256,
-  /** Baked label texture height, pixels. */
-  chipLabelPxH: 64,
-
-  // ---- Where the whole thing rides ----------------------------------------
-  /** Metres left of the left grip (negative = away from the thumb). */
-  wristOffsetX: -0.04,
-  /** Metres out of the back of the left hand. */
-  wristOffsetY: 0.11,
-  /** Metres along the controller's pointing axis (negative = forward). */
-  wristOffsetZ: -0.02,
-  /**
-   * Pitch of the palette plane about the grip's X axis, degrees. Negative tips
-   * the face up toward your eyes; flip the sign if it faces the floor on your
-   * device.
-   */
-  tiltDeg: -35,
-  /**
-   * Squeeze-to-select reach, metres from the grip to a dab or chip centre.
-   * This path is a plain distance test on the squeeze-down frame, deliberately
-   * outside the pointer pipeline — near the palette the touch pointer's hover
-   * sphere outranks the grab pointer and can swallow squeeze-grabs.
-   */
-  grabSelectRadius: 0.09,
-
-  // ---- Launcher mode pads (round 8) -----------------------------------------
-  /** Radius of one HAND / BLASTER / WEB pad, metres. 2.6 cm across: a fingertip target. */
-  modePadRadius: 0.013,
-  /** Pad thickness, metres. */
-  modePadHeight: 0.006,
-  /** Centre-to-centre spacing of the three pads, metres. */
-  modePadSpacing: 0.036,
-  /**
-   * Where the pad row sits along the board's near-far axis (+ = near edge).
-   * Between the dab arc and the chip labels.
-   */
-  modePadRowOffset: -0.014,
-  /** Identity colours, HAND / BLASTER / WEB. */
-  modePadColors: ['#b8c2cc', '#ff4fb8', '#48dbfb'] as readonly string[],
-  /** Round 8: the pad body is dark glass; its accent lives in the rim, icon glow and selected emissive. */
-  modePadBodyColor: '#141827',
-  /** Size of the white icon printed on each pad, as a fraction of the pad diameter. */
-  modePadIconScale: 0.62,
-
-  // ---- Hand tracking (round 7) ----------------------------------------------
-  //
-  // The four offsets and the tilt above were tuned on controllers, in the grip
-  // frame, and still drive the controller palette unchanged. A tracked hand's
-  // grip frame is a quarter turn away from a controller's (its -Z points at
-  // the thumb), which is why the palette stood on edge across the forearm in
-  // hand mode — and a bare hand rolls freely, so "above the back of the hand"
-  // ends up *under* the arm the moment you turn your palm up.
-  //
-  // So with hands the palette is posed in world terms instead: it floats
-  // `handLift` metres straight UP from the wrist joint (whatever the roll),
-  // nudged `handForward` toward the fingers, and turns its face to your eyes,
-  // with its dab edge pointing the way your fingers do. Readable in every
-  // pose; reachable by the other index finger.
-  /** Metres straight up (world +Y) from the left wrist joint to the board centre. */
-  // Round 8: 0.08 (was 0.06) so the board clears the gauntlet, which rides
-  // the palm side of the forearm and so faces up at the board when palm-up.
-  handLift: 0.08,
-  /**
-   * Metres along the forearm toward the fingers from the wrist joint. Out over
-   * the hand rather than the wrist, so the board never covers the gauntlet's
-   * selector pads (which ride the forearm just behind the wrist).
-   */
-  handForward: 0.11,
-  /**
-   * Metres sideways, away from the body (to the left of a left forearm), so
-   * the board clears the gauntlet's selector pads. 0 sits it over the wrist.
-   */
-  handOutward: 0.03,
-  /**
-   * Pinch-to-select reach, metres from the pinch point to a dab, chip or pad
-   * centre. Tighter than {@link grabSelectRadius}: a fingertip pinch is a
-   * precise point, a controller's grip origin is not.
-   */
-  pinchSelectRadius: 0.045,
-
-  // ---- Hold still while I poke you (round 7) --------------------------------
-  //
-  // Meta's hands UI guidance: "Do not anchor menus to the user's wrist... a
-  // menu that follows the wrist is hard to use because it shifts position while
-  // the other hand tries to poke it." So the palette now **parks in world space
-  // the moment the other hand's fingertip comes near**, and only rejoins the
-  // wrist once that fingertip has left. You aim at a still target; the board
-  // never visibly detaches unless you move the palette arm mid-poke.
-  /**
-   * Metres from the palette centre at which the other hand's index fingertip
-   * (or controller) parks the palette in place.
-   */
-  lockRadius: 0.16,
-  /** Seconds the fingertip must stay outside `lockRadius` before the palette lets go. */
   lockReleaseSec: 0.35,
-  /**
-   * Time constant, seconds, of the glide back onto the wrist after a park, so
-   * re-attaching is a quick slide rather than a snap.
-   */
+  /** Poke zone: the panel rect grown by this many metres on every side... */
+  lockMarginMeters: 0.04,
+  /** ...from this far in front of the face... */
+  lockFrontMeters: 0.1,
+  /** ...to this far behind it. */
+  lockBehindMeters: 0.05,
+  /** Time constant, seconds, of the glide back onto the wrist after a park. */
   reattachSec: 0.06,
+
+  // ---- Layout ----------------------------------------------------------------------
+  /** Outer padding between the panel edge and its buttons. */
+  padding: 0.01,
+  /** Width of one 4-across cell (colour / ammo buttons). >= 26 mm: a fingertip. */
+  cellWidth: 0.03,
+  /** Columns of the widest rows; sets the panel width. */
+  columns: 4,
+  /** Horizontal air between neighbouring buttons. >= 10 mm (Meta hands guidance). */
+  buttonGap: 0.01,
+  /** Extra vertical air between one row's buttons and the next row's caption. */
+  rowGap: 0.004,
+  /** Height of a row caption (LAUNCHER / GOO MODE / COLOUR / AMMO). */
+  captionHeight: 0.0075,
+  /** Air between a caption and its buttons. */
+  captionGap: 0.003,
+  /** Button heights per row. */
+  launcherHeight: 0.034,
+  subModeHeight: 0.03,
+  colourHeight: 0.028,
+  ammoHeight: 0.028,
+  /** Corner radius of a button, and of the panel. */
+  buttonCorner: 0.006,
+  panelCorner: 0.012,
+  /** How far a button face stands proud of the panel (it sinks when pressed). */
+  buttonLift: 0.004,
+  /** Canvas pixels per metre for baked button faces and captions. */
+  texturePxPerMeter: 6400,
+
+  // ---- Poke (Quest-native press) ----------------------------------------------------
+  /** Hover glow while the fingertip is within this far in front of a button. */
+  hoverMeters: 0.03,
+  /**
+   * The fingertip must push this far PAST the button face (from in front) to
+   * select. One selection per poke; it re-arms only after backing out.
+   */
+  selectDepthMeters: 0.006,
+  /** ...backing out this far in front of the face re-arms the next poke. */
+  rearmMeters: 0.012,
+  /**
+   * A fingertip that turns up more than this far behind the face without
+   * having hovered in front first (a hand swept through the panel) is
+   * ignored until it comes back out in front.
+   */
+  maxBehindMeters: 0.05,
+  /** Fingertip joint to skin, metres: the press is measured at the skin. */
+  tipRadiusMeters: 0.005,
+  /** Deepest a pressed button visibly sinks. */
+  sinkMaxMeters: 0.0035,
+  /** Hit slop round every button rect (well inside the 10 mm gaps). */
+  hitMarginMeters: 0.003,
+
+  // ---- Controllers and firing ---------------------------------------------------------
+  /** Furthest a controller ray can click the open menu (and be blocked by it). */
+  rayMaxMeters: 1.2,
+  /**
+   * Pause the LEFT hand's fire (trigger, pinch, gesture) while the menu is
+   * open: that hand is holding the menu up, and a pinch while reading it
+   * should not throw paint.
+   */
+  pauseLeftFireWhileOpen: true,
+  /** Haptic tick on open / close / pick (controllers; hands have no motors). */
+  hapticIntensity: 0.25,
+  hapticMs: 22,
+
+  // ---- Look (techno-paint: dark glass, neon edge, ASCII only) --------------------------
+  panelColor: '#070912',
+  panelOpacity: 0.88,
+  /** Neon edge: crisp line colour and its soft additive halo. */
+  edgeColor: '#48dbfb',
+  edgeAccent: '#b84dff',
+  edgeGlowOpacity: 0.3,
+  captionColor: '#8fe9ff',
+  buttonColor: '#141827',
+  buttonOpacity: 0.94,
+  /** Button rim opacity unselected / selected / hovered. */
+  rimOpacity: 0.4,
+  rimSelectedOpacity: 1,
+  rimHoverOpacity: 0.8,
+  /** Additive glow round a button: selected / hovered (added). */
+  glowSelectedOpacity: 0.32,
+  glowHoverOpacity: 0.22,
+  /** How far a selected button's plate is tinted toward its accent (0..1). */
+  selectedFillMix: 0.3,
+  /** Opacity multiplier on the AMMO row while GOO is loaded (it then means "back to paint"). */
+  dimmedRowOpacity: 0.55,
+  /** Identity colours, HAND / BLASTER / GOO. */
+  launcherColors: ['#b8c2cc', '#ff4fb8', '#48dbfb'] as readonly string[],
+  /** SPLAT / TETHER. Big and loud: GOO's two verbs must be obvious. */
+  subModeColors: ['#b84dff', '#b6ff3b'] as readonly string[],
 } as const;
 
 /**
@@ -907,7 +826,7 @@ export const CHILL = {
    * Names the pinch as well as the trigger: a hands-only player has no trigger
    * to hold, and holding a pinch sprays exactly the same way.
    */
-  statusText: 'Hold trigger or pinch to spray. Tap the palette to change paint.',
+  statusText: 'Hold trigger or pinch to spray. Tap the gem on your left wrist for paint.',
   /** Shown for the rest of the session after ROTATE CANVAS wipes the picture. */
   rotatedText: 'Canvas rotated - blank page, fresh start.',
   /** Loop ambient music while chilling. Set false for a silent studio. */
@@ -1037,7 +956,7 @@ export const EASEL = {
  *
  * ### The grip frame, since every offset below is in it
  *
- * Same convention as PALETTE, and worth stating exactly because round 5 moved
+ * The old wrist palette used the same convention. Worth stating exactly because round 5 moved
  * the shooter across it: **+Y is out of the BACK of the hand** (where a watch
  * face sits), **-Y is the PALM side**, **-Z is the way the hand points** and +Z
  * is back toward the elbow. X is the mirrored axis: +X is thumb-side on the
@@ -1258,8 +1177,8 @@ export const WEB = {
 
   // ---- TETHER WEB (round 6, reworked round 7) -------------------------------
   //
-  // A second thing web ammo can be, chosen on the wrist selector or with the
-  // right controller's B button. A tether web flies like a splat web, but a
+  // A second thing web ammo can be, chosen on the wrist menu's GOO row or with
+  // the right controller's B button. A tether web flies like a splat web, but a
   // robot it touches gets LATCHED instead of damaged. Then you reel it in and
   // it pops when it reaches you.
   //
@@ -1334,38 +1253,6 @@ export const WEB = {
   tetherStruggleRad: 0.22,
   /** Struggle oscillation, Hz. */
   tetherStruggleHz: 7,
-
-  // ---- The wrist selector gadget -------------------------------------------
-  //
-  // Two mini pads on the LEFT gauntlet's palm-side face, parented into its
-  // holder so they ride the forearm exactly as the device does. Poke one,
-  // pinch or squeeze near one, or press B. They only exist while web ammo is
-  // loaded — with paint on the palette there is no sub-mode to choose.
-  //
-  // Round 7: everything here is in the shooter holder's frame (the aim frame,
-  // origin at the device centre), not the grip's. -Y is the palm side, which
-  // is the side facing the player when they turn the forearm palm-up to look.
-  /** Half-height of one pad, metres. Big enough to poke, small enough to wear. */
-  selectorPadMeters: 0.022,
-  /** Gap between the two pads, metres. */
-  selectorPadGap: 0.008,
-  /**
-   * Metres along the holder's Y. Negative = palm side, and further out than
-   * the gauntlet body (radius ~1.6 cm) so the pads float clear of it rather
-   * than inside the model the player is trying to poke.
-   */
-  selectorOffsetY: -0.03,
-  /**
-   * Metres along the holder's Z. Slightly up the forearm from the device
-   * centre, so a fingertip reaching for a pad never crosses the nozzle.
-   */
-  selectorOffsetZ: 0.012,
-  /** Scale applied to whichever pad is selected. */
-  selectorSelectedScale: 1.2,
-  /** Emissive intensity on the selected pad, on top of that scale. */
-  selectorSelectedEmissive: 0.55,
-  /** Resting emissive on the unselected pad — a holo panel is never fully dark. */
-  selectorIdleEmissive: 0.08,
 } as const;
 
 /**
@@ -2036,10 +1923,15 @@ export const TUTORIAL = {
    */
   lines: {
     fire: 'Pinch to fire at the ring!',
-    palette: 'Tap a colour on your wrist',
+    // Round 10: the always-on palette became a summonable wrist menu, so each
+    // menu step has a "menu closed" line (open it) and a "menu open" line.
+    palette: 'Tap the gem on your left wrist',
+    paletteOpen: 'Now tap a colour',
     pop: 'Pop a Mopsy!',
-    goo: 'Tap GOO on your wrist palette',
-    tether: 'Now tap TETHER',
+    goo: 'Open the menu, tap GOO',
+    gooOpen: 'Tap GOO',
+    tether: 'Open the menu, tap TETHER',
+    tetherOpen: 'Now tap TETHER',
     haul: 'Hook a Mopsy, then pull it in!',
     ready: "You're ready! Press PLAY",
   },
@@ -2084,9 +1976,10 @@ export const TUTORIAL = {
   /** Metres toward the viewer. */
   pipToward: 0.15,
   /**
-   * Over the wrist palette Pip hovers this far above the left hand, metres,
-   * this far out to its side, and this far BEYOND it (he is close to the
-   * eyes there; any nearer and he hides the palette he is pointing at).
+   * Over the wrist menu (round 10: the summon gem while it is closed, the
+   * open panel's centre while it is open) Pip hovers this far above it,
+   * metres, this far out to its side, and this far BEYOND it (he is close to
+   * the eyes there; any nearer and he hides what he is pointing at).
    */
   pipWristAbove: 0.24,
   pipWristBeside: 0.22,

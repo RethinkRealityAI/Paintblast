@@ -961,7 +961,7 @@
                 "sourceTag": "span",
                 "type": "custom",
                 "children": [
-                  "Hold trigger or pinch to spray. Tap the palette to change paint."
+                  "Hold trigger or pinch to spray. Tap the gem on your left wrist for paint."
                 ],
                 "properties": {
                   "id": "hud-chill-status",
@@ -4873,7 +4873,7 @@
       },
       "end": {
         "line": 887,
-        "column": 118
+        "column": 127
       }
     },
     "uid-103": {
