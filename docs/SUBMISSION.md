@@ -49,8 +49,9 @@ old URL then stops working, so update the QR asset (`npm run qr` /
 > shots with a shield, so you flank it or bank a shot off your wall; Peekaboo
 > hides behind your sofa and is only hittable mid-peek; Duster Duke drops in for
 > the final 20 seconds and has to be worn down or hauled in. Pip, your
-> palette-drone sidekick, teaches you everything in a 60-second hands-only
-> tutorial — no wall of text. Chill mode turns it into a calm room-scale paint
+> palette-drone sidekick, teaches the basics in a one-minute, hands-only
+> tutorial that starts with painting a target on your own wall, and a one-line
+> tip introduces each new Neatnik. No wall of text. Chill mode turns it into a calm room-scale paint
 > studio with an easel you can grab and export.
 >
 > **How we built it.** Splotopia is a WebXR app built on Meta's Immersive Web
@@ -58,20 +59,20 @@ old URL then stops working, so update the QR asset (`npm run qr` /
 > and Havok physics, running in the Quest browser — nothing to install. It is
 > hands-first end to end and fully playable seated. Scene understanding turns
 > your Space Setup planes and room mesh into colliders, so paint lands on your
-> real surfaces and Peekaboo picks real furniture to hide behind; depth
-> occlusion lets your couch actually hide it. Characters were concepted with
-> generative image tools, turned into 3D with Meshy, and animated procedurally
-> in code (squash, sway, peeks, the boss drop). Under the hood: a wrist-frame
-> solver that keeps the gauntlets aligned with your forearm on both hand
-> tracking and controllers, swept hit tests and velocity caps so nothing
-> tunnels through thin walls, pause/resume on focus loss, and 670+ unit tests.
+> real surfaces and Peekaboo picks real furniture to hide behind; on headsets
+> that support depth sensing, depth occlusion lets your couch actually hide it.
+> Characters were concepted with generative image tools, turned into 3D with
+> Meshy, and animated procedurally in code (squash, sway, peeks, the boss
+> drop). Under the hood: a wrist-frame solver that keeps the gauntlets aligned
+> with your forearm, swept hit tests and velocity caps so nothing tunnels
+> through thin walls, pause/resume on focus loss, and 760+ unit tests.
 >
 > **What's new in this round (Adapted division).** Since our August baseline we
 > rebuilt the game hands-first (pinch to fire, tap-to-select palette,
 > gesture shots), added the three-mode gauntlet system with skins, the
 > room-aware Neatnik roster with distinct behaviours and a boss, the GOO
-> tether, the guided tutorial and first-encounter coaching, depth occlusion,
-> seated play, a results screen, and a full visual rebrand.
+> tether, the guided tutorial and first-encounter coaching, depth occlusion
+> for the robots, seated play, a results screen, and a full visual rebrand.
 >
 > **What's next.** Daily challenges and streaks, persistent murals anchored to
 > your walls between sessions, shared-room co-op so two players can paint the
@@ -88,9 +89,13 @@ old URL then stops working, so update the QR asset (`npm run qr` /
 2. Open the build link, press **ENTER AR**, allow spatial data when asked.
 3. No controllers needed: **pinch** to fire, look at your **left wrist** for the
    palette and **tap** it with your right index finger, press menu buttons by
-   pointing with your **right hand** and pinching.
-4. First launch runs Pip's tutorial (about 60 s, skippable). Then press **PLAY**
-   for a 90-second round. **LOADOUT** picks launcher and gauntlet skin.
+   pointing with your **right hand** and pinching. (Controllers also work:
+   trigger fires, A starts a round, B switches GOO between SPLAT and TETHER.)
+4. First launch runs Pip's tutorial: five steps, about a minute. To skip, press
+   **SKIP** on the card or hold **both pinches** for 2.5 s; the **TUTORIAL**
+   button on the title replays it. Then press **PLAY** for a 90-second round
+   (the Neatnik boss arrives with 20 s left). **LOADOUT** picks launcher and
+   gauntlet skin; **CHILL MODE** is the no-timer paint studio.
 5. Seated play is supported; everything spawns in front of you.
 6. Pause: press the Quest button; the round freezes and resumes when you return.
 
@@ -101,12 +106,12 @@ carry the pitch. Shot list:
 
 | t | Shot |
 |---|---|
-| 0:00–0:08 | Cold open: ENTER AR, logo splats onto the real wall, "YOUR ROOM IS THE ARENA" |
-| 0:08–0:30 | Pip tutorial: first pinch paints the wall, tap the wrist palette |
+| 0:00–0:08 | Cold open: ENTER AR, logo splats onto the real wall (needs Space Setup in the capture room), "YOUR ROOM IS THE ARENA" |
+| 0:08–0:30 | Pip tutorial: first pinch paints the ring on the wall, tap the wrist palette, pop a Mopsy |
 | 0:30–1:10 | Round: BLASTER auto-fire, colour swap, Mopsys popping, combo |
-| 1:10–1:30 | Squeegee deflect → flank shot; Peekaboo hiding behind the couch (occluded) |
+| 1:10–1:30 | Squeegee deflect → flank shot (coach tip on screen); Peekaboo hiding behind the couch (occluded — only if depth occlusion is confirmed on the capture headset) |
 | 1:30–1:55 | GOO tether: hook and haul; Duster Duke drop, split |
-| 1:55–2:15 | Results card, NEW BEST; LOADOUT skins |
+| 1:55–2:15 | Results card (pops, accuracy, next goal), NEW BEST; LOADOUT skins |
 | 2:15–2:40 | Chill mode: paint, grab the easel, export |
 | 2:40–2:55 | Seated + hands-only callout, logo, URL |
 
@@ -121,17 +126,22 @@ baseline permalink above is the "before").
    auto-fire, five skins, LOADOUT screen.
 3. **Room-aware Neatniks** — four archetypes with distinct behaviours (shield,
    furniture hiding, boss with HP/split), wave director, seated spawn arc.
-4. **Depth occlusion** — real furniture hides Neatniks.
+4. **Depth occlusion** — real furniture hides Neatniks on headsets that
+   support depth sensing (robots only; switches itself off elsewhere).
 5. **GOO tether** — hook and haul with proportional pull.
-6. **Onboarding** — Pip's tutorial, first-encounter coaching, results card.
-7. **Comfort/accessibility** — seated play, pause/resume, vertical comfort band,
-   larger text, colour-independent ammo cues.
+6. **Onboarding** — Pip's five-step tutorial (practice round, skippable,
+   replayable), first-encounter coaching, results card with a next goal.
+7. **Comfort/accessibility** — seated play (forward spawn arc, easel within
+   seated reach), pause/resume, vertical comfort band, rest beats between
+   waves, larger text, colour-independent ammo cues.
+8. **Rebrand** — Splotopia identity, logo and Neatnik cast (baseline shipped as
+   "PaintBlast MR").
 
 ## 6. Asset provenance (IP rules: original or authorised)
 
 | Asset | Source | Status |
 |---|---|---|
-| Neatnik GLBs (`public/gltf/splotbots/`) | Meshy image-to-3D from our Higgsfield concepts | **Confirm** the Meshy plan grants commercial rights; keep receipts |
+| Neatnik GLBs (`public/gltf/neatniks/`) | Meshy image-to-3D from our Higgsfield concepts | **Confirm** the Meshy plan grants commercial rights; keep receipts |
 | Concepts, key art, OG, landing art, logo (`docs/concepts/`, `public/brand/`, `public/landing/`) | Higgsfield image models (logo: `gpt_image_2_5`, R9) | **Confirm** plan terms; keep generation IDs |
 | Easel, palette board | Higgsfield `image_to_3d` | Confirm plan terms |
 | SFX / music (`public/audio/`) | Higgsfield `mirelo_text_to_audio` / `sonilo_music` | Confirm plan terms |
@@ -141,6 +151,9 @@ baseline permalink above is the "before").
 ## 7. Pre-submit checklist
 
 - [ ] On-device pass on Quest 3 **and** 3S: all items in STATE.md's checklist
+- [ ] Depth occlusion confirmed on device — otherwise drop the occlusion claims
+      from §2, §4 and §5
+- [ ] Description facts re-checked against STATE.md (test count: 763 at R9)
 - [ ] Measured **≥ 60 fps** (target 72) with full cast + boss + both gauntlets
 - [ ] Hands-only run from landing to game over with no controller
 - [ ] Netlify URL decision (keep or rename) + QR/OG updated
