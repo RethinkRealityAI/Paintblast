@@ -449,6 +449,22 @@ export const GameEvent = {
    * (the audible cue); the tutorial's menu step keys off it.
    */
   MenuToggled: 24,
+  // ---- The Studio (round 10: Chill mode's three activities) -----------------
+  //
+  // Numbered from 31: round-10 streams took 24 (MenuToggled) and 30
+  // (ShieldBroken) in parallel. All emitted by StudioSystem.
+  /** The player picked a Studio activity. `data` = the new {@link StudioActivity}. */
+  StudioActivityChanged: 31,
+  /**
+   * A Studio target (bullseye / paint balloon) was popped. Position = the
+   * target; `data` = the streak after this pop. Rides alongside an ordinary
+   * TargetPopped (data 0), which carries the pop sound, rumble and confetti.
+   */
+  StudioTargetPopped: 32,
+  /** A stencil earned another star. `data` = stars now held (1..3). */
+  StudioStencilScored: 33,
+  /** SAVE exported a picture. `data` = this session's save count. */
+  StudioArtSaved: 34,
 } as const;
 
 export type GameEvent = typeof GameEvent[keyof typeof GameEvent];
@@ -1308,4 +1324,75 @@ export class WristMenuState {
    * and clears it, so a menu click never also fires.
    */
   consumeMask = 0;
+}
+
+// ---- The Studio (round 10) ---------------------------------------------------
+
+/**
+ * Chill mode's three activities (round 10). Canvas is 0 so a fresh signal and
+ * every Chill entry that predates the Studio mean "paint a picture".
+ */
+export const StudioActivity = {
+  /** A framed canvas on your wall (or the easel): paint it, SAVE it. */
+  Canvas: 0,
+  /** Paint-by-shape: fill a stencil silhouette, scored by coverage. */
+  Stencil: 1,
+  /** Relaxed target range: pop bullseyes and paint balloons. */
+  Targets: 2,
+} as const;
+
+export type StudioActivity = typeof StudioActivity[keyof typeof StudioActivity];
+
+/** Activities in HUD tab order. */
+export const STUDIO_ACTIVITY_ORDER: ReadonlyArray<StudioActivity> = [
+  StudioActivity.Canvas,
+  StudioActivity.Stencil,
+  StudioActivity.Targets,
+];
+
+/**
+ * Shape of the painting surface. Landscape/Portrait are the round-3 easel
+ * board; Round is a tondo; Square is the stencil board (not on the SHAPE
+ * cycle - the stencil activity picks it).
+ */
+export const CanvasShape = {
+  Landscape: 0,
+  Portrait: 1,
+  Round: 2,
+  Square: 3,
+} as const;
+
+export type CanvasShape = typeof CanvasShape[keyof typeof CanvasShape];
+
+/** The SHAPE button's cycle in the Canvas activity. */
+export const CANVAS_SHAPE_CYCLE: ReadonlyArray<CanvasShape> = [
+  CanvasShape.Landscape,
+  CanvasShape.Portrait,
+  CanvasShape.Round,
+];
+
+/** ASCII labels (gotcha 24). */
+export const CANVAS_SHAPE_LABELS: Readonly<Record<CanvasShape, string>> = {
+  [CanvasShape.Landscape]: 'LANDSCAPE',
+  [CanvasShape.Portrait]: 'PORTRAIT',
+  [CanvasShape.Round]: 'ROUND',
+  [CanvasShape.Square]: 'SQUARE',
+};
+
+/**
+ * Where the Studio canvas hangs. Wall = the nearest real wall from scene data,
+ * falling back to floating at a seated distance when there is none; Easel =
+ * the round-2 grabbable easel within reach.
+ */
+export const CanvasMount = {
+  Wall: 0,
+  Easel: 1,
+} as const;
+
+export type CanvasMount = typeof CanvasMount[keyof typeof CanvasMount];
+
+/** The next shape on the SHAPE cycle (anything off-cycle restarts it). */
+export function nextCanvasShape(shape: number): CanvasShape {
+  const i = CANVAS_SHAPE_CYCLE.indexOf(shape as CanvasShape);
+  return CANVAS_SHAPE_CYCLE[(i + 1) % CANVAS_SHAPE_CYCLE.length];
 }
