@@ -23,7 +23,7 @@ import type { RoundStats } from '../types';
 /**
  * Base points a TargetPopped event is worth before the combo multiplier.
  *
- * Round 8: the Splotbots are worth different amounts (Duster Duke far more
+ * Round 8: the Neatniks are worth different amounts (Duster Duke far more
  * than a Mopsy), and TargetSystem packs each pop's points into the event's
  * `data` word ({@link packPopData}). A word carrying no points — any producer
  * that predates the cast — falls back to the classic `GAME.scoreTargetHit`.

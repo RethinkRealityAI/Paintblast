@@ -20,7 +20,7 @@ import {
 import type { Entity, Object3D } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
-import { SPLOTBOTS } from '../config';
+import { NEATNIKS } from '../config';
 import { GamePhase } from '../types';
 import type { PipFocus } from '../types';
 
@@ -189,7 +189,7 @@ export function lookTilt(dy: number, horizontal: number, maxRad: number): number
  * he climbs away and vanishes; when it ends he swoops back, and a new best
  * score earns a double happy spin.
  *
- * Wears `SPLOTBOTS.pip.url` once it has streamed in (measured and rescaled to
+ * Wears `NEATNIKS.pip.url` once it has streamed in (measured and rescaled to
  * `sizeMeters`), and a little code-built palette drone until then. No
  * Interactable and no physics, so he can never eat a click or a shot.
  */
@@ -263,7 +263,7 @@ export class PipSystem extends createSystem({
     this.holder.visible = false;
     this.holder.add(this.rig);
 
-    this.procedural = buildProceduralPip(SPLOTBOTS.pip.sizeMeters, this.rotors);
+    this.procedural = buildProceduralPip(NEATNIKS.pip.sizeMeters, this.rotors);
     this.yawGroup.add(this.procedural);
     this.tryInstallGlb();
 
@@ -293,7 +293,7 @@ export class PipSystem extends createSystem({
   }
 
   update(delta: number) {
-    const pip = SPLOTBOTS.pip;
+    const pip = NEATNIKS.pip;
     this.clock += delta;
 
     if (!this.hasGlb) {
@@ -541,7 +541,7 @@ export class PipSystem extends createSystem({
     bubble.scale.set(width, width, 1);
     bubble.position.set(
       this.holder.position.x,
-      this.holder.position.y + SPLOTBOTS.pip.sizeMeters * 0.55 + width * 0.11,
+      this.holder.position.y + NEATNIKS.pip.sizeMeters * 0.55 + width * 0.11,
       this.holder.position.z,
     );
     bubble.rotation.set(
@@ -603,7 +603,7 @@ export class PipSystem extends createSystem({
   private tryInstallGlb(): void {
     let scene: Object3D | undefined;
     try {
-      scene = AssetManager.getGLTF(SPLOTBOTS.pip.assetKey)?.scene as
+      scene = AssetManager.getGLTF(NEATNIKS.pip.assetKey)?.scene as
         | Object3D
         | undefined;
     } catch {
@@ -617,7 +617,7 @@ export class PipSystem extends createSystem({
     const size = this.box.getSize(new Vector3());
     const centre = this.box.getCenter(new Vector3());
     const scale =
-      SPLOTBOTS.pip.sizeMeters / (Math.max(size.x, size.y, size.z) || 1);
+      NEATNIKS.pip.sizeMeters / (Math.max(size.x, size.y, size.z) || 1);
     const fit = new Group();
     fit.name = 'PipFit';
     fit.scale.setScalar(scale);
@@ -627,7 +627,7 @@ export class PipSystem extends createSystem({
     this.yawGroup.remove(this.procedural);
     this.rotors.length = 0;
     this.yawGroup.add(fit);
-    this.yawGroup.rotation.y = SPLOTBOTS.pip.yawOffsetDeg * DEG_TO_RAD;
+    this.yawGroup.rotation.y = NEATNIKS.pip.yawOffsetDeg * DEG_TO_RAD;
     this.hasGlb = true;
   }
 }

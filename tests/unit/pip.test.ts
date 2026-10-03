@@ -7,7 +7,7 @@ import {
   pipShownInPhase,
   stepPresence,
 } from '../../src/systems/PipSystem';
-import { SPLOTBOTS } from '../../src/config';
+import { NEATNIKS } from '../../src/config';
 import { GamePhase } from '../../src/types';
 
 describe('pipShownInPhase', () => {
@@ -103,7 +103,7 @@ describe('pipHoverPoint', () => {
   });
 
   it('uses the shipped knobs sensibly', () => {
-    const pip = SPLOTBOTS.pip;
+    const pip = NEATNIKS.pip;
     expect(pip.besidePanel).toBeGreaterThan(pip.sizeMeters / 2 - 0.05);
     expect(pip.flySec).toBeGreaterThan(0);
   });

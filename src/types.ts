@@ -408,7 +408,7 @@ export const GameEvent = {
    */
   BlasterModeChanged: 15,
 
-  // ---- Splotbots (round 8) -------------------------------------------------
+  // ---- Neatniks (round 8) -------------------------------------------------
   //
   // Numbered from 20 so parallel round-8 streams adding events of their own
   // (15+) cannot collide with these in a merge.
@@ -687,21 +687,21 @@ export class GauntletMuzzles {
 }
 
 /**
- * The Splotbot cast members TargetSystem spawns (round 8). Pip is not here:
+ * The Neatnik cast members TargetSystem spawns (round 8). Pip is not here:
  * the mascot is never a target. Order matches the wave weight triples in
- * `SPLOTBOTS.waves` (mopsy, squeegee, peekaboo); the boss comes last.
+ * `NEATNIKS.waves` (mopsy, squeegee, peekaboo); the boss comes last.
  */
-export const Splotbot = {
+export const Neatnik = {
   Mopsy: 0,
   Squeegee: 1,
   Peekaboo: 2,
   DusterDuke: 3,
 } as const;
 
-export type Splotbot = typeof Splotbot[keyof typeof Splotbot];
+export type Neatnik = typeof Neatnik[keyof typeof Neatnik];
 
-/** Number of Splotbot archetypes. */
-export const SPLOTBOT_COUNT = 4;
+/** Number of Neatnik archetypes. */
+export const NEATNIK_COUNT = 4;
 
 /**
  * Pack a TargetPopped event's `data` word (round 8): pool slot in the low
@@ -727,7 +727,7 @@ export function unpackPopSlot(data: number): number {
   return data & 0xff;
 }
 
-/** Archetype ({@link Splotbot}) out of a {@link packPopData} word. */
+/** Archetype ({@link Neatnik}) out of a {@link packPopData} word. */
 export function unpackPopArchetype(data: number): number {
   return (data >> 8) & 0xf;
 }
@@ -955,10 +955,10 @@ export function appearFrame(
 // Round 9: onboarding, coaching and the results card. Pure, so they test
 // without a panel or a World. Player-facing copy follows the round-9 rebrand:
 // the game is Splotopia, the robot gang are the Neatniks (identifiers such as
-// `Splotbot` keep their old names until the identifier-rename pass).
+// `Neatnik` keep their old names until the identifier-rename pass).
 // ---------------------------------------------------------------------------
 
-/** Neatnik names as the results card prints them, indexed by {@link Splotbot}. */
+/** Neatnik names as the results card prints them, indexed by {@link Neatnik}. */
 export const NEATNIK_SHORT_NAMES: readonly string[] = [
   'MOPSY',
   'SQUEEGEE',
@@ -966,7 +966,7 @@ export const NEATNIK_SHORT_NAMES: readonly string[] = [
   'DUKE',
 ];
 
-/** Full Neatnik names (coaching labels), indexed by {@link Splotbot}. */
+/** Full Neatnik names (coaching labels), indexed by {@link Neatnik}. */
 export const NEATNIK_NAMES: readonly string[] = [
   'MOPSY',
   'SQUEEGEE',
@@ -1112,13 +1112,13 @@ export function writeMask(
  * ones so veterans are not nagged).
  */
 export function shouldCoach(archetype: number, seenMask: number): boolean {
-  if (archetype <= Splotbot.Mopsy || archetype >= SPLOTBOT_COUNT) return false;
+  if (archetype <= Neatnik.Mopsy || archetype >= NEATNIK_COUNT) return false;
   return (seenMask & (1 << archetype)) === 0;
 }
 
 /** `seenMask` with `archetype` marked seen. */
 export function markSeen(seenMask: number, archetype: number): number {
-  if (archetype < 0 || archetype >= SPLOTBOT_COUNT) return seenMask;
+  if (archetype < 0 || archetype >= NEATNIK_COUNT) return seenMask;
   return (seenMask | (1 << archetype)) & 0xff;
 }
 
@@ -1128,7 +1128,7 @@ export function markSeen(seenMask: number, archetype: number): number {
  * reset at each round start; a detached copy is published at GameOver.
  */
 export interface RoundStats {
-  /** Pops per archetype, indexed by {@link Splotbot}. */
+  /** Pops per archetype, indexed by {@link Neatnik}. */
   pops: number[];
   /** Balls fired (paint and goo). */
   shots: number;
@@ -1146,7 +1146,7 @@ export interface RoundStats {
 
 export function createRoundStats(): RoundStats {
   return {
-    pops: new Array<number>(SPLOTBOT_COUNT).fill(0),
+    pops: new Array<number>(NEATNIK_COUNT).fill(0),
     shots: 0,
     hits: 0,
     bestCombo: 1,
@@ -1233,7 +1233,7 @@ export function nextMilestone(score: number, step = 500): number {
  */
 export function nextGoalLine(stats: RoundStats): string {
   if (totalPops(stats) === 0) return 'Next: pinch at a Neatnik to pop it';
-  if (stats.bossSeen && (stats.pops[Splotbot.DusterDuke] ?? 0) === 0) {
+  if (stats.bossSeen && (stats.pops[Neatnik.DusterDuke] ?? 0) === 0) {
     return 'Next: pop the Duke - GOO TETHER helps';
   }
   if (isNewBest(stats.score, stats.bestBefore)) {

@@ -7,7 +7,7 @@ import {
   GameEvent,
   GameEventBuffer,
   GamePhase,
-  Splotbot,
+  Neatnik,
   packPopData,
 } from '../../src/types';
 import type { RoundStats } from '../../src/types';
@@ -78,7 +78,7 @@ describe('practice round', () => {
 
     let roundStarts = 0;
     h.frame((b) => {
-      b.emit(GameEvent.TargetPopped, 0, 0, 0, packPopData(0, Splotbot.Mopsy, 100));
+      b.emit(GameEvent.TargetPopped, 0, 0, 0, packPopData(0, Neatnik.Mopsy, 100));
     });
     for (let i = 0; i < 72 * 120; i++) {
       h.frame();
@@ -134,9 +134,9 @@ describe('results snapshot', () => {
     h.frame((b) => {
       for (let i = 0; i < 4; i++) b.emit(GameEvent.BallFired, 0, 0, 0, 0);
       b.emit(GameEvent.TargetHit, 0, 0, 0, 0);
-      b.emit(GameEvent.TargetPopped, 0, 0, 0, packPopData(0, Splotbot.Mopsy, 100));
+      b.emit(GameEvent.TargetPopped, 0, 0, 0, packPopData(0, Neatnik.Mopsy, 100));
       b.emit(GameEvent.TargetHit, 0, 0, 0, 0);
-      b.emit(GameEvent.TargetPopped, 0, 0, 0, packPopData(8, Splotbot.Squeegee, 150));
+      b.emit(GameEvent.TargetPopped, 0, 0, 0, packPopData(8, Neatnik.Squeegee, 150));
     });
     h.sys.endRound();
     const stats = h.globals.roundStats.value;

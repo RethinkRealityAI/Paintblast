@@ -97,7 +97,7 @@ import { VfxSystem } from './systems/VfxSystem';
 import { IntroSystem, INTRO_LOGO_KEY } from './systems/IntroSystem';
 import { PipSystem } from './systems/PipSystem';
 import { initLanding } from './landing/landing';
-import { AUDIO, BLASTER, GAME, HUD, PALETTE, RENDER, SPLOTBOTS, TARGETS, WEB } from './config';
+import { AUDIO, BLASTER, GAME, HUD, PALETTE, RENDER, NEATNIKS, TARGETS, WEB } from './config';
 import type { ToneMappingName } from './config';
 import {
   BallKind,
@@ -1199,18 +1199,18 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
       type: AssetType.Texture,
       priority: 'background',
     },
-    // ROUND8-SPLOTBOTS — the Meshy-generated cast (unrigged, one textured
+    // ROUND8-NEATNIKS — the Meshy-generated cast (unrigged, one textured
     // PBR mesh each, WebP textures). Background: TargetSystem builds its pool
     // from robot.gltf at registerSystem and swaps each archetype's real art in
     // at the next Countdown once it has streamed (PipSystem polls for Pip), so
     // they never block boot and a missing file only logs a warning.
     ...Object.fromEntries(
       [
-        SPLOTBOTS.archetypes.mopsy,
-        SPLOTBOTS.archetypes.squeegee,
-        SPLOTBOTS.archetypes.peekaboo,
-        SPLOTBOTS.archetypes.duke,
-        SPLOTBOTS.pip,
+        NEATNIKS.archetypes.mopsy,
+        NEATNIKS.archetypes.squeegee,
+        NEATNIKS.archetypes.peekaboo,
+        NEATNIKS.archetypes.duke,
+        NEATNIKS.pip,
       ].map((bot) => [
         bot.assetKey,
         { url: bot.url, type: AssetType.GLTF, priority: 'background' as const },

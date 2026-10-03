@@ -248,7 +248,7 @@ export const TARGETS = {
   heightMax: 1.7,
   /**
    * Legacy (rounds 1-7) robot height, metres. Round 8 sizes every robot from
-   * its archetype's `SPLOTBOTS.archetypes.*.heightMeters` instead — the
+   * its archetype's `NEATNIKS.archetypes.*.heightMeters` instead — the
    * robot.gltf fallback too — so this no longer changes anything.
    */
   heightMeters: 0.35,
@@ -261,21 +261,21 @@ export const TARGETS = {
   spawnAngleJitter: 0.4,
   /**
    * Pooled robot instances allocated up front and reused. Round 8: must equal
-   * the sum of every Splotbot archetype's `pool` (SPLOTBOTS.archetypes), since
+   * the sum of every Neatnik archetype's `pool` (NEATNIKS.archetypes), since
    * each slot is built once as one specific character; a unit test pins it.
    * It also sizes the aim-assist table.
    */
   poolSize: 14,
   /**
    * Hard ceiling on robots alive at once, whatever a wave asks for. Round 8's
-   * waves (SPLOTBOTS.waves) set the real number per phase of the round; this
+   * waves (NEATNIKS.waves) set the real number per phase of the round; this
    * only stops a mistuned wave from flooding a seated player's view. The
    * boss's two split Mopsys are allowed past it for a moment.
    */
   maxConcurrent: 5,
   /**
    * Default hits to pop, for the Target component's schema only. Round 8:
-   * each archetype's `SPLOTBOTS.archetypes.*.hp` is what a spawn really gets.
+   * each archetype's `NEATNIKS.archetypes.*.hp` is what a spawn really gets.
    */
   baseHp: 1,
   /**
@@ -285,14 +285,14 @@ export const TARGETS = {
   respawnDelaySec: 1.5,
   /**
    * Legacy hover amplitude, metres. Round 8: per archetype
-   * (`SPLOTBOTS.archetypes.*.bobAmplitude`); unused.
+   * (`NEATNIKS.archetypes.*.bobAmplitude`); unused.
    */
   bobAmplitude: 0.08,
-  /** Hover cycles per second, shared by every Splotbot's bob. */
+  /** Hover cycles per second, shared by every Neatnik's bob. */
   bobHz: 0.5,
   /**
    * Legacy yaw drift, degrees per second. Round 8 robots turn to *face you*
-   * instead (`SPLOTBOTS.archetypes.*.faceRate`); unused.
+   * instead (`NEATNIKS.archetypes.*.faceRate`); unused.
    */
   turnDegPerSec: 25,
   /**
@@ -307,8 +307,8 @@ export const TARGETS = {
   tetherMinReach: 0.3,
   /**
    * Seconds a hit keeps the robot puffed up and flashing white (round 8: the
-   * flash brightness is SPLOTBOTS.anim.hitFlashIntensity; the squash-and-
-   * stretch rings on for SPLOTBOTS.anim.hitSec).
+   * flash brightness is NEATNIKS.anim.hitFlashIntensity; the squash-and-
+   * stretch rings on for NEATNIKS.anim.hitSec).
    */
   hitFlashSec: 0.12,
   /** Peak scale multiplier at the instant of a non-lethal hit. */
@@ -1604,7 +1604,7 @@ export const RENDER = {
    */
   robotRimPower: 2.5,
   /**
-   * Round 9: real-world depth occlusion for the Splotbots ONLY — a robot
+   * Round 9: real-world depth occlusion for the Neatniks ONLY — a robot
    * behind your real couch is hidden by it (Peekaboo actually hides). Uses
    * IWSDK's DepthSensingSystem + DepthOccludable; the `depth-sensing` session
    * feature is requested as OPTIONAL, so a device without depth just shows
@@ -2124,11 +2124,11 @@ export const COACH = {
 } as const;
 
 /**
- * One Splotbot character's tuning (round 8). Every archetype in
- * SPLOTBOTS.archetypes has the same shape so TargetSystem can treat the cast
+ * One Neatnik character's tuning (round 8). Every archetype in
+ * NEATNIKS.archetypes has the same shape so TargetSystem can treat the cast
  * as data: which art, how big, how tough, what it is worth, and how it idles.
  */
-export interface SplotbotArchetypeConfig {
+export interface NeatnikArchetypeConfig {
   /** AssetManifest key for this character's GLB (main.ts registers it). */
   readonly assetKey: string;
   /**
@@ -2164,7 +2164,7 @@ export interface SplotbotArchetypeConfig {
 }
 
 /**
- * The Neatniks (round 8 "Splotbots", renamed round 9; identifiers keep the old
+ * The Neatniks (round 8 "Neatniks", renamed round 9; identifiers keep the old
  * name): the cast of cleaning robots that replaced the
  * generic robot. Roles and behaviours are the art bible's
  * (docs/COMPETITION_PLAN.md section 6):
@@ -2183,11 +2183,11 @@ export interface SplotbotArchetypeConfig {
  * - **Pip**: the palette-drone mascot. Never shot; hovers beside the HUD in
  *   menus and flies off while you play (PipSystem).
  */
-export const SPLOTBOTS = {
+export const NEATNIKS = {
   archetypes: {
     mopsy: {
-      assetKey: 'splotbotMopsy',
-      url: '/gltf/splotbots/mopsy.glb',
+      assetKey: 'neatnikMopsy',
+      url: '/gltf/neatniks/mopsy.glb',
       pool: 7,
       heightMeters: 0.32,
       hitRadiusScale: 1.0,
@@ -2200,8 +2200,8 @@ export const SPLOTBOTS = {
       swayHz: 0.9,
     },
     squeegee: {
-      assetKey: 'splotbotSqueegee',
-      url: '/gltf/splotbots/squeegee.glb',
+      assetKey: 'neatnikSqueegee',
+      url: '/gltf/neatniks/squeegee.glb',
       pool: 3,
       heightMeters: 0.42,
       hitRadiusScale: 0.95,
@@ -2215,8 +2215,8 @@ export const SPLOTBOTS = {
       swayHz: 0.6,
     },
     peekaboo: {
-      assetKey: 'splotbotPeekaboo',
-      url: '/gltf/splotbots/peekaboo.glb',
+      assetKey: 'neatnikPeekaboo',
+      url: '/gltf/neatniks/peekaboo.glb',
       pool: 3,
       heightMeters: 0.55,
       hitRadiusScale: 0.85,
@@ -2229,8 +2229,8 @@ export const SPLOTBOTS = {
       swayHz: 1.3,
     },
     duke: {
-      assetKey: 'splotbotDuke',
-      url: '/gltf/splotbots/duster-duke.glb',
+      assetKey: 'neatnikDuke',
+      url: '/gltf/neatniks/duster-duke.glb',
       pool: 1,
       heightMeters: 0.75,
       hitRadiusScale: 0.8,
@@ -2243,7 +2243,7 @@ export const SPLOTBOTS = {
       swayRad: 0.09,
       swayHz: 0.45,
     },
-  } satisfies Record<string, SplotbotArchetypeConfig>,
+  } satisfies Record<string, NeatnikArchetypeConfig>,
 
   /**
    * Robot "lanes" across TARGETS.spawnArcDeg. Each spawn takes the emptiest
@@ -2279,7 +2279,7 @@ export const SPLOTBOTS = {
     { startSec: 22, maxAlive: 4, weights: [0.55, 0.25, 0.2] },
     // Mixed pressure until the boss.
     { startSec: 48, maxAlive: 4, weights: [0.4, 0.3, 0.3] },
-  ] as ReadonlyArray<SplotbotWave>,
+  ] as ReadonlyArray<NeatnikWave>,
 
   boss: {
     /**
@@ -2396,8 +2396,8 @@ export const SPLOTBOTS = {
 
   /** Pip, the mascot drone (PipSystem). Never shot, never blocks shots. */
   pip: {
-    assetKey: 'splotbotPip',
-    url: '/gltf/splotbots/pip.glb',
+    assetKey: 'neatnikPip',
+    url: '/gltf/neatniks/pip.glb',
     /** Pip's size (largest dimension), metres. */
     sizeMeters: 0.22,
     /** Same meaning as the archetypes' yawOffsetDeg: turns the face to +Z. */
@@ -2431,8 +2431,8 @@ export const SPLOTBOTS = {
   },
 } as const;
 
-/** One wave of SPLOTBOTS.waves. */
-export interface SplotbotWave {
+/** One wave of NEATNIKS.waves. */
+export interface NeatnikWave {
   /** Seconds into the round this wave starts. */
   readonly startSec: number;
   /** Robots it keeps alive (capped by TARGETS.maxConcurrent). */

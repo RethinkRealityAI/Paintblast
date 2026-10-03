@@ -291,7 +291,7 @@ export class FeedbackSystem extends createSystem({}) {
           );
           break;
 
-        // Round 8 Splotbots. The deflected ball still lands (BallImpact
+        // Round 8 Neatniks. The deflected ball still lands (BallImpact
         // carries the splat); this adds the shield's own tick at the blade so
         // the player hears *why* it did not count.
         case GameEvent.ShieldDeflected:

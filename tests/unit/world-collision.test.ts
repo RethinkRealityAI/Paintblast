@@ -7,7 +7,7 @@ import {
   isCollidableMesh,
   isGlobalMesh,
 } from '../../src/systems/WorldCollisionSystem';
-import { BALLS, FIRE, ROOM, SPLOTBOTS, WEB } from '../../src/config';
+import { BALLS, FIRE, ROOM, NEATNIKS, WEB } from '../../src/config';
 
 /**
  * Every semantic label the WebXR registry defines, verbatim. Quest maps its own
@@ -156,7 +156,7 @@ describe('ROOM.wallThicknessMeters', () => {
     // Round 8: a Squeegee's shield re-launches the ball with an upward kick,
     // so the deflect gets its own speed cap — pinned here like the others.
     const captureBand = ROOM.wallThicknessMeters + 2 * BALLS.radius;
-    expect(captureBand).toBeGreaterThan(SPLOTBOTS.shield.maxDeflectSpeed / 72);
+    expect(captureBand).toBeGreaterThan(NEATNIKS.shield.maxDeflectSpeed / 72);
   });
 
   it('stays thin enough that the bulge is invisible in passthrough', () => {

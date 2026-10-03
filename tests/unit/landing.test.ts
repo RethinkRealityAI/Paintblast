@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
-import { initLanding, SPLOTBOTS } from '../../src/landing/landing';
+import { initLanding, NEATNIKS } from '../../src/landing/landing';
 import { dripLength, easeOutBack } from '../../src/landing/splatter';
 
 describe('landing splatter helpers', () => {
@@ -67,7 +67,7 @@ describe('landing page', () => {
   it('ships the roster, the three blasters and the three hands-only steps', () => {
     initLanding();
     const text = document.getElementById('landing-root')!.textContent ?? '';
-    for (const b of SPLOTBOTS) expect(text).toContain(b.name);
+    for (const b of NEATNIKS) expect(text).toContain(b.name);
     for (const m of ['BLASTER', 'GOO', 'HAND']) expect(text).toContain(m);
     expect(text).toMatch(/Meet the Neatniks/);
     expect(text).not.toMatch(/Splotbot|PaintBlast/i);

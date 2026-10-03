@@ -24,8 +24,8 @@ import type {
 } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
-import { BALLS, GAME, RENDER, ROOM, SPLOTBOTS, TARGETS, WEB } from '../config';
-import type { SplotbotArchetypeConfig, SplotbotWave } from '../config';
+import { BALLS, GAME, RENDER, ROOM, NEATNIKS, TARGETS, WEB } from '../config';
+import type { NeatnikArchetypeConfig, NeatnikWave } from '../config';
 import {
   AimTargets,
   BallKind,
@@ -33,7 +33,7 @@ import {
   GameEvent,
   GameEventBuffer,
   GamePhase,
-  Splotbot,
+  Neatnik,
   WebSubMode,
   packImpactData,
   packPopData,
@@ -79,25 +79,25 @@ export const Target = createComponent('Target', {
    * there is no console to print to.
    */
   tetheredBy: { type: Types.Int8, default: -1 },
-  /** Round 8: which Splotbot this slot is built as (see {@link Splotbot}). */
-  archetype: { type: Types.Int8, default: Splotbot.Mopsy },
+  /** Round 8: which Neatnik this slot is built as (see {@link Neatnik}). */
+  archetype: { type: Types.Int8, default: Neatnik.Mopsy },
 });
 
 // ---------------------------------------------------------------------------
 // Archetype table
 // ---------------------------------------------------------------------------
 
-/** Config per {@link Splotbot}, in enum order. */
-const ARCHETYPE_CONFIGS: ReadonlyArray<SplotbotArchetypeConfig> = [
-  SPLOTBOTS.archetypes.mopsy,
-  SPLOTBOTS.archetypes.squeegee,
-  SPLOTBOTS.archetypes.peekaboo,
-  SPLOTBOTS.archetypes.duke,
+/** Config per {@link Neatnik}, in enum order. */
+const ARCHETYPE_CONFIGS: ReadonlyArray<NeatnikArchetypeConfig> = [
+  NEATNIKS.archetypes.mopsy,
+  NEATNIKS.archetypes.squeegee,
+  NEATNIKS.archetypes.peekaboo,
+  NEATNIKS.archetypes.duke,
 ];
 
 /** The tuning for one archetype; unknown values read as Mopsy. */
-export function archetypeConfig(archetype: number): SplotbotArchetypeConfig {
-  return ARCHETYPE_CONFIGS[archetype] ?? ARCHETYPE_CONFIGS[Splotbot.Mopsy];
+export function archetypeConfig(archetype: number): NeatnikArchetypeConfig {
+  return ARCHETYPE_CONFIGS[archetype] ?? ARCHETYPE_CONFIGS[Neatnik.Mopsy];
 }
 
 /** Pool slots per archetype, in enum order. Sum = TARGETS.poolSize. */
@@ -315,7 +315,7 @@ export function clampSpawnDistance(
  */
 export function waveIndexAt(
   elapsedSec: number,
-  waves: ReadonlyArray<SplotbotWave>,
+  waves: ReadonlyArray<NeatnikWave>,
 ): number {
   let index = 0;
   for (let i = 0; i < waves.length; i++) {
@@ -331,7 +331,7 @@ export function waveIndexAt(
  */
 export function inWaveBreather(
   elapsedSec: number,
-  waves: ReadonlyArray<SplotbotWave>,
+  waves: ReadonlyArray<NeatnikWave>,
   breatherSec: number,
 ): boolean {
   if (!(breatherSec > 0)) return false;
@@ -853,11 +853,11 @@ export class RobotDepthSensingSystem extends DepthSensingSystem {
 }
 
 /**
- * The Splotbots: a fixed pool of animated robot characters the player shoots
+ * The Neatniks: a fixed pool of animated robot characters the player shoots
  * (round 8; rounds 1-7 had one generic robot).
  *
  * **Pool.** `TARGETS.poolSize` entities are built once, each permanently one
- * archetype (SPLOTBOTS.archetypes[*].pool of each), then shown, moved and
+ * archetype (NEATNIKS.archetypes[*].pool of each), then shown, moved and
  * hidden as the round demands. Per-slot state lives in parallel TypedArrays
  * indexed by slot, so a frame of robot logic allocates nothing. Each slot's
  * object tree is `holder` (the entity: position, facing yaw) → `rig`
@@ -1051,7 +1051,7 @@ export class TargetSystem extends createSystem({
     this.headScratch = new Vector3();
     this.spawnDirection = new Vector3();
     this.bestDirection = new Vector3();
-    this.laneOccupancy = new Int8Array(Math.max(1, SPLOTBOTS.lanes));
+    this.laneOccupancy = new Int8Array(Math.max(1, NEATNIKS.lanes));
     this.poseScratch = new Float32Array(3);
     this.pairScratch = new Float32Array(4);
     this.hideCandidates = new Float32Array(MAX_HIDE_CANDIDATES * 4);
@@ -1069,7 +1069,7 @@ export class TargetSystem extends createSystem({
     this.cleanupFuncs.push(
       this.gamePhase.subscribe((phase) => {
         if (phase === GamePhase.Countdown) {
-          // The splotbot GLBs stream in the background; swap them in while
+          // The neatnik GLBs stream in the background; swap them in while
           // the countdown hides the (one-off) clone cost.
           if (this.ensurePool()) this.refreshArt();
         } else if (phase === GamePhase.Playing) {
@@ -1306,7 +1306,7 @@ export class TargetSystem extends createSystem({
    * hands the robot back its idle.
    *
    * Round 8: Duster Duke is too big to haul in and pop. A "pop" haul takes
-   * `SPLOTBOTS.boss.tetherDamage` HP off him and he stomps back to his spot;
+   * `NEATNIKS.boss.tetherDamage` HP off him and he stomps back to his spot;
    * only a haul that finishes him pops (and splits) him.
    */
   endTether(slot: number, pop: boolean): void {
@@ -1326,10 +1326,10 @@ export class TargetSystem extends createSystem({
     const arch = this.slotArchetype[slot];
 
     if (!pop) {
-      if (arch === Splotbot.Peekaboo) this.restartPeekAtTop(slot, nowSec);
+      if (arch === Neatnik.Peekaboo) this.restartPeekAtTop(slot, nowSec);
       // A boss let off the line stomps back to his spot rather than idling
       // wherever he was dropped (possibly in the player's lap).
-      if (arch === Splotbot.DusterDuke) {
+      if (arch === Neatnik.DusterDuke) {
         this.startWalkHome(slot, base, nowSec);
       } else {
         // Round 9: everyone else drifts back out to a comfortable distance
@@ -1340,10 +1340,10 @@ export class TargetSystem extends createSystem({
     }
 
     if (
-      arch === Splotbot.DusterDuke &&
-      this.slotHp[slot] > SPLOTBOTS.boss.tetherDamage
+      arch === Neatnik.DusterDuke &&
+      this.slotHp[slot] > NEATNIKS.boss.tetherDamage
     ) {
-      const hp = this.slotHp[slot] - SPLOTBOTS.boss.tetherDamage;
+      const hp = this.slotHp[slot] - NEATNIKS.boss.tetherDamage;
       this.slotHp[slot] = hp;
       this.slots[slot]?.setValue(Target, 'hp', hp);
       this.hitStartedAt[slot] = nowSec;
@@ -1427,7 +1427,7 @@ export class TargetSystem extends createSystem({
       rig.name = 'Rig';
       rig.add(yaw);
       const holder = new Group();
-      holder.name = `Splotbot_${slot}`;
+      holder.name = `Neatnik_${slot}`;
       holder.visible = false;
       holder.add(rig);
 
@@ -1620,24 +1620,24 @@ export class TargetSystem extends createSystem({
    */
   private directSpawns(nowSec: number): void {
     const timeLeft = this.roundTimeLeft();
-    const boss = SPLOTBOTS.boss;
+    const boss = NEATNIKS.boss;
 
     if (bossDue(timeLeft, boss.enterAtSecLeft, this.bossSpawned)) {
       // Only spent on success: a failed spawn retries next frame rather than
       // silently losing the boss for the round.
-      this.bossSpawned = this.spawnArchetype(Splotbot.DusterDuke, nowSec) >= 0;
+      this.bossSpawned = this.spawnArchetype(Neatnik.DusterDuke, nowSec) >= 0;
     }
 
-    const waves = SPLOTBOTS.waves;
+    const waves = NEATNIKS.waves;
     const elapsed = GAME.roundSec - timeLeft;
     // Round 9: a short rest beat as each new wave opens (comfort). Robots
     // already up stay up; only new spawns wait. The boss above is exempt.
-    if (inWaveBreather(elapsed, waves, SPLOTBOTS.waveBreatherSec)) return;
+    if (inWaveBreather(elapsed, waves, NEATNIKS.waveBreatherSec)) return;
     const wave = waves[waveIndexAt(elapsed, waves)];
     if (!wave) return;
     const inBoss = boss.enterAtSecLeft > 0 && timeLeft <= boss.enterAtSecLeft;
     let cap = inBoss
-      ? boss.companionsMax + this.countActive(Splotbot.DusterDuke)
+      ? boss.companionsMax + this.countActive(Neatnik.DusterDuke)
       : wave.maxAlive;
     cap = Math.min(cap, TARGETS.maxConcurrent);
     if (this.aliveCount >= cap) return;
@@ -1646,11 +1646,11 @@ export class TargetSystem extends createSystem({
     const arch = pickWeighted(wave.weights, Math.random());
     if (
       this.spawnArchetype(arch, nowSec) < 0 &&
-      arch !== Splotbot.Mopsy
+      arch !== Neatnik.Mopsy
     ) {
-      this.spawnArchetype(Splotbot.Mopsy, nowSec);
+      this.spawnArchetype(Neatnik.Mopsy, nowSec);
     }
-    this.nextSpawnAt[0] = nowSec + SPLOTBOTS.spawnStaggerSec;
+    this.nextSpawnAt[0] = nowSec + NEATNIKS.spawnStaggerSec;
   }
 
   private countActive(archetype: number): number {
@@ -1691,8 +1691,8 @@ export class TargetSystem extends createSystem({
     this.slotLane[slot] = -1;
 
     switch (archetype) {
-      case Splotbot.DusterDuke: {
-        const boss = SPLOTBOTS.boss;
+      case Neatnik.DusterDuke: {
+        const boss = NEATNIKS.boss;
         this.spawnDirection.set(
           Math.cos(this.spawnArcCenter),
           0,
@@ -1717,7 +1717,7 @@ export class TargetSystem extends createSystem({
         this.slotHome[base + 2] = z;
         this.entranceStartedAt[slot] = nowSec;
         // The drop *is* the entrance: skip the pop-in.
-        this.spawnStartedAt[slot] = nowSec - SPLOTBOTS.anim.spawnSec;
+        this.spawnStartedAt[slot] = nowSec - NEATNIKS.anim.spawnSec;
         this.events.emit(
           GameEvent.BossEntered,
           x,
@@ -1728,11 +1728,11 @@ export class TargetSystem extends createSystem({
         break;
       }
 
-      case Splotbot.Peekaboo: {
+      case Neatnik.Peekaboo: {
         if (!this.placeBehindFurniture(slot, nowSec)) {
           this.placeLowPeek(slot, nowSec);
         }
-        const peek = SPLOTBOTS.peek;
+        const peek = NEATNIKS.peek;
         this.slotHiddenSec[slot] =
           peek.hiddenSec + Math.random() * peek.hiddenJitterSec;
         // Start half-way through hiding, so the first peek comes soon.
@@ -1830,7 +1830,7 @@ export class TargetSystem extends createSystem({
    * @returns false when the room offers nothing usable.
    */
   private placeBehindFurniture(slot: number, nowSec: number): boolean {
-    const peek = SPLOTBOTS.peek;
+    const peek = NEATNIKS.peek;
     const head = this.headScratch;
     const halfArc = (Math.min(360, TARGETS.spawnArcDeg) * DEG_TO_RAD) / 2;
     const cand = this.hideCandidates;
@@ -1841,7 +1841,7 @@ export class TargetSystem extends createSystem({
     let occupied = 0;
     for (let other = 0; other < this.slots.length; other++) {
       if (other === slot) continue;
-      if (this.slotArchetype[other] !== Splotbot.Peekaboo) continue;
+      if (this.slotArchetype[other] !== Neatnik.Peekaboo) continue;
       if (this.slotState[other] !== TargetSlotState.Active) continue;
       this.peekOccupied[occupied * 2] = this.slotWorldPos[other * 3];
       this.peekOccupied[occupied * 2 + 1] = this.slotWorldPos[other * 3 + 2];
@@ -1917,7 +1917,7 @@ export class TargetSystem extends createSystem({
 
     const pick = Math.min(count - 1, Math.floor(Math.random() * count));
     const k = pick * 4;
-    const height = archetypeConfig(Splotbot.Peekaboo).heightMeters;
+    const height = archetypeConfig(Neatnik.Peekaboo).heightMeters;
     const top = cand[k + 2];
     const upY = top + peek.peekAbove;
     // Hidden: the top of the head just below the furniture's top.
@@ -1929,7 +1929,7 @@ export class TargetSystem extends createSystem({
 
   /** No furniture: periscope up out of a low spot in a lane of the arc. */
   private placeLowPeek(slot: number, nowSec: number): void {
-    const peek = SPLOTBOTS.peek;
+    const peek = NEATNIKS.peek;
     const head = this.headScratch;
     const lane = this.pickFreeLane();
     const distance = this.pickRoomAwareSpawn(lane, this.laneOccupancy.length);
@@ -1948,7 +1948,7 @@ export class TargetSystem extends createSystem({
   /** After a tether lets a Peekaboo go: it is up, then ducks on schedule. */
   private restartPeekAtTop(slot: number, nowSec: number): void {
     this.peekStartedAt[slot] =
-      nowSec - this.slotHiddenSec[slot] - SPLOTBOTS.peek.riseSec;
+      nowSec - this.slotHiddenSec[slot] - NEATNIKS.peek.riseSec;
   }
 
   /**
@@ -2101,7 +2101,7 @@ export class TargetSystem extends createSystem({
 
     const arch = this.slotArchetype[slot];
     const cfg = archetypeConfig(arch);
-    const anim = SPLOTBOTS.anim;
+    const anim = NEATNIKS.anim;
     const tethered = this.isTethered(slot);
     const phase = this.slotBobPhase[slot];
     const clock = this.animClock;
@@ -2128,19 +2128,19 @@ export class TargetSystem extends createSystem({
     if (!tethered) {
       // Round 9: a released robot drifting back out (the Duke walks home
       // inside his own branch below, after his drop).
-      if (arch !== Splotbot.DusterDuke) this.walkHome(slot, nowSec);
+      if (arch !== Neatnik.DusterDuke) this.walkHome(slot, nowSec);
       const bob = Math.sin(nowSec * bobOmega + phase) * cfg.bobAmplitude;
       let y = this.slotBaseY[slot] + bob;
       switch (arch) {
-        case Splotbot.Mopsy:
+        case Neatnik.Mopsy:
           // Skirt sway: the body breathes as the fringe swings.
           squash *= 1 + 0.04 * Math.sin(clock * TAU * cfg.swayHz * 2 + phase);
           break;
 
-        case Splotbot.Squeegee: {
+        case Neatnik.Squeegee: {
           // Guard stance: leaning in behind the blade; recoils on a ping.
-          const shield = SPLOTBOTS.shield;
-          tiltX += SPLOTBOTS.shield.guardTiltRad;
+          const shield = NEATNIKS.shield;
+          tiltX += NEATNIKS.shield.guardTiltRad;
           const flashLeft = this.shieldFlashUntil[slot] - nowSec;
           if (flashLeft > 0) {
             const k = flashLeft / shield.flashSec;
@@ -2150,8 +2150,8 @@ export class TargetSystem extends createSystem({
           break;
         }
 
-        case Splotbot.Peekaboo: {
-          const peek = SPLOTBOTS.peek;
+        case Neatnik.Peekaboo: {
+          const peek = NEATNIKS.peek;
           lift = peekLift(
             nowSec - this.peekStartedAt[slot],
             this.slotHiddenSec[slot],
@@ -2171,8 +2171,8 @@ export class TargetSystem extends createSystem({
           break;
         }
 
-        case Splotbot.DusterDuke: {
-          const boss = SPLOTBOTS.boss;
+        case Neatnik.DusterDuke: {
+          const boss = NEATNIKS.boss;
           const tE = nowSec - this.entranceStartedAt[slot];
           if (this.entranceStartedAt[slot] > 0 && tE < boss.dropSec) {
             y = this.slotBaseY[slot] + dropOffset(tE, boss.dropSec, boss.dropHeight);
@@ -2258,7 +2258,7 @@ export class TargetSystem extends createSystem({
   /**
    * Round 9: a released (tap / timeout) non-boss robot inside
    * ROOM.spawnMinDist eases straight back out to that radius over
-   * SPLOTBOTS.releaseReturnSec, keeping its height. Reuses the Duke's
+   * NEATNIKS.releaseReturnSec, keeping its height. Reuses the Duke's
    * walk-home lerp with a temporary home; a robot already far enough out
    * stays put.
    */
@@ -2292,7 +2292,7 @@ export class TargetSystem extends createSystem({
     const drift = this.slotDriftHome[slot] === 1;
     const u =
       (nowSec - started) /
-      (drift ? SPLOTBOTS.releaseReturnSec : SPLOTBOTS.boss.returnSec);
+      (drift ? NEATNIKS.releaseReturnSec : NEATNIKS.boss.returnSec);
     if (u >= 1) {
       holder.position.x = this.slotHome[base];
       holder.position.z = this.slotHome[base + 2];
@@ -2314,10 +2314,10 @@ export class TargetSystem extends createSystem({
   private writeFlash(slot: number, nowSec: number, hitK: number): void {
     const flash = this.slotFlash[slot];
     if (!flash) return;
-    const white = hitK * SPLOTBOTS.anim.hitFlashIntensity;
+    const white = hitK * NEATNIKS.anim.hitFlashIntensity;
     const shieldLeft = this.shieldFlashUntil[slot] - nowSec;
     const cyan =
-      shieldLeft > 0 ? (shieldLeft / SPLOTBOTS.shield.flashSec) * 1.4 : 0;
+      shieldLeft > 0 ? (shieldLeft / NEATNIKS.shield.flashSec) * 1.4 : 0;
     flash.value.set(white + 0.25 * cyan, white + 0.9 * cyan, white + 1.2 * cyan);
   }
 
@@ -2336,7 +2336,7 @@ export class TargetSystem extends createSystem({
       return;
     }
 
-    const anim = SPLOTBOTS.anim;
+    const anim = NEATNIKS.anim;
     popPose(progress, anim.popSquashFrac, anim.popSpinTurns, this.poseScratch);
     if (rig) {
       rig.scale.set(this.poseScratch[1], this.poseScratch[0], this.poseScratch[1]);
@@ -2430,7 +2430,7 @@ export class TargetSystem extends createSystem({
         if (distSq > reach * reach) continue;
 
         if (
-          this.slotArchetype[slot] === Splotbot.Squeegee &&
+          this.slotArchetype[slot] === Neatnik.Squeegee &&
           !this.isTethered(slot) &&
           this.shieldStops(ball, slot, vx, vz)
         ) {
@@ -2462,7 +2462,7 @@ export class TargetSystem extends createSystem({
     vz: number,
   ): boolean {
     const yaw = this.slots[slot].object3D?.rotation.y ?? this.slotYaw[slot];
-    if (!shieldBlocks(Math.sin(yaw), Math.cos(yaw), vx, vz, SPLOTBOTS.shield.coneDeg)) {
+    if (!shieldBlocks(Math.sin(yaw), Math.cos(yaw), vx, vz, NEATNIKS.shield.coneDeg)) {
       return false;
     }
     const isTether =
@@ -2492,7 +2492,7 @@ export class TargetSystem extends createSystem({
     vz: number,
     nowSec: number,
   ): boolean {
-    this.shieldFlashUntil[slot] = nowSec + SPLOTBOTS.shield.flashSec;
+    this.shieldFlashUntil[slot] = nowSec + NEATNIKS.shield.flashSec;
     const x = this.ballScratch.x;
     const y = this.ballScratch.y;
     const z = this.ballScratch.z;
@@ -2517,7 +2517,7 @@ export class TargetSystem extends createSystem({
     }
 
     const yaw = this.slots[slot].object3D?.rotation.y ?? this.slotYaw[slot];
-    const shield = SPLOTBOTS.shield;
+    const shield = NEATNIKS.shield;
     deflectVelocity(
       vx,
       vy,
@@ -2685,7 +2685,7 @@ export class TargetSystem extends createSystem({
       packPopData(slot, arch, archetypeConfig(arch).points),
     );
 
-    if (arch === Splotbot.DusterDuke) this.splitBoss(base, nowSec);
+    if (arch === Neatnik.DusterDuke) this.splitBoss(base, nowSec);
   }
 
   /**
@@ -2712,17 +2712,17 @@ export class TargetSystem extends createSystem({
       this.pairScratch[1],
       this.headScratch.x,
       this.headScratch.z,
-      SPLOTBOTS.boss.splitSpread,
+      NEATNIKS.boss.splitSpread,
       this.pairScratch,
     );
     // Up off the floor where a seated player can see them over the coffee table.
     const y = Math.max(
       TARGETS.heightMin,
       (atHome ? this.slotHome[base + 1] : this.slotWorldPos[base + 1]) +
-        archetypeConfig(Splotbot.Mopsy).heightMeters * 0.5,
+        archetypeConfig(Neatnik.Mopsy).heightMeters * 0.5,
     );
     for (let k = 0; k < 2; k++) {
-      const child = this.freeSlotOf(Splotbot.Mopsy);
+      const child = this.freeSlotOf(Neatnik.Mopsy);
       if (child < 0) return;
       this.startSlot(
         child,
@@ -2757,7 +2757,7 @@ function patchRobotMaterial(
   // three keys programs on this tag, not on what onBeforeCompile does, so an
   // occluded and an unoccluded robot material must never share one.
   const occ = RENDER.depthOcclusion ? ':occ' : '';
-  const cacheTag = `pb-splotbot:${rimGlsl}:${strength}:${power}:${env}${occ}`;
+  const cacheTag = `pb-neatnik:${rimGlsl}:${strength}:${power}:${env}${occ}`;
   standard.onBeforeCompile = (shader) => {
     shader.uniforms.pbFlash = flash;
     shader.fragmentShader = shader.fragmentShader

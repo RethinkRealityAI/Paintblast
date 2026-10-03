@@ -30,7 +30,7 @@ export interface LandingHandle {
  * not a Neatnik). Image paths are under public/. The export keeps its
  * pre-rebrand identifier until the identifier pass.
  */
-export const SPLOTBOTS = [
+export const NEATNIKS = [
   {
     id: 'mopsy',
     name: 'Mopsy',
@@ -80,7 +80,7 @@ const enterButton = (extraClass = '', id = '') =>
    </button>`;
 
 function markup(): string {
-  const bots = SPLOTBOTS.map(
+  const bots = NEATNIKS.map(
     (b, i) => `
       <li class="pb-bot" style="--accent:${b.accent}; --i:${i}">
         <div class="pb-bot-art">

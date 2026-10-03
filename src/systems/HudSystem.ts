@@ -19,7 +19,7 @@ import {
   GameEvent,
   GameEventBuffer,
   GamePhase,
-  SPLOTBOT_COUNT,
+  NEATNIK_COUNT,
   TUTORIAL_STEP_COUNT,
   TutorialStep,
   WEB_BALL_COLOR,
@@ -597,7 +597,7 @@ export class HudSystem extends createSystem({
     }
     this.coachText = element(document, 'hud-coach');
     this.resPops.length = 0;
-    for (let i = 0; i < SPLOTBOT_COUNT; i++) {
+    for (let i = 0; i < NEATNIK_COUNT; i++) {
       this.resPops.push(element(document, `res-pops-${i}`));
     }
     this.resShots = element(document, 'res-shots');

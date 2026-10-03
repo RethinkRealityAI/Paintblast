@@ -28,15 +28,15 @@ import {
   wrapAngle,
 } from '../../src/systems/TargetSystem';
 import { popBasePoints } from '../../src/systems/GameStateSystem';
-import { GAME, SPLOTBOTS, TARGETS } from '../../src/config';
-import type { SplotbotWave } from '../../src/config';
+import { GAME, NEATNIKS, TARGETS } from '../../src/config';
+import type { NeatnikWave } from '../../src/config';
 import {
   BallKind,
   GameEvent,
   GameEventBuffer,
   GamePhase,
-  Splotbot,
-  SPLOTBOT_COUNT,
+  Neatnik,
+  NEATNIK_COUNT,
   packPopData,
   unpackPopArchetype,
   unpackPopPoints,
@@ -46,48 +46,48 @@ import {
 
 const DEG = Math.PI / 180;
 
-describe('Splotbot config', () => {
+describe('Neatnik config', () => {
   it('builds exactly TARGETS.poolSize slots across the archetypes', () => {
     const counts = archetypePoolCounts();
-    expect(counts).toHaveLength(SPLOTBOT_COUNT);
+    expect(counts).toHaveLength(NEATNIK_COUNT);
     expect(counts.reduce((a, b) => a + b, 0)).toBe(TARGETS.poolSize);
     for (const n of counts) expect(Number.isInteger(n) && n >= 1).toBe(true);
   });
 
   it('has enough Mopsys for a full wave plus the boss split', () => {
-    const maxAlive = Math.max(...SPLOTBOTS.waves.map((w) => w.maxAlive));
-    expect(SPLOTBOTS.archetypes.mopsy.pool).toBeGreaterThanOrEqual(
+    const maxAlive = Math.max(...NEATNIKS.waves.map((w) => w.maxAlive));
+    expect(NEATNIKS.archetypes.mopsy.pool).toBeGreaterThanOrEqual(
       Math.min(maxAlive, TARGETS.maxConcurrent) + 2,
     );
   });
 
   it('maps each archetype to its own tuning, unknown values to Mopsy', () => {
-    expect(archetypeConfig(Splotbot.Mopsy)).toBe(SPLOTBOTS.archetypes.mopsy);
-    expect(archetypeConfig(Splotbot.Squeegee)).toBe(SPLOTBOTS.archetypes.squeegee);
-    expect(archetypeConfig(Splotbot.Peekaboo)).toBe(SPLOTBOTS.archetypes.peekaboo);
-    expect(archetypeConfig(Splotbot.DusterDuke)).toBe(SPLOTBOTS.archetypes.duke);
-    expect(archetypeConfig(99)).toBe(SPLOTBOTS.archetypes.mopsy);
+    expect(archetypeConfig(Neatnik.Mopsy)).toBe(NEATNIKS.archetypes.mopsy);
+    expect(archetypeConfig(Neatnik.Squeegee)).toBe(NEATNIKS.archetypes.squeegee);
+    expect(archetypeConfig(Neatnik.Peekaboo)).toBe(NEATNIKS.archetypes.peekaboo);
+    expect(archetypeConfig(Neatnik.DusterDuke)).toBe(NEATNIKS.archetypes.duke);
+    expect(archetypeConfig(99)).toBe(NEATNIKS.archetypes.mopsy);
   });
 
   it('makes the boss the toughest and most valuable robot', () => {
-    const duke = SPLOTBOTS.archetypes.duke;
-    for (const a of [Splotbot.Mopsy, Splotbot.Squeegee, Splotbot.Peekaboo]) {
+    const duke = NEATNIKS.archetypes.duke;
+    for (const a of [Neatnik.Mopsy, Neatnik.Squeegee, Neatnik.Peekaboo]) {
       expect(duke.hp).toBeGreaterThan(archetypeConfig(a).hp);
       expect(duke.points).toBeGreaterThan(archetypeConfig(a).points);
       expect(duke.heightMeters).toBeGreaterThan(archetypeConfig(a).heightMeters);
     }
     expect(duke.hp).toBe(6);
     // A tether haul must not be able to one-shot a fresh boss.
-    expect(SPLOTBOTS.boss.tetherDamage).toBeLessThan(duke.hp);
+    expect(NEATNIKS.boss.tetherDamage).toBeLessThan(duke.hp);
   });
 
-  it('gives every archetype a distinct asset key and a .glb under /gltf/splotbots/', () => {
+  it('gives every archetype a distinct asset key and a .glb under /gltf/neatniks/', () => {
     const keys = new Set<string>();
     for (const cfg of [
-      ...Object.values(SPLOTBOTS.archetypes),
-      SPLOTBOTS.pip,
+      ...Object.values(NEATNIKS.archetypes),
+      NEATNIKS.pip,
     ]) {
-      expect(cfg.url.startsWith('/gltf/splotbots/')).toBe(true);
+      expect(cfg.url.startsWith('/gltf/neatniks/')).toBe(true);
       expect(cfg.url.endsWith('.glb')).toBe(true);
       keys.add(cfg.assetKey);
     }
@@ -95,7 +95,7 @@ describe('Splotbot config', () => {
   });
 
   it('has sorted waves that start at 0 and fit the round', () => {
-    const waves = SPLOTBOTS.waves;
+    const waves = NEATNIKS.waves;
     expect(waves[0].startSec).toBe(0);
     for (let i = 1; i < waves.length; i++) {
       expect(waves[i].startSec).toBeGreaterThan(waves[i - 1].startSec);
@@ -111,18 +111,18 @@ describe('Splotbot config', () => {
   });
 
   it('brings the boss on inside the round', () => {
-    expect(SPLOTBOTS.boss.enterAtSecLeft).toBeGreaterThan(0);
-    expect(SPLOTBOTS.boss.enterAtSecLeft).toBeLessThan(GAME.roundSec);
+    expect(NEATNIKS.boss.enterAtSecLeft).toBeGreaterThan(0);
+    expect(NEATNIKS.boss.enterAtSecLeft).toBeLessThan(GAME.roundSec);
   });
 
   it('keeps a deflected ball slower than it arrived (gotcha 22)', () => {
-    expect(SPLOTBOTS.shield.deflectRestitution).toBeLessThan(1);
-    expect(SPLOTBOTS.shield.deflectRestitution).toBeGreaterThan(0);
+    expect(NEATNIKS.shield.deflectRestitution).toBeLessThan(1);
+    expect(NEATNIKS.shield.deflectRestitution).toBeGreaterThan(0);
   });
 });
 
 describe('waveIndexAt (wave composition by time)', () => {
-  const waves: SplotbotWave[] = [
+  const waves: NeatnikWave[] = [
     { startSec: 0, maxAlive: 3, weights: [1, 0, 0] },
     { startSec: 20, maxAlive: 4, weights: [1, 1, 0] },
     { startSec: 50, maxAlive: 4, weights: [1, 1, 1] },
@@ -143,12 +143,12 @@ describe('waveIndexAt (wave composition by time)', () => {
   });
 
   it('opens the shipped round with Mopsys only, then adds the cast', () => {
-    const w = SPLOTBOTS.waves;
+    const w = NEATNIKS.waves;
     const early = w[waveIndexAt(5, w)];
-    expect(pickWeighted(early.weights, 0.99)).toBe(Splotbot.Mopsy);
+    expect(pickWeighted(early.weights, 0.99)).toBe(Neatnik.Mopsy);
     const late = w[waveIndexAt(GAME.roundSec - 25, w)];
-    expect(late.weights[Splotbot.Squeegee]).toBeGreaterThan(0);
-    expect(late.weights[Splotbot.Peekaboo]).toBeGreaterThan(0);
+    expect(late.weights[Neatnik.Squeegee]).toBeGreaterThan(0);
+    expect(late.weights[Neatnik.Peekaboo]).toBeGreaterThan(0);
   });
 });
 
@@ -297,7 +297,7 @@ describe('deflectVelocity', () => {
 
   it('never speeds a ball up beyond the lift', () => {
     for (const [vx, vz] of [[5, -9], [-12, -1], [0.3, -14]]) {
-      deflectVelocity(vx, -2, vz, 0.6, 0.8, SPLOTBOTS.shield.deflectRestitution, 0, out);
+      deflectVelocity(vx, -2, vz, 0.6, 0.8, NEATNIKS.shield.deflectRestitution, 0, out);
       const inSpeed = Math.hypot(vx, -2, vz);
       expect(Math.hypot(out[0], out[1], out[2])).toBeLessThanOrEqual(inSpeed + 1e-6);
     }
@@ -336,7 +336,7 @@ describe('peekLift (Peekaboo cycle)', () => {
     let hittableSec = 0;
     const dt = 0.001;
     for (let t = 0; t < period; t += dt) {
-      if (peekHittable(peekLift(t, hidden, rise, up), SPLOTBOTS.peek.hittableLift)) {
+      if (peekHittable(peekLift(t, hidden, rise, up), NEATNIKS.peek.hittableLift)) {
         hittableSec += dt;
       }
     }
@@ -504,29 +504,29 @@ describe('facing yaw', () => {
 describe('pop scoring payload', () => {
   it('keeps the slot in the low byte (old readers unchanged)', () => {
     for (const slot of [0, 7, 13, 255]) {
-      const data = packPopData(slot, Splotbot.DusterDuke, 600);
+      const data = packPopData(slot, Neatnik.DusterDuke, 600);
       expect(unpackPopSlot(data)).toBe(slot);
       expect(unpackTetherSlot(data)).toBe(slot);
     }
   });
 
   it('round-trips archetype and points', () => {
-    const data = packPopData(3, Splotbot.Squeegee, 150);
-    expect(unpackPopArchetype(data)).toBe(Splotbot.Squeegee);
+    const data = packPopData(3, Neatnik.Squeegee, 150);
+    expect(unpackPopArchetype(data)).toBe(Neatnik.Squeegee);
     expect(unpackPopPoints(data)).toBe(150);
     expect(Number.isInteger(data)).toBe(true);
     expect(data).toBeGreaterThanOrEqual(0);
   });
 
   it('scores packed points, and the classic value for an old bare slot', () => {
-    expect(popBasePoints(packPopData(2, Splotbot.DusterDuke, 600))).toBe(600);
+    expect(popBasePoints(packPopData(2, Neatnik.DusterDuke, 600))).toBe(600);
     expect(popBasePoints(5)).toBe(GAME.scoreTargetHit);
   });
 
   it('round-trips through the Int32 event buffer', () => {
-    const data = packPopData(13, Splotbot.DusterDuke, SPLOTBOTS.archetypes.duke.points);
+    const data = packPopData(13, Neatnik.DusterDuke, NEATNIKS.archetypes.duke.points);
     const stored = new Int32Array([data])[0];
-    expect(unpackPopPoints(stored)).toBe(SPLOTBOTS.archetypes.duke.points);
+    expect(unpackPopPoints(stored)).toBe(NEATNIKS.archetypes.duke.points);
   });
 
   it('numbers the new events clear of every existing one', () => {
@@ -602,7 +602,7 @@ describe('TargetSystem round-8 timers across a pause', () => {
     for (let a = 0; a < counts.length; a++) {
       expect(layout.filter((x) => x === a)).toHaveLength(counts[a]);
     }
-    expect(layout[layout.length - 1]).toBe(Splotbot.DusterDuke);
-    expect(sys.debugSpawn(Splotbot.Mopsy)).toBe(-1);
+    expect(layout[layout.length - 1]).toBe(Neatnik.DusterDuke);
+    expect(sys.debugSpawn(Neatnik.Mopsy)).toBe(-1);
   });
 });

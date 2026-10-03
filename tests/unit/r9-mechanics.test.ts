@@ -24,9 +24,9 @@ import {
   HUD,
   RENDER,
   ROOM,
-  SPLOTBOTS,
+  NEATNIKS,
 } from '../../src/config';
-import type { SplotbotWave } from '../../src/config';
+import type { NeatnikWave } from '../../src/config';
 import { GamePhase } from '../../src/types';
 
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
@@ -119,7 +119,7 @@ describe('visibleInWorld', () => {
 });
 
 describe('inWaveBreather (round 9 rest beat)', () => {
-  const waves: SplotbotWave[] = [
+  const waves: NeatnikWave[] = [
     { startSec: 0, maxAlive: 3, weights: [1, 0, 0] },
     { startSec: 20, maxAlive: 4, weights: [1, 1, 1] },
     { startSec: 50, maxAlive: 4, weights: [1, 1, 1] },
@@ -139,12 +139,12 @@ describe('inWaveBreather (round 9 rest beat)', () => {
   });
 
   it('ships a short breather that fits inside every wave', () => {
-    expect(SPLOTBOTS.waveBreatherSec).toBeGreaterThan(0);
-    expect(SPLOTBOTS.waveBreatherSec).toBeLessThanOrEqual(5);
-    const w = SPLOTBOTS.waves;
+    expect(NEATNIKS.waveBreatherSec).toBeGreaterThan(0);
+    expect(NEATNIKS.waveBreatherSec).toBeLessThanOrEqual(5);
+    const w = NEATNIKS.waves;
     for (let i = 1; i < w.length; i++) {
       expect(w[i].startSec - w[i - 1].startSec).toBeGreaterThan(
-        SPLOTBOTS.waveBreatherSec * 2,
+        NEATNIKS.waveBreatherSec * 2,
       );
     }
   });
@@ -173,7 +173,7 @@ describe('pushOutToRadius (released tether bots drift back out)', () => {
   });
 
   it('has a drift time in config', () => {
-    expect(SPLOTBOTS.releaseReturnSec).toBeGreaterThan(0);
+    expect(NEATNIKS.releaseReturnSec).toBeGreaterThan(0);
   });
 });
 
@@ -202,7 +202,7 @@ describe('crowded2D (Peekaboos do not stack)', () => {
   });
 
   it('ships a spacing wider than a peekaboo is tall-ish', () => {
-    expect(SPLOTBOTS.peek.minSpacing).toBeGreaterThanOrEqual(0.25);
+    expect(NEATNIKS.peek.minSpacing).toBeGreaterThanOrEqual(0.25);
   });
 });
 

@@ -8,8 +8,8 @@ import {
   NEATNIK_NAMES,
   NEATNIK_SHORT_NAMES,
   PipFocus,
-  SPLOTBOT_COUNT,
-  Splotbot,
+  NEATNIK_COUNT,
+  Neatnik,
   TUTORIAL_STEP_COUNT,
   TutorialStep,
   accuracyPercent,
@@ -262,22 +262,22 @@ describe('tutorial copy (no wall of text)', () => {
 describe('first-encounter coaching', () => {
   it('coaches Squeegee, Peekaboo and the Duke once each, never Mopsy', () => {
     let seen = 0;
-    expect(shouldCoach(Splotbot.Mopsy, seen)).toBe(false);
-    for (const a of [Splotbot.Squeegee, Splotbot.Peekaboo, Splotbot.DusterDuke]) {
+    expect(shouldCoach(Neatnik.Mopsy, seen)).toBe(false);
+    for (const a of [Neatnik.Squeegee, Neatnik.Peekaboo, Neatnik.DusterDuke]) {
       expect(shouldCoach(a, seen)).toBe(true);
       seen = markSeen(seen, a);
       expect(shouldCoach(a, seen)).toBe(false);
     }
     expect(shouldCoach(-1, 0)).toBe(false);
-    expect(shouldCoach(SPLOTBOT_COUNT, 0)).toBe(false);
+    expect(shouldCoach(NEATNIK_COUNT, 0)).toBe(false);
     expect(markSeen(seen, 99)).toBe(seen);
   });
 
   it('remembers seen types on the device, junk-proof', () => {
     const s = memory();
     expect(readMask(s, COACH.storageKey)).toBe(0);
-    writeMask(s, COACH.storageKey, markSeen(0, Splotbot.Peekaboo));
-    expect(shouldCoach(Splotbot.Peekaboo, readMask(s, COACH.storageKey))).toBe(false);
+    writeMask(s, COACH.storageKey, markSeen(0, Neatnik.Peekaboo));
+    expect(shouldCoach(Neatnik.Peekaboo, readMask(s, COACH.storageKey))).toBe(false);
     s.map.set('k', 'banana');
     expect(readMask(s, 'k')).toBe(0);
     expect(readMask(hostile, 'k')).toBe(0);
@@ -292,10 +292,10 @@ describe('first-encounter coaching', () => {
   });
 
   it('ships the briefed tips, short and ASCII', () => {
-    expect(coachLineFor(Splotbot.Squeegee, COACH.lines)).toBe('Shield! Hit its side or bank a shot');
-    expect(coachLineFor(Splotbot.Peekaboo, COACH.lines)).toBe('Hiding! Hit it when it peeks');
-    expect(coachLineFor(Splotbot.DusterDuke, COACH.lines)).toBe('BOSS! GOO > TETHER hauls him in');
-    expect(coachLineFor(Splotbot.Mopsy, COACH.lines)).toBe('');
+    expect(coachLineFor(Neatnik.Squeegee, COACH.lines)).toBe('Shield! Hit its side or bank a shot');
+    expect(coachLineFor(Neatnik.Peekaboo, COACH.lines)).toBe('Hiding! Hit it when it peeks');
+    expect(coachLineFor(Neatnik.DusterDuke, COACH.lines)).toBe('BOSS! GOO > TETHER hauls him in');
+    expect(coachLineFor(Neatnik.Mopsy, COACH.lines)).toBe('');
     expect(coachLineFor(9, COACH.lines)).toBe('');
     for (const line of COACH.lines) {
       expect(isPrintableAscii(line)).toBe(true);
@@ -306,8 +306,8 @@ describe('first-encounter coaching', () => {
   });
 
   it('names the cast in ASCII caps', () => {
-    expect(NEATNIK_NAMES.length).toBe(SPLOTBOT_COUNT);
-    expect(NEATNIK_SHORT_NAMES.length).toBe(SPLOTBOT_COUNT);
+    expect(NEATNIK_NAMES.length).toBe(NEATNIK_COUNT);
+    expect(NEATNIK_SHORT_NAMES.length).toBe(NEATNIK_COUNT);
     for (const n of [...NEATNIK_NAMES, ...NEATNIK_SHORT_NAMES]) {
       expect(/^[A-Z ]+$/.test(n)).toBe(true);
     }
@@ -320,9 +320,9 @@ describe('results card stats', () => {
     resetRoundStats(s, 1000);
     for (let i = 0; i < 10; i++) recordRoundEvent(s, GameEvent.BallFired, 0);
     recordRoundEvent(s, GameEvent.TargetHit, 0);
-    recordRoundEvent(s, GameEvent.TargetPopped, packPopData(2, Splotbot.Mopsy, 100));
+    recordRoundEvent(s, GameEvent.TargetPopped, packPopData(2, Neatnik.Mopsy, 100));
     recordRoundEvent(s, GameEvent.TargetHit, 0);
-    recordRoundEvent(s, GameEvent.TargetPopped, packPopData(9, Splotbot.Squeegee, 150));
+    recordRoundEvent(s, GameEvent.TargetPopped, packPopData(9, Neatnik.Squeegee, 150));
     recordRoundEvent(s, GameEvent.TetherAttached, 0);
     recordRoundEvent(s, GameEvent.ComboMilestone, 3);
     recordRoundEvent(s, GameEvent.ComboMilestone, 2);
@@ -361,13 +361,13 @@ describe('results card stats', () => {
     const s = createRoundStats();
     expect(nextGoalLine(s)).toMatch(/pop/i);
 
-    s.pops[Splotbot.Mopsy] = 4;
+    s.pops[Neatnik.Mopsy] = 4;
     s.bossSeen = true;
     s.score = 900;
     s.bestBefore = 2000;
     expect(nextGoalLine(s)).toMatch(/Duke/);
 
-    s.pops[Splotbot.DusterDuke] = 1;
+    s.pops[Neatnik.DusterDuke] = 1;
     expect(nextGoalLine(s)).toBe('Next: 1,101 more beats your best');
 
     s.score = 2400;
@@ -494,7 +494,7 @@ describe('HUD legibility pass (round 9)', () => {
   });
 
   it('the results card has a cell per Neatnik and the stat row', () => {
-    for (let i = 0; i < SPLOTBOT_COUNT; i++) expect(body).toContain(`id="res-pops-${i}"`);
+    for (let i = 0; i < NEATNIK_COUNT; i++) expect(body).toContain(`id="res-pops-${i}"`);
     for (const id of ['res-shots', 'res-hits', 'res-acc', 'res-combo', 'res-goal']) {
       expect(body).toContain(`id="${id}"`);
     }
