@@ -119,7 +119,7 @@ function markup(): string {
           <li><a href="#pb-bots">Neatniks</a></li>
           <li><a href="#pb-blasters">Blasters</a></li>
           <li><a href="#pb-how">How to play</a></li>
-          <li><a href="#pb-chill">Chill</a></li>
+          <li><a href="#pb-chill">Studio</a></li>
         </ul>
       </nav>
       ${enterButton('pb-btn-small')}
@@ -192,7 +192,7 @@ function markup(): string {
           <p class="pb-eyebrow" style="--c:#ff4f81">Gear up</p>
           <h2 id="pb-blasters-title">Three ways to blast</h2>
           <span class="pb-drip-bar" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-          <p class="pb-lede">Switch any time with one tap on your wrist palette.</p>
+          <p class="pb-lede">Switch any time from the wrist menu: tap the gem on your left gauntlet.</p>
         </header>
         <div class="pb-blasters">
           <div class="pb-blasters-art">
@@ -235,8 +235,8 @@ function markup(): string {
           <li style="--c:#ffd23f">
             <span class="pb-step-num" aria-hidden="true">02</span>
             <span class="pb-step-icon" aria-hidden="true">${ICON_PALETTE}</span>
-            <h3>Tap the wrist palette</h3>
-            <p>A painter's palette floats over your left hand. Tap a dab for colour, a chip for Bouncy, Sticky, Splash or Goo.</p>
+            <h3>Tap the wrist gem</h3>
+            <p>Tap the gem on your left wrist and a holo menu opens. Poke a launcher, a colour or an ammo type; it closes itself when you're done.</p>
           </li>
           <li style="--c:#48dbfb">
             <span class="pb-step-num" aria-hidden="true">03</span>
@@ -245,7 +245,7 @@ function markup(): string {
             <p>Hook a Neatnik with a goo tether, pull your hand back to reel it in, and pop it right in front of you.</p>
           </li>
         </ol>
-        <p class="pb-footnote">Prefer controllers? Trigger fires, squeeze picks from the palette, A starts a round.</p>
+        <p class="pb-footnote">Prefer controllers? Trigger fires, Y opens the wrist menu, A starts a round.</p>
       </section>
 
       <section class="pb-section pb-chill" id="pb-chill" aria-labelledby="pb-chill-title">
@@ -253,14 +253,15 @@ function markup(): string {
           <img src="/landing/chill.webp" alt="An easel with a half-finished painting in a softly lit living room splashed with paint" width="640" height="478" loading="lazy" decoding="async" />
         </div>
         <div class="pb-chill-copy">
-          <p class="pb-eyebrow" style="--c:#b84dff">Chill mode</p>
+          <p class="pb-eyebrow" style="--c:#b84dff">The Studio</p>
           <h2 id="pb-chill-title">No timer. No robots. Just paint.</h2>
-          <p class="pb-lede">Your room becomes a studio. Spray the walls, set up an easel and paint a
-          canvas with a lofi soundtrack on, then save the picture as a PNG.</p>
+          <p class="pb-lede">Chill mode turns your room into a studio with a lofi soundtrack. Hang a
+          framed canvas on your real wall, fill a stencil for stars, or pop targets that splash
+          your walls with colour. Save your art as a PNG.</p>
           <ul class="pb-ticks">
-            <li>Hold a pinch to spray</li>
-            <li>A canvas you can grab, turn and save</li>
-            <li>Paint that stays where it lands</li>
+            <li>Canvas: frame it on your wall, then save it</li>
+            <li>Stencil: fill the shape, earn up to 3 stars</li>
+            <li>Targets: bullseyes and paint balloons, no timer</li>
           </ul>
         </div>
       </section>

@@ -72,7 +72,7 @@ describe('landing page', () => {
     expect(text).toMatch(/Meet the Neatniks/);
     expect(text).not.toMatch(/Splotbot|PaintBlast/i);
     expect(text).toMatch(/Pinch to fire/);
-    expect(text).toMatch(/Tap the wrist palette/);
+    expect(text).toMatch(/Tap the wrist gem/);
     expect(text).toMatch(/Haul Neatniks in/);
     expect(text).toMatch(/Chill/i);
   });
