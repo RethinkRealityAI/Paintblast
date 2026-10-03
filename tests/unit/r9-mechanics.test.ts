@@ -54,6 +54,11 @@ describe('panelBlockMode (round 9: docked HUD must not eat shots)', () => {
     expect(panelBlockMode(GamePhase.Chill)).toBe(PanelBlockMode.Rect);
   });
 
+  it('only blocks over buttons while the tutorial card is up, even in Idle', () => {
+    expect(panelBlockMode(GamePhase.Idle, true)).toBe(PanelBlockMode.ButtonsOnly);
+    expect(panelBlockMode(GamePhase.Idle, false)).toBe(PanelBlockMode.Rect);
+  });
+
   it('finds buttons by the uikitml btn- id convention', () => {
     expect(FIRE.uiInteractiveIdPrefix).toBe('btn-');
     const hud = readFileSync('ui/hud.uikitml', 'utf8');

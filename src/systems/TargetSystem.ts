@@ -814,9 +814,10 @@ const MAX_HIDE_CANDIDATES = 12;
  */
 export class RobotDepthSensingSystem extends DepthSensingSystem {
   private depthBroken = false;
+  /** The session `depthBroken` was decided in; a new session tries again. */
+  private brokenSession: unknown = null;
 
   update(): void {
-    if (this.depthBroken) return;
     const frame = this.xrFrame as unknown as
       | {
           session?: { depthUsage?: string; enabledFeatures?: readonly string[] };
@@ -824,6 +825,12 @@ export class RobotDepthSensingSystem extends DepthSensingSystem {
         }
       | undefined;
     const session = frame?.session;
+    if (this.depthBroken) {
+      // One failure (or one depth-less session) must not switch occlusion
+      // off for every later session on this page.
+      if (!session || session === this.brokenSession) return;
+      this.depthBroken = false;
+    }
     if (session?.enabledFeatures?.includes('depth-sensing')) {
       let callable: boolean;
       if (session.depthUsage === 'gpu-optimized') {
@@ -848,6 +855,8 @@ export class RobotDepthSensingSystem extends DepthSensingSystem {
 
   private disableDepth(why: string): void {
     this.depthBroken = true;
+    this.brokenSession =
+      (this.xrFrame as unknown as { session?: unknown } | undefined)?.session ?? null;
     console.warn(`[Splotopia] depth occlusion off: ${why}`);
   }
 }

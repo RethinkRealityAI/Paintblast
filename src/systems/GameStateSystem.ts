@@ -519,8 +519,17 @@ export class GameStateSystem extends createSystem({}) {
     // endPractice() and endRound(); if anything else moved the phase on, the
     // practice is over.
     if (this.practiceActive) {
-      if (phase !== GamePhase.Playing) this.clearPractice();
-      else return;
+      if (phase !== GamePhase.Playing) {
+        this.clearPractice();
+      } else {
+        // A/X still starts a real round mid-tutorial (the player is never
+        // held in practice); the tutorial sees the phase move and closes.
+        if (!this.paused.peek() && this.startPressed()) {
+          this.endPractice();
+          this.startGame();
+        }
+        return;
+      }
     }
 
     if (this.paused.peek()) {

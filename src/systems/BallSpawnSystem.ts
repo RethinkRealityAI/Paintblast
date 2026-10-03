@@ -53,6 +53,7 @@ import {
   WebSubMode,
   nextWebSubMode,
   packFiredData,
+  TutorialStep,
 } from '../types';
 import { Easel } from './EaselSystem';
 
@@ -415,8 +416,16 @@ export type PanelBlockMode = typeof PanelBlockMode[keyof typeof PanelBlockMode];
  * click. Everywhere else the panel is a menu, and pointing anywhere on it
  * still takes precedence over shooting.
  */
-export function panelBlockMode(phase: GamePhase): PanelBlockMode {
-  return phase === GamePhase.Playing || phase === GamePhase.Countdown
+export function panelBlockMode(
+  phase: GamePhase,
+  tutorialActive = false,
+): PanelBlockMode {
+  // The tutorial docks its card low in front like the scoreboard, and its
+  // first step is "fire at the ring" — the card's rectangle must not eat that
+  // shot. Its SKIP button is a btn-, so it still blocks.
+  return tutorialActive ||
+    phase === GamePhase.Playing ||
+    phase === GamePhase.Countdown
     ? PanelBlockMode.ButtonsOnly
     : PanelBlockMode.Rect;
 }
@@ -1201,7 +1210,11 @@ export class BallSpawnSystem extends createSystem({
     raySpace.getWorldPosition(this.scratchPosition);
     raySpace.getWorldQuaternion(this.scratchQuaternion);
     this.scratchDirection.set(0, 0, -1).applyQuaternion(this.scratchQuaternion);
-    const mode = panelBlockMode(this.gamePhase.peek());
+    const step = this.globals.tutorialStep as Signal<number> | undefined;
+    const mode = panelBlockMode(
+      this.gamePhase.peek(),
+      (step?.peek() ?? TutorialStep.Off) !== TutorialStep.Off,
+    );
 
     for (const panel of this.queries.panels.entities) {
       const object3D = panel.object3D;
