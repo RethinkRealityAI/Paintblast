@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Prints a scannable QR code for launching PaintBlast MR on a Meta Quest headset.
+// Prints a scannable QR code for launching Splotopia on a Meta Quest headset.
 //
 // Usage:
 //   npm run qr       → QR for the deployed production URL (zero-friction path)
@@ -12,7 +12,10 @@
 import qrcode from 'qrcode-terminal';
 import { networkInterfaces } from 'node:os';
 
-const DEPLOY_URL = process.env.PAINTBLAST_URL ?? 'https://paintblast-mr.netlify.app';
+// SPLOTOPIA_URL overrides the target; PAINTBLAST_URL is the pre-rebrand name,
+// still honoured. The hosting URL itself has not moved.
+const DEPLOY_URL =
+  process.env.SPLOTOPIA_URL ?? process.env.PAINTBLAST_URL ?? 'https://paintblast-mr.netlify.app';
 const DEV_PORT = 8083; // must match server.port in vite.config.ts
 
 function lanAddress() {
@@ -46,7 +49,7 @@ if (dev) {
 }
 
 console.log('');
-console.log('  PaintBlast MR — scan with your Quest');
+console.log('  Splotopia - scan with your Quest');
 console.log(`  ${url}`);
 console.log('');
 qrcode.generate(url, { small: true });
@@ -54,7 +57,7 @@ console.log('');
 console.log('  1. Put on your Quest with passthrough on.');
 console.log('  2. Glance at this QR code on your monitor and tap the "Open link" pill.');
 console.log('     (Quest 3 / 3S detect QR codes automatically in passthrough.)');
-console.log('  3. In Quest Browser, press "Enter AR" and start blasting.');
+console.log('  3. In Quest Browser, press "Enter AR" and start splatting.');
 if (dev) {
   console.log('');
   console.log('  Dev-server note: the local HTTPS certificate is self-signed, so');

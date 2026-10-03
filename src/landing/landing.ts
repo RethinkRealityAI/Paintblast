@@ -1,4 +1,4 @@
-// PaintBlast MR landing overlay.
+// Splotopia landing overlay (formerly PaintBlast MR; renamed round 9).
 //
 // Deliberately framework-free and IWSDK-free: it renders instantly on page
 // load (World.create takes seconds to boot Havok/assets), then main.ts hands
@@ -25,7 +25,11 @@ export interface LandingHandle {
   setVisible(visible: boolean): void;
 }
 
-/** The five Splotbots, in roster order. Image paths are under public/. */
+/**
+ * The roster, in order: the four Neatniks, then Pip (the player's sidekick,
+ * not a Neatnik). Image paths are under public/. The export keeps its
+ * pre-rebrand identifier until the identifier pass.
+ */
 export const SPLOTBOTS = [
   {
     id: 'mopsy',
@@ -62,10 +66,10 @@ export const SPLOTBOTS = [
   {
     id: 'pip',
     name: 'Pip',
-    role: 'Your guide',
+    role: 'Your sidekick',
     accent: '#b84dff',
     blurb:
-      'A palette drone with brush arms. Hovers by your menu, shows you the ropes and spins for joy at every new high score. Pip is on your side. Do not paint Pip.',
+      'A palette drone with brush arms. Hovers by your menu, shows you the ropes and spins for joy at every new high score. Pip is no Neatnik. Pip is on your side. Do not paint Pip.',
   },
 ] as const;
 
@@ -80,7 +84,7 @@ function markup(): string {
     (b, i) => `
       <li class="pb-bot" style="--accent:${b.accent}; --i:${i}">
         <div class="pb-bot-art">
-          <img src="/landing/bots/${b.id}.webp" alt="${b.name}, ${b.role.toLowerCase()} Splotbot concept art" width="520" height="520" loading="lazy" decoding="async" />
+          <img src="/landing/bots/${b.id}.webp" alt="${b.name}, ${b.id === 'pip' ? 'your sidekick drone' : `${b.role.toLowerCase()} Neatnik`} concept art" width="520" height="520" loading="lazy" decoding="async" />
           <span class="pb-bot-role">${b.role}</span>
         </div>
         <div class="pb-bot-body">
@@ -90,7 +94,7 @@ function markup(): string {
       </li>`,
   ).join('');
 
-  const ticker = ['PINCH TO FIRE', 'SPLAT THE BOTS', 'HAUL THEM IN', 'PAINT YOUR ROOM', 'NO CONTROLLERS NEEDED', 'PLAY SEATED']
+  const ticker = ['PINCH TO FIRE', 'POP THE NEATNIKS', 'HAUL THEM IN', 'PAINT YOUR ROOM', 'NO CONTROLLERS NEEDED', 'PLAY SEATED']
     .map((t, i) => `<span style="--c:${NEON_HEX[i % NEON_HEX.length]}">${t}</span>`)
     .join('');
 
@@ -107,12 +111,12 @@ function markup(): string {
     <a class="pb-skip" href="#pb-play">Skip to Enter AR</a>
 
     <header class="pb-nav" role="banner">
-      <a class="pb-nav-logo" href="#pb-top" aria-label="PaintBlast, back to top">
-        <img src="/landing/logo-360.webp" alt="PaintBlast" width="180" height="37" />
+      <a class="pb-nav-logo" href="#pb-top" aria-label="Splotopia, back to top">
+        <img src="/landing/logo-360.webp" alt="Splotopia" width="180" height="37" />
       </a>
       <nav aria-label="Sections">
         <ul class="pb-nav-links">
-          <li><a href="#pb-bots">Splotbots</a></li>
+          <li><a href="#pb-bots">Neatniks</a></li>
           <li><a href="#pb-blasters">Blasters</a></li>
           <li><a href="#pb-how">How to play</a></li>
           <li><a href="#pb-chill">Chill</a></li>
@@ -133,11 +137,11 @@ function markup(): string {
           <p class="pb-kicker"><span class="pb-live-dot" aria-hidden="true"></span>Mixed reality &middot; Meta Quest 3 / 3S</p>
           <h1 id="pb-hero-title" class="pb-logo-title">
             <span class="pb-logo-splash" aria-hidden="true"></span>
-            <img src="/landing/logo-1100.webp" alt="PaintBlast" width="1100" height="223" decoding="async" />
+            <img src="/landing/logo-1100.webp" alt="Splotopia" width="1100" height="223" decoding="async" />
           </h1>
           <p class="pb-tagline">Your room is the arena.</p>
           <p class="pb-sub">
-            The Splotbots are rogue cleaning robots, and they hate mess. So make some.
+            The Neatniks are rogue cleaning robots, and they hate mess. So make some.
             Pinch to blast paint that sticks to your real walls, couch and ceiling.
             Seated, hands-first, straight from the browser.
           </p>
@@ -148,7 +152,7 @@ function markup(): string {
             </button>
           </div>
           <div id="pb-qr-card" class="pb-qr-card" role="region" aria-label="Open on your Quest">
-            <img src="/landing/qr-play.png" alt="QR code linking to paintblast-mr.netlify.app" width="170" height="170" loading="lazy" />
+            <img src="/landing/qr-play.png" alt="QR code linking to Splotopia at paintblast-mr.netlify.app" width="170" height="170" loading="lazy" />
             <p><b>On your Quest 3 / 3S:</b> look at this code in passthrough, tap <b>Open Link</b>, then press <b>ENTER AR</b>.</p>
           </div>
           <ul class="pb-badges" aria-label="At a glance">
@@ -166,7 +170,7 @@ function markup(): string {
       </div>
 
       <section class="pb-stats" aria-label="By the numbers">
-        <div><b style="--c:#ff4f81">5</b><span>Splotbots</span></div>
+        <div><b style="--c:#ff4f81">4</b><span>Neatniks</span></div>
         <div><b style="--c:#ffd23f">3</b><span>Blasters</span></div>
         <div><b style="--c:#48dbfb">4</b><span>Paint kinds</span></div>
         <div><b style="--c:#b6ff3b">0</b><span>Controllers needed</span></div>
@@ -175,10 +179,10 @@ function markup(): string {
       <section class="pb-section" id="pb-bots" aria-labelledby="pb-bots-title">
         <header class="pb-section-head">
           <p class="pb-eyebrow" style="--c:#48dbfb">The cleaning crew</p>
-          <h2 id="pb-bots-title">Meet the Splotbots</h2>
+          <h2 id="pb-bots-title">Meet the Neatniks</h2>
           <span class="pb-drip-bar" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-          <p class="pb-lede">Five household appliances gone rogue. They mop, wipe, vacuum and dust,
-          and they have moved into your living room. Return the favour.</p>
+          <p class="pb-lede">Four household appliances gone rogue. They mop, wipe, vacuum and dust,
+          and they have moved into your living room. Return the favour. Pip has your back.</p>
         </header>
         <ul class="pb-roster">${bots}</ul>
       </section>
@@ -192,7 +196,7 @@ function markup(): string {
         </header>
         <div class="pb-blasters">
           <div class="pb-blasters-art">
-            <img src="/landing/gauntlets.webp" alt="Concept art of the three forearm gauntlets: the paint blaster with a glowing canister, the slim web launcher, and the bare-hand emitter" width="1024" height="572" loading="lazy" decoding="async" />
+            <img src="/landing/gauntlets.webp" alt="Concept art of the three forearm gauntlets: the paint blaster with a glowing canister, the slim goo launcher, and the bare-hand emitter" width="1024" height="572" loading="lazy" decoding="async" />
           </div>
           <ol class="pb-blaster-list">
             <li style="--c:#ff4f81">
@@ -201,9 +205,9 @@ function markup(): string {
               <p>A forearm launcher with a canister that glows in your loaded colour. Hold to keep the paint coming.</p>
             </li>
             <li style="--c:#48dbfb">
-              <span class="pb-mode-tag">WEB</span>
-              <h3>Sticky strands</h3>
-              <p>Sling sticky strands at the walls, or switch to tether, hook a bot and reel it right into your lap.</p>
+              <span class="pb-mode-tag">GOO</span>
+              <h3>Paint goo</h3>
+              <p>Fling strands of sticky goo in your paint colour. Splat it on the walls, or switch to tether, hook a Neatnik and haul it right into your lap.</p>
             </li>
             <li style="--c:#d6dde4">
               <span class="pb-mode-tag">HAND</span>
@@ -232,13 +236,13 @@ function markup(): string {
             <span class="pb-step-num" aria-hidden="true">02</span>
             <span class="pb-step-icon" aria-hidden="true">${ICON_PALETTE}</span>
             <h3>Tap the wrist palette</h3>
-            <p>A painter's palette floats over your left hand. Tap a dab for colour, a chip for Bouncy, Sticky, Splash or Web.</p>
+            <p>A painter's palette floats over your left hand. Tap a dab for colour, a chip for Bouncy, Sticky, Splash or Goo.</p>
           </li>
           <li style="--c:#48dbfb">
             <span class="pb-step-num" aria-hidden="true">03</span>
             <span class="pb-step-icon" aria-hidden="true">${ICON_HAUL}</span>
-            <h3>Haul robots in</h3>
-            <p>Hook a Splotbot with a tether, pull your hand back to reel it in, and pop it right in front of you.</p>
+            <h3>Haul Neatniks in</h3>
+            <p>Hook a Neatnik with a goo tether, pull your hand back to reel it in, and pop it right in front of you.</p>
           </li>
         </ol>
         <p class="pb-footnote">Prefer controllers? Trigger fires, squeeze picks from the palette, A starts a round.</p>
@@ -269,7 +273,7 @@ function markup(): string {
         <div class="pb-final-row">
           ${enterButton('pb-btn-hero')}
           <div class="pb-final-qr">
-            <img src="/landing/qr-play.png" alt="QR code linking to paintblast-mr.netlify.app" width="150" height="150" loading="lazy" />
+            <img src="/landing/qr-play.png" alt="QR code linking to Splotopia at paintblast-mr.netlify.app" width="150" height="150" loading="lazy" />
             <p><b>On a computer?</b> Look at this code with your Quest in passthrough and tap Open Link.</p>
           </div>
         </div>
@@ -278,8 +282,8 @@ function markup(): string {
     </main>
 
     <footer class="pb-footer">
-      <img src="/landing/logo-360.webp" alt="PaintBlast" width="140" height="28" loading="lazy" />
-      <p>Mixed-reality paint arcade for Meta Quest 3 / 3S. Built with Meta's Immersive Web SDK and WebXR.</p>
+      <img src="/landing/logo-360.webp" alt="Splotopia" width="140" height="28" loading="lazy" />
+      <p>Splotopia: a mixed-reality paint arcade for Meta Quest 3 / 3S. Paint your room, pop the Neatniks. Built with Meta's Immersive Web SDK and WebXR.</p>
       <p class="pb-footer-small">A RethinkReality game &middot; Play somewhere with a little space around your seat.</p>
       <a href="#pb-top" class="pb-top-link">Back to top</a>
     </footer>

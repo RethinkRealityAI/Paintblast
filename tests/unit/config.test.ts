@@ -621,8 +621,15 @@ describe('WEB', () => {
     expect(WEB.thrustWindowSec).toBeLessThan(0.25);
   });
 
-  it('ships the joint-driven gesture switched on', () => {
-    expect(WEB.gestureEnabled).toBe(true);
+  it('ships the finger-curl FLICK gesture switched off (round 9)', () => {
+    // Reads as the rock sign and misfires; pinch/trigger and thrust still fire.
+    expect(WEB.gestureEnabled).toBe(false);
+  });
+
+  it('tints GOO strands with the paint colour by default', () => {
+    expect(WEB.gooUsesPaintColor).toBe(true);
+    expect(WEB.gooTetherLift).toBeGreaterThanOrEqual(0);
+    expect(WEB.gooTetherLift).toBeLessThanOrEqual(1);
   });
 
   it('pools enough strands to cover the balls in the air', () => {
@@ -835,7 +842,7 @@ describe('AUDIO', () => {
   });
 
   it('declares the two round-4 web cues', () => {
-    expect(AUDIO.thwip).toBe('/audio/thwip.mp3');
+    expect(AUDIO.flick).toBe('/audio/flick.mp3');
     expect(AUDIO.webHit).toBe('/audio/web-hit.mp3');
   });
 
@@ -847,8 +854,8 @@ describe('AUDIO', () => {
     );
   });
 
-  it('makes the thwip carry, since it is the whole point of web mode', () => {
-    expect(AUDIO_VOLUME.thwip).toBeGreaterThan(AUDIO_VOLUME.fire);
+  it('makes the GOO flick carry, since it is the whole point of the mode', () => {
+    expect(AUDIO_VOLUME.flick).toBeGreaterThan(AUDIO_VOLUME.fire);
   });
 
   it('gives every cue a gain, and never a silent or clipping one', () => {

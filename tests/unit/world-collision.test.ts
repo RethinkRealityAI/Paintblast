@@ -115,19 +115,19 @@ describe('COLLIDABLE_MESH_LABELS', () => {
 describe('formatColliderLog', () => {
   it('reports counts and labels in the documented shape', () => {
     expect(formatColliderLog(6, 2, ['global mesh', 'table'])).toBe(
-      '[PaintBlast] room colliders: 6 planes, 2 meshes (labels: global mesh, table)',
+      '[Splotopia] room colliders: 6 planes, 2 meshes (labels: global mesh, table)',
     );
   });
 
   it('says "none" rather than trailing an empty list', () => {
     expect(formatColliderLog(0, 0, [])).toBe(
-      '[PaintBlast] room colliders: 0 planes, 0 meshes (labels: none)',
+      '[Splotopia] room colliders: 0 planes, 0 meshes (labels: none)',
     );
   });
 
   it('is greppable — the prefix is stable', () => {
     expect(formatColliderLog(1, 1, ['other'])).toMatch(
-      /^\[PaintBlast\] room colliders: /,
+      /^\[Splotopia\] room colliders: /,
     );
   });
 });
@@ -190,18 +190,21 @@ describe('title screen copy', () => {
     // your own wrist, and the field report was that nobody found it. The button
     // is a signpost, not a phase — see HudSystem.startWebMode.
     expect(idle).toContain('id="btn-web"');
-    expect(idle).toContain('>WEB MODE<');
+    // Round 9 rebrand: the label becomes GOO MODE (HUD markup is rewritten in
+    // a parallel pass, so either name passes until it lands).
+    expect(idle).toMatch(/>(WEB|GOO) MODE</);
   });
 
   it('teaches the palette chip as well, so the button is not the only route', () => {
-    expect(idle).toMatch(/WEB chip/);
+    expect(idle).toMatch(/(WEB|GOO) chip/);
   });
 
   it('teaches the gestures without tying them to web ammo', () => {
     // Round 6 made the gestures universal: they fire the loadout, so copy that
     // says "with WEB loaded" would now be wrong.
-    expect(idle).toContain('THWIP');
-    expect(idle).not.toMatch(/with WEB loaded/i);
+    // Round 9: THWIP is now FLICK (either passes until the HUD rewrite lands).
+    expect(idle).toMatch(/THWIP|FLICK/);
+    expect(idle).not.toMatch(/with (WEB|GOO) loaded/i);
   });
 
   it('keeps every rendered string ASCII (the MSDF font has no fancy glyphs)', () => {

@@ -1,4 +1,4 @@
-// Every gameplay tunable in PaintBlast-MR lives in this file.
+// Every gameplay tunable in Splotopia (formerly PaintBlast MR) lives in this file.
 //
 // Pure data on purpose: no IWSDK imports, so unit tests can assert on these
 // values without a live World, and so a designer can retune the game without
@@ -959,8 +959,8 @@ export const EASEL = {
  *
  * Three ways to fire, all landing on the same white ball: the trigger (through
  * BallSpawnSystem's ordinary firing path, so it obeys the same cooldown, the
- * same HUD-swallowing rule and the same spray-on-hold in Chill), a THWIP hand
- * gesture, and a forward thrust of the hand. Every web ball trails a strand
+ * same HUD-swallowing rule and the same spray-on-hold in Chill), a FLICK hand
+ * gesture (off by default since round 9), and a forward thrust of the hand. Every web ball trails a strand
  * from the wrist that threw it and sticks a white web splat where it lands.
  *
  * ### The grip frame, since every offset below is in it
@@ -1111,13 +1111,19 @@ export const WEB = {
    */
   aimAssistDeg: 9,
 
-  // ---- THWIP gesture (hand tracking) --------------------------------------
+  // ---- FLICK gesture (hand tracking; was "THWIP" before the round 9 rebrand)
   /**
-   * Master switch for the joint-driven gesture. The trigger and the thrust are
-   * unconditional; this only gates the finger-curl classifier, so web ammo
-   * still has two working triggers if hand joints are ever unavailable.
+   * Master switch for the joint-driven finger-curl gesture (middle + ring
+   * curled, index + pinky out). The trigger/pinch and the thrust are
+   * unconditional; this only gates the finger-curl classifier.
+   *
+   * Round 9: **off by default.** The pose reads as the rock / "devil horns"
+   * sign, it misfires on relaxed hands, and the curl-to-shoot hand sign leaned
+   * on a famous comic-book web-slinger the rebrand steers well clear of.
+   * Pinch/trigger and the thrust still fire everything; flip this to true to
+   * bring the gesture back.
    */
-  gestureEnabled: true,
+  gestureEnabled: false,
   /**
    * Fingertip-to-wrist distance, metres, below which a finger counts as curled
    * into the palm. Middle and ring must both be under this.
@@ -1131,7 +1137,7 @@ export const WEB = {
   /**
    * Fingertip-to-wrist distance, metres, above which a finger counts as
    * extended. Index and pinky must both clear this — that pair staying out is
-   * what separates a thwip from a fist.
+   * what separates a flick from a fist.
    */
   extendThreshold: 0.13,
   /** Minimum milliseconds between gesture shots from one hand. */
@@ -1159,6 +1165,18 @@ export const WEB = {
   strandRadius: 0.004,
   /** Seconds a strand hangs at the impact point, fading, before it frees its slot. */
   strandLingerSec: 0.6,
+  /**
+   * GOO (round 9): strands take the player's loaded paint colour
+   * (globals.activeColor) instead of plain white, so the goo reads as paint
+   * pulled into sticky strings. false restores the white thread.
+   */
+  gooUsesPaintColor: true,
+  /**
+   * How far a TETHER line is lifted toward white over the paint colour, 0..1.
+   * A held line sits a touch brighter than a flying strand so "this one is
+   * hooked" still reads at a glance. 0 = same as the strand, 1 = white.
+   */
+  gooTetherLift: 0.35,
 
   // ---- The paint -----------------------------------------------------------
   /** Web splat decals held before the pool recycles. Its own pool, not SPLAT's. */
@@ -1303,8 +1321,8 @@ export const AUDIO = {
   uiClick: '/audio/ui-click.mp3',
   /** Ambient loop that plays for the whole of Chill mode. */
   chillMusic: '/audio/chill-music.mp3',
-  /** The web shooter going off. Non-positional — it happens at your wrist. */
-  thwip: '/audio/thwip.mp3',
+  /** The GOO launcher going off. Non-positional — it happens at your wrist. */
+  flick: '/audio/flick.mp3',
   /** Webbing hitting a surface. Positional, like the paint splat. */
   webHit: '/audio/web-hit.mp3',
 } as const;
@@ -1327,8 +1345,8 @@ export const AUDIO_VOLUME = {
   uiClick: 0.5,
   /** Ambient bed. Deliberately low — it plays under everything, forever. */
   chillMusic: 0.25,
-  /** The thwip. Loud: it is the whole point of the mode. */
-  thwip: 0.55,
+  /** The GOO launch. Loud: it is the whole point of the mode. */
+  flick: 0.55,
   /** Webbing landing. Level with the paint splat it replaces. */
   webHit: 0.5,
   /**
@@ -1367,7 +1385,7 @@ export const HAPTICS = {
   popMs: 100,
   /**
    * Web-shooting hand only. Punchier and shorter than the paint trigger: a
-   * thwip should feel like a snap, not the soft thud of a paintball leaving.
+   * GOO launch should feel like a snap, not the soft thud of a paintball leaving.
    */
   thwipIntensity: 0.5,
   thwipMs: 50,
@@ -1719,8 +1737,11 @@ export interface BlasterSkin {
 }
 
 export const BLASTER = {
-  /** localStorage key holding the selected skin index. */
-  skinStorageKey: 'paintblast.blasterSkin',
+  /**
+   * localStorage key holding the selected skin index. Round 9 rebrand: reads
+   * fall back to the pre-rebrand `paintblast.blasterSkin` and copy it forward.
+   */
+  skinStorageKey: 'splotopia.blasterSkin',
   skins: [
     { name: 'NEON CORAL', accent: '#ff4f81', trim: '#ffb347', shell: '#ecebe6' },
     { name: 'CYBER LIME', accent: '#b6ff3b', trim: '#3bf0ff', shell: '#e6ece6' },
@@ -1754,7 +1775,7 @@ export const BLASTER = {
   /**
    * The paint barrel's muzzle, metres, in the aim frame at the wrist joint
    * (+Y = over the back of the wrist, -Z = toward the fingers). Trigger,
-   * pinch, thwip and thrust shots in BLASTER mode all leave from here.
+   * pinch, flick and thrust shots in BLASTER mode all leave from here.
    */
   muzzleLocal: [0, 0.058, -0.014] as [number, number, number],
   /**
@@ -1803,7 +1824,7 @@ export const BLASTER = {
 
 /**
  * The enter-AR intro (round 8): the first time a session becomes visible, the
- * PAINTBLAST logo bursts out of a paint splat ~1.5 m in front of you, a ring of
+ * SPLOTOPIA logo bursts out of a paint splat ~1.5 m in front of you, a ring of
  * neon splats flies out, the tagline lands, then the whole thing lifts away
  * and the title HUD takes over. Any pinch or trigger skips it. Times are
  * seconds from the moment it starts.
@@ -1917,7 +1938,8 @@ export interface SplotbotArchetypeConfig {
 }
 
 /**
- * The Splotbots (round 8): the cast of cleaning robots that replaced the
+ * The Neatniks (round 8 "Splotbots", renamed round 9; identifiers keep the old
+ * name): the cast of cleaning robots that replaced the
  * generic robot. Roles and behaviours are the art bible's
  * (docs/COMPETITION_PLAN.md section 6):
  *
