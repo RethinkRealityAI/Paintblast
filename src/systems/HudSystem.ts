@@ -9,7 +9,7 @@ import {
 import type { Entity, UIKitDocument } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
-import { BLASTER, CHILL, HUD, ROOM } from '../config';
+import { BLASTER, HUD, ROOM } from '../config';
 import {
   BallKind,
   BallStyle,
@@ -20,6 +20,7 @@ import {
   GameEventBuffer,
   GamePhase,
   NEATNIK_COUNT,
+  StudioActivity,
   TUTORIAL_STEP_COUNT,
   TutorialStep,
   WEB_BALL_COLOR,
@@ -42,6 +43,7 @@ import { EaselSystem } from './EaselSystem';
 import { GameStateSystem, isTimedPhase } from './GameStateSystem';
 import { SceneScanSystem } from './SceneScanSystem';
 import { SplatterSystem } from './SplatterSystem';
+import { StudioSystem } from './StudioSystem';
 import { TutorialSystem } from './TutorialSystem';
 
 /** Must match the PanelUI.config main.ts seeds the HUD entity with. */
@@ -81,6 +83,16 @@ export function tutorialCardShown(step: number): boolean {
 export function tutorialCounterLabel(step: number): string {
   return `STEP ${tutorialStepNumber(step)} OF ${TUTORIAL_STEP_COUNT}`;
 }
+
+/** Round 10: Studio activity tabs, in markup order, with their accents. */
+const STUDIO_TABS: ReadonlyArray<{ id: string; activity: StudioActivity; accent: number }> = [
+  { id: 'btn-studio-canvas', activity: StudioActivity.Canvas, accent: ACCENT_AMBER },
+  { id: 'btn-studio-stencil', activity: StudioActivity.Stencil, accent: ACCENT_LIME },
+  { id: 'btn-studio-targets', activity: StudioActivity.Targets, accent: ACCENT_CORAL },
+];
+
+/** Inner width of the stencil meter's track, cm (track 26 minus padding). */
+const METER_TRACK_CM = 25.6;
 
 /** LOADOUT launcher cards, in markup order. */
 const MODE_CARDS: ReadonlyArray<{ id: string; mode: BlasterMode }> = [
@@ -330,6 +342,20 @@ export class HudSystem extends createSystem({
   private resCombo?: HudElement;
   private resGoal?: HudElement;
   private startButton?: HudElement;
+  // Round 10: the Studio card.
+  private studioActivity?: Signal<number>;
+  private studioLine?: Signal<string>;
+  private studioMeter?: Signal<number>;
+  private studioStars?: Signal<number>;
+  private studioMeterRow?: HudElement;
+  private studioMeterFill?: HudElement;
+  private studioMeterText?: HudElement;
+  private readonly studioStarOn: (HudElement | undefined)[] = [];
+  private readonly studioStarOff: (HudElement | undefined)[] = [];
+  private studioPrimary?: HudElement;
+  private studioMount?: HudElement;
+  private studioSave?: HudElement;
+  private studioClear?: HudElement;
 
   init() {
     this.gamePhase = this.globals.gamePhase as Signal<GamePhase>;
@@ -356,6 +382,10 @@ export class HudSystem extends createSystem({
     this.tutorialLine = this.globals.tutorialLine as Signal<string> | undefined;
     this.coachLine = this.globals.coachLine as Signal<string> | undefined;
     this.roundStats = this.globals.roundStats as Signal<RoundStats | null> | undefined;
+    this.studioActivity = this.globals.studioActivity as Signal<number> | undefined;
+    this.studioLine = this.globals.studioLine as Signal<string> | undefined;
+    this.studioMeter = this.globals.studioMeter as Signal<number> | undefined;
+    this.studioStars = this.globals.studioStars as Signal<number> | undefined;
 
     this.cleanupFuncs.push(() => {
       for (const record of this.buttons.values()) {
@@ -428,6 +458,25 @@ export class HudSystem extends createSystem({
       this.cleanupFuncs.push(
         this.roundStats.subscribe((stats) => this.applyResults(stats)),
       );
+    }
+    // Round 10: the Studio card.
+    if (this.studioActivity) {
+      this.cleanupFuncs.push(this.studioActivity.subscribe(() => this.applyStudio()));
+    }
+    if (this.studioLine) {
+      this.cleanupFuncs.push(
+        this.studioLine.subscribe((line) => {
+          this.setText(this.chillStatusText, line || ' ');
+          // Every Studio action rewrites the line, so labels follow it too.
+          this.applyStudioLabels();
+        }),
+      );
+    }
+    if (this.studioMeter) {
+      this.cleanupFuncs.push(this.studioMeter.subscribe(() => this.applyStudioMeter()));
+    }
+    if (this.studioStars) {
+      this.cleanupFuncs.push(this.studioStars.subscribe(() => this.applyStudioMeter()));
     }
   }
 
@@ -606,6 +655,19 @@ export class HudSystem extends createSystem({
     this.resCombo = element(document, 'res-combo');
     this.resGoal = element(document, 'res-goal');
     this.startButton = element(document, 'btn-start');
+    this.studioMeterRow = element(document, 'studio-meter');
+    this.studioMeterFill = element(document, 'studio-meter-fill');
+    this.studioMeterText = element(document, 'studio-meter-text');
+    this.studioStarOn.length = 0;
+    this.studioStarOff.length = 0;
+    for (let i = 0; i < 3; i++) {
+      this.studioStarOn.push(element(document, `studio-star-on-${i}`));
+      this.studioStarOff.push(element(document, `studio-star-off-${i}`));
+    }
+    this.studioPrimary = element(document, 'btn-studio-primary');
+    this.studioMount = element(document, 'btn-studio-mount');
+    this.studioSave = element(document, 'btn-save-painting');
+    this.studioClear = element(document, 'btn-new-canvas');
     this.shownSection = undefined;
   }
 
@@ -657,6 +719,15 @@ export class HudSystem extends createSystem({
     this.resCombo = undefined;
     this.resGoal = undefined;
     this.startButton = undefined;
+    this.studioMeterRow = undefined;
+    this.studioMeterFill = undefined;
+    this.studioMeterText = undefined;
+    this.studioStarOn.length = 0;
+    this.studioStarOff.length = 0;
+    this.studioPrimary = undefined;
+    this.studioMount = undefined;
+    this.studioSave = undefined;
+    this.studioClear = undefined;
   }
 
   /** Every button on the panel, each through the one press affordance. */
@@ -694,19 +765,37 @@ export class HudSystem extends createSystem({
     // ---- Round over ----------------------------------------------------------
     this.wireInteractiveButton(document, 'btn-restart', () => filledStates(ACCENT_LIME), start);
 
-    // ---- Chill ---------------------------------------------------------------
+    // ---- Chill: the Studio (round 10) ---------------------------------------
+    const studio = () => this.world.getSystem(StudioSystem);
     this.wireInteractiveButton(document, 'btn-exit-chill', () => outlineStates(ACCENT_CORAL), () =>
       game()?.exitChill(),
     );
-    this.wireInteractiveButton(document, 'btn-save-painting', () => outlineStates(ACCENT_AMBER), () =>
-      this.world.getSystem(EaselSystem)?.savePainting(),
-    );
-    this.wireInteractiveButton(document, 'btn-new-canvas', () => outlineStates(ACCENT_CYAN), () =>
-      this.world.getSystem(EaselSystem)?.newCanvas(),
-    );
-    this.wireInteractiveButton(document, 'btn-orientation', () => outlineStates(ACCENT_LIME), () =>
-      this.rotateCanvas(),
-    );
+    for (const tab of STUDIO_TABS) {
+      this.wireInteractiveButton(
+        document,
+        tab.id,
+        () => this.studioTabStates(tab.activity, tab.accent),
+        () => studio()?.selectActivity(tab.activity),
+      );
+    }
+    this.wireInteractiveButton(document, 'btn-studio-primary', () => outlineStates(ACCENT_LIME), () => {
+      studio()?.primaryAction();
+      this.applyStudioLabels();
+    });
+    this.wireInteractiveButton(document, 'btn-studio-mount', () => outlineStates(ACCENT_VIOLET), () => {
+      studio()?.secondaryAction();
+      this.applyStudioLabels();
+    });
+    this.wireInteractiveButton(document, 'btn-save-painting', () => outlineStates(ACCENT_AMBER), () => {
+      const s = studio();
+      if (s) s.save();
+      else this.world.getSystem(EaselSystem)?.savePainting();
+    });
+    this.wireInteractiveButton(document, 'btn-new-canvas', () => outlineStates(ACCENT_CYAN), () => {
+      const s = studio();
+      if (s) s.clear();
+      else this.world.getSystem(EaselSystem)?.newCanvas();
+    });
 
     // ---- Footer --------------------------------------------------------------
     this.wireInteractiveButton(document, 'btn-clear', glassStates, () =>
@@ -881,17 +970,6 @@ export class HudSystem extends createSystem({
   // ---- Actions ---------------------------------------------------------------
 
   /**
-   * Turn the canvas on its side, and own up to the cost in the status line —
-   * a browser canvas clears whenever its width or height is written.
-   */
-  private rotateCanvas(): void {
-    const easel = this.world.getSystem(EaselSystem);
-    if (!easel) return;
-    easel.rotateCanvas();
-    this.hudStatus.value = CHILL.rotatedText;
-  }
-
-  /**
    * Ask Quest to run Space Setup, and say what happened: capture started, no
    * such API, or already asked once this session (Meta documents the call as
    * once-per-session).
@@ -947,12 +1025,71 @@ export class HudSystem extends createSystem({
     this.setText(this.tutLineText, this.tutorialLine?.peek() ?? '');
     this.applyCoach();
     this.applyResults(this.roundStats?.peek());
+    this.setText(this.chillStatusText, this.studioLine?.peek() || ' ');
+    this.applyStudio();
   }
 
-  /** One status signal, two places to show it (live round and chill). */
+  /**
+   * The phase status line. Round 10: the chill card's line is the Studio's
+   * own (studioLine) - activity instructions and live scores.
+   */
   private applyStatus(status: string): void {
     this.setText(this.statusText, status);
-    this.setText(this.chillStatusText, status);
+  }
+
+  // ---- Round 10: the Studio card ---------------------------------------------
+
+  /** Activity tab: lit in its own accent when active, glass otherwise. */
+  private studioTabStates(activity: StudioActivity, accent: number): ButtonStates {
+    const selected = (this.studioActivity?.peek() ?? 0) === activity;
+    return {
+      base: selected ? tint(accent, 0.22) : tint(ACCENT_WHITE, 0.04),
+      hover: selected ? tint(accent, 0.32) : tint(accent, 0.12),
+      active: tint(accent, 0.42),
+      border: {
+        base: selected ? accent : tint(ACCENT_WHITE, 0.18),
+        hover: accent,
+        active: ACCENT_WHITE,
+      },
+    };
+  }
+
+  /** Activity changed: relight the tabs, relabel / show the action buttons. */
+  private applyStudio(): void {
+    for (const tab of STUDIO_TABS) this.refreshButton(tab.id);
+    this.applyStudioLabels();
+    this.applyStudioMeter();
+  }
+
+  private applyStudioLabels(): void {
+    const studio = this.world.getSystem(StudioSystem);
+    const activity = this.studioActivity?.peek() ?? 0;
+    const painting = activity !== StudioActivity.Targets;
+    if (studio) {
+      this.setText(this.studioPrimary, studio.primaryLabel);
+      this.setText(this.studioMount, studio.secondaryLabel);
+    }
+    const shown = painting ? 'flex' : 'none';
+    this.studioMount?.setProperties({ display: shown });
+    this.studioSave?.setProperties({ display: shown });
+    this.studioClear?.setProperties({ display: shown });
+  }
+
+  /** Stencil score bar, percent and stars (hidden outside the stencil). */
+  private applyStudioMeter(): void {
+    const meter = this.studioMeter?.peek() ?? -1;
+    const show =
+      meter >= 0 && (this.studioActivity?.peek() ?? 0) === StudioActivity.Stencil;
+    this.studioMeterRow?.setProperties({ display: show ? 'flex' : 'none' });
+    if (!show) return;
+    const pct = Math.max(0, Math.min(100, meter));
+    this.studioMeterFill?.setProperties({ width: Math.max(0.1, (METER_TRACK_CM * pct) / 100) });
+    this.setText(this.studioMeterText, `${pct}%`);
+    const stars = this.studioStars?.peek() ?? 0;
+    for (let i = 0; i < 3; i++) {
+      this.studioStarOn[i]?.setProperties({ display: i < stars ? 'flex' : 'none' });
+      this.studioStarOff[i]?.setProperties({ display: i < stars ? 'none' : 'flex' });
+    }
   }
 
   /**

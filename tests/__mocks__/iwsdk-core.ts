@@ -71,6 +71,10 @@ export class Color {
   setRGB(_r: number, _g: number, _b: number) { return this; }
 }
 export class CircleGeometry {}
+/** Round 10: Studio frame / guide / target planes. */
+export class PlaneGeometry {
+  constructor(_w?: number, _h?: number) {}
+}
 export class MeshBasicMaterial {
   constructor(_params?: unknown) {}
 }

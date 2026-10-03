@@ -969,8 +969,20 @@ export const EASEL = {
   boardCentreHeight: 1.2,
   /** Degrees the easel leans back, like a real A-frame. */
   tiltDeg: 12,
-  /** Metres of slop allowed on the board's depth axis when matching an impact. */
-  hitDepthTolerance: 0.06,
+  /**
+   * Metres of slop allowed on the board's depth axis when matching an impact.
+   * Round 10: 0.1 (was 0.06) to match the thicker collider below - a ball
+   * stopped on its front face sits colliderDepth/2 + BALLS.radius (0.07 m)
+   * out from the board's centre plane.
+   */
+  hitDepthTolerance: 0.1,
+  /**
+   * Round 10: depth of the board's physics box, metres (the visual board stays
+   * `boardDepth`). No CCD (gotcha 6/22): a paintball covers ~12 cm per 72 Hz
+   * step, so a 2 cm box plus two radii (10 cm) could be stepped clean over;
+   * 6 cm - the same as wall boxes - plus two radii is 14 cm.
+   */
+  colliderDepth: 0.06,
   /** Painting resolution, pixels across, in landscape. */
   canvasPxW: 1024,
   /** Painting resolution, pixels down, in landscape. */
@@ -1014,6 +1026,214 @@ export const EASEL = {
    * little weight. 0 disables.
    */
   grabSmoothingSec: 0.07,
+} as const;
+
+/**
+ * Round 10: the STUDIO - what Chill mode became. No timer, no Neatniks, the
+ * ambient music, and three activities picked from the HUD's chill card:
+ *
+ * - **CANVAS**: a framed canvas hangs on your nearest real wall (scene planes;
+ *   floats at a seated distance without them) or stands on the round-2 easel.
+ *   SHAPE cycles landscape / portrait / round; SAVE downloads the picture.
+ * - **STENCIL**: paint-by-shape. A silhouette (star, heart, Pip, Mopsy, splat)
+ *   is masked onto a square canvas; a coverage meter scores paint inside vs
+ *   spill outside into 1-3 stars. SAVE lifts the stencil (outside knocked out).
+ * - **TARGETS**: a relaxed range of bullseyes and paint balloons in the seated
+ *   forward arc. Every pop splashes its colour onto your walls; streak counter;
+ *   HARD makes them drift and spin.
+ *
+ * Free painting of the room keeps working in all three. StudioSystem owns it;
+ * the canvas surface itself is still EaselSystem's (see EASEL).
+ */
+export const STUDIO = {
+  /** Activity on the first entry into Chill (0 Canvas, 1 Stencil, 2 Targets). */
+  defaultActivity: 0,
+
+  // ---- Canvas placement ----------------------------------------------------
+  /** Nearest wall considered, metres from the head (closer is in your lap). */
+  wallMinDist: 0.6,
+  /** Farthest wall considered, metres. Past this it floats instead. */
+  wallMaxDist: 3.5,
+  /** A surface counts as a wall within this many degrees of vertical. */
+  wallMaxTiltDeg: 30,
+  /**
+   * Probe yaws, degrees off your forward, tried for a wall; the nearest hit
+   * wins. A spread so a doorway straight ahead does not lose the wall beside it.
+   */
+  wallProbeYawsDeg: [0, -25, 25, -50, 50] as readonly number[],
+  /**
+   * Metres the canvas stands proud of the wall. Wall planes get 6 cm collider
+   * boxes centred on the plane (gotcha 6), so 3 cm of box sits in front; this
+   * keeps the canvas's own collider clear of it.
+   */
+  wallStandoff: 0.06,
+  /**
+   * A wall canvas grows with distance so it reads the same size as one at
+   * this distance (metres), clamped to [wallScaleMin, wallScaleMax].
+   */
+  wallBaseDist: 1.3,
+  wallScaleMin: 1,
+  /** 2.2 turns the 0.62 m board into a 1.36 m mural on a far wall. */
+  wallScaleMax: 2.2,
+  /** No wall: float this far ahead (seated reach to shoot, not to touch). */
+  floatDistance: 1.3,
+  /** Canvas centre this far below the eyes (0 = eye height). */
+  canvasBelowEyes: 0.05,
+  /** Canvas centre height clamp, metres (floor-seated to tall standing). */
+  canvasMinCentre: 0.9,
+  canvasMaxCentre: 1.9,
+
+  // ---- Square / round boards -------------------------------------------------
+  /** Side of the square (stencil) and round boards, metres, before scaling. */
+  squareBoardSize: 0.56,
+  /** Painting resolution of the square / round board, pixels per side. */
+  squareCanvasPx: 1024,
+
+  // ---- Frames (generated art; transparent centre) ---------------------------
+  /**
+   * Gallery frames laid over the board's face. `innerW/innerH` are the
+   * transparent opening as a fraction of the image; `offX/offY` where the
+   * opening's centre sits relative to the image centre (fraction, +Y up), so
+   * the opening lands exactly on the board whatever the art's margins. The
+   * landscape frame is rotated 90 degrees for portrait.
+   */
+  frames: {
+    rect: {
+      key: 'studioFrameRect',
+      url: '/studio/frame-rect.webp',
+      innerW: 0.877,
+      innerH: 0.823,
+      offX: -0.002,
+      offY: 0.005,
+    },
+    square: {
+      key: 'studioFrameSquare',
+      url: '/studio/frame-square.webp',
+      innerW: 0.824,
+      innerH: 0.844,
+      offX: 0.002,
+      offY: 0.004,
+    },
+    round: {
+      key: 'studioFrameRound',
+      url: '/studio/frame-round.webp',
+      innerW: 0.789,
+      innerH: 0.781,
+      offX: -0.007,
+      offY: 0.016,
+    },
+  },
+  /** Emissive boost on the frame art so the neon reads on passthrough. */
+  frameEmissive: 0.45,
+
+  // ---- Stencils ----------------------------------------------------------------
+  /**
+   * Silhouettes, white on pure black (luminance = inside). Cycled by NEXT.
+   * Labels are ASCII (gotcha 24).
+   */
+  stencils: [
+    { id: 'star', label: 'STAR', url: '/studio/stencil-star.png' },
+    { id: 'heart', label: 'HEART', url: '/studio/stencil-heart.png' },
+    { id: 'splat', label: 'SPLAT', url: '/studio/stencil-splat.png' },
+    { id: 'pip', label: 'PIP', url: '/studio/stencil-pip.png' },
+    { id: 'mopsy', label: 'MOPSY', url: '/studio/stencil-mopsy.png' },
+  ] as ReadonlyArray<{ id: string; label: string; url: string }>,
+  /**
+   * Coverage grid side, cells. Impacts are rasterised into it on the CPU - no
+   * GPU readback. 128 = 16k cells, ~4 mm per cell on the 0.56 m board.
+   */
+  coverageGrid: 128,
+  /** Mask luminance (0-255) at or above which a cell is inside the shape. */
+  maskThreshold: 128,
+  /**
+   * Fraction of a stamp's drawn size counted as covered radius. The splat
+   * mask's solid core spans about 0.45 of its square (radius ~0.22); the thin
+   * arms are bonus paint that neither fills nor spills.
+   */
+  stampCoverRadius: 0.22,
+  /** Score = fill - spillPenalty x spill (spill as a fraction of the shape's area). */
+  spillPenalty: 0.5,
+  /** Score needed for 1, 2 and 3 stars. */
+  starThresholds: [0.35, 0.6, 0.82] as readonly number[],
+  /** Guide overlay: alpha of the dimmed area outside the shape. */
+  guideOutsideAlpha: 0.42,
+  /** Guide overlay: colour of the outline drawn just outside the shape. */
+  guideOutlineColor: '#48dbfb',
+  /** Guide overlay resolution, pixels per side. */
+  guidePx: 512,
+  /** Guide outline thickness, guide pixels. */
+  guideOutlinePx: 5,
+
+  // ---- Targets -------------------------------------------------------------------
+  /** Targets up at once (also the pool size: a popped one respawns in place). */
+  targetCount: 4,
+  /** Seconds before a popped target's replacement appears. */
+  respawnSec: 0.9,
+  /** Forward arc they appear in, degrees (seated: no turning round). */
+  arcDeg: 110,
+  /** Distance band, metres from the head. */
+  minDist: 1.3,
+  maxDist: 2.6,
+  /** Height band relative to the eyes, metres. */
+  heightBelowEyes: 0.4,
+  heightAboveEyes: 0.35,
+  /** Absolute height clamp, metres. */
+  minHeight: 0.6,
+  maxHeight: 1.9,
+  /** Minimum gap between two live targets, metres. */
+  minSpacing: 0.55,
+  /** Bullseye disc radius, metres. */
+  bullseyeRadius: 0.17,
+  /** Balloon half-height, metres (its width follows the art). */
+  balloonRadius: 0.15,
+  /** Extra hit slop, metres, on top of target + ball radius. */
+  hitSlop: 0.03,
+  /** Share of spawns that are balloons (the rest are bullseyes). */
+  balloonShare: 0.5,
+  /** Idle bob amplitude (m) and rate (Hz). */
+  bobAmp: 0.035,
+  bobHz: 0.3,
+  /** Appear / pop animation lengths, seconds. */
+  appearSec: 0.35,
+  popSec: 0.22,
+  /** HARD: lateral drift amplitude (m) and rate (Hz); bullseye spin (deg/s). */
+  hardDriftMeters: 0.45,
+  hardDriftHz: 0.16,
+  hardSpinDegPerSec: 75,
+  /**
+   * Splats thrown onto the room per pop. Each casts away from you through the
+   * target (cone `popSplatConeDeg`) against scene planes/meshes within
+   * `popSplatRange`; rays that find nothing land on the floor if they point
+   * down, else are dropped.
+   */
+  popSplats: 5,
+  popSplatConeDeg: 55,
+  popSplatRange: 4.5,
+  /** Splat size multiplier for pop splashes (a paintball is 1). */
+  popSplatSize: 1.7,
+  /** Pop splash colours (sRGB, gotcha 23), cycled per target. */
+  popColors: [
+    [1, 0.31, 0.51],
+    [1, 0.82, 0.25],
+    [0.28, 0.86, 0.98],
+    [0.71, 1, 0.23],
+    [0.72, 0.3, 1],
+  ] as ReadonlyArray<readonly [number, number, number]>,
+  /** Target art (generated; cut-outs). */
+  bullseyeKey: 'studioBullseye',
+  bullseyeUrl: '/studio/target-bullseye.webp',
+  balloonKey: 'studioBalloon',
+  balloonUrl: '/studio/target-balloon.webp',
+
+  // ---- Copy (ASCII only, gotcha 24) ---------------------------------------------
+  lines: {
+    canvasWall: 'On your wall. Paint it, then SAVE.',
+    canvasFloat: 'No wall found - floating. Paint it, then SAVE.',
+    canvasEasel: 'On the easel. Pinch it with both hands to move it.',
+    stencil: 'Fill the shape. Paint outside the line is spill.',
+    targets: 'Pop the targets - every pop splashes your walls.',
+    saved: 'Saved to your downloads.',
+  },
 } as const;
 
 /**

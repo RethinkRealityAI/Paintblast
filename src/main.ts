@@ -96,8 +96,9 @@ import { SceneScanSystem } from './systems/SceneScanSystem';
 import { VfxSystem } from './systems/VfxSystem';
 import { IntroSystem, INTRO_LOGO_KEY } from './systems/IntroSystem';
 import { PipSystem } from './systems/PipSystem';
+import { StudioSystem } from './systems/StudioSystem';
 import { initLanding } from './landing/landing';
-import { AUDIO, BLASTER, GAME, HUD, PALETTE, RENDER, NEATNIKS, TARGETS, WEB } from './config';
+import { AUDIO, BLASTER, GAME, HUD, PALETTE, RENDER, NEATNIKS, STUDIO, TARGETS, WEB } from './config';
 import type { ToneMappingName } from './config';
 import {
   BallKind,
@@ -229,6 +230,14 @@ function seedGlobals(world: World) {
   globals.practice = signal(false);
   globals.roundStats = signal<RoundStats | null>(null);
   globals.coachLine = signal('');
+
+  // Round 10: the Studio (Chill mode's activities). StudioSystem owns every
+  // write; HudSystem's chill card reads them. studioMeter is the stencil
+  // score in whole percent, -1 when no meter shows; studioStars 0..3.
+  globals.studioActivity = signal<number>(STUDIO.defaultActivity);
+  globals.studioLine = signal('');
+  globals.studioMeter = signal(-1);
+  globals.studioStars = signal(0);
 }
 
 /**
@@ -1227,6 +1236,24 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
       type: AssetType.GLTF,
       priority: 'background',
     },
+    // ROUND10-STUDIO-ASSETS — Higgsfield gpt_image_2_5 art for the Studio:
+    // gallery frames (transparent centres) and the target range's cut-outs.
+    // Background: only read once the player enters Chill, and EaselSystem /
+    // StudioSystem fall back to AssetManager.loadTexture (or unframed /
+    // untextured) if one has not streamed yet. Stencil masks are pixel data,
+    // not textures, so StudioSystem loads those itself.
+    ...Object.fromEntries(
+      [
+        STUDIO.frames.rect,
+        STUDIO.frames.square,
+        STUDIO.frames.round,
+        { key: STUDIO.bullseyeKey, url: STUDIO.bullseyeUrl },
+        { key: STUDIO.balloonKey, url: STUDIO.balloonUrl },
+      ].map((art) => [
+        art.key,
+        { url: art.url, type: AssetType.Texture, priority: 'background' as const },
+      ]),
+    ),
     // ROUND3-PALETTE-ASSET — a Higgsfield-modelled kidney-shaped wooden
     // palette board (image_to_3d). The dabs and chips are always built in
     // code and parented to the same root, so tapping keeps working whatever
@@ -1359,6 +1386,9 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
     .registerSystem(TargetSystem, { priority: 14 })
     .registerSystem(SplatterSystem, { priority: 15 })
     .registerSystem(EaselSystem, { priority: 16 })
+    // Round 10: after EaselSystem (it marks the easel as Studio-managed and
+    // takes its stamp feed in init) and BallFlightSystem's impacts.
+    .registerSystem(StudioSystem, { priority: 17 })
     .registerSystem(GameStateSystem, { priority: 30 })
     // Round 9: the tutorial reads this frame's events and drives
     // GameStateSystem's practice round; the coach reads spawn events. Both

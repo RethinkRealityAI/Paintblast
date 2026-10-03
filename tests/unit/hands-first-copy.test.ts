@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
-import { CHILL, TUTORIAL } from '../../src/config';
+import { CHILL, STUDIO, TUTORIAL } from '../../src/config';
 
 /**
  * The competition's hands-first bar is "can someone finish the whole thing
@@ -35,7 +35,9 @@ describe('hands-first HUD copy', () => {
     // The markup's first paint and the signal HudSystem writes must agree.
     expect(status).toBe(CHILL.statusText);
     expect(CHILL.statusText.toLowerCase()).toContain('pinch');
-    expect(chill).toMatch(/Pinch or squeeze the easel/);
+    // Round 10 Studio: the card's hint and the easel line both teach the pinch.
+    expect(chill).toMatch(/Hold a pinch to spray/);
+    expect(STUDIO.lines.canvasEasel.toLowerCase()).toContain('pinch');
   });
 
   it('ships the PAUSED pill hidden, ahead of every section', () => {
