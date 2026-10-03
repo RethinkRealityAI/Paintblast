@@ -848,7 +848,7 @@ export class RobotDepthSensingSystem extends DepthSensingSystem {
 
   private disableDepth(why: string): void {
     this.depthBroken = true;
-    console.warn(`[PaintBlast] depth occlusion off: ${why}`);
+    console.warn(`[Splotopia] depth occlusion off: ${why}`);
   }
 }
 
