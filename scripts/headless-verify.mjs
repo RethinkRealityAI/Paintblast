@@ -142,8 +142,20 @@ await page.evaluate(() => {
   const T = window.__PB_THREE;
   const dotGeo = new T.SphereGeometry(0.007, 8, 6);
   const skin = new T.MeshBasicMaterial({ color: 0xe0ac8a });
-  const armGeo = new T.CylinderGeometry(0.028, 0.034, 0.25, 12);
+  // Round 10: a realistic adult forearm — an elliptical cone 6.6 x 5.0 cm at
+  // the wrist joint to 8.4 x 7.6 cm 25 cm up the arm (breadth along the wrist
+  // joint's X, depth along its Y). window.__PB_PROXY_SCALE = [breadth/depth,
+  // length] rescales it for the small/large-hand shots.
+  const armGeo = new T.CylinderGeometry(0.042, 0.033, 0.25, 24, 6);
   armGeo.translate(0, 0.125, 0);
+  {
+    const p = armGeo.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const t = p.getY(i) / 0.25;
+      p.setZ(i, p.getZ(i) * (0.758 + (0.905 - 0.758) * t));
+    }
+    armGeo.computeVertexNormals();
+  }
   armGeo.rotateX(Math.PI / 2);
   const armMat = new T.MeshBasicMaterial({
     color: 0xc98d6b,
@@ -182,6 +194,8 @@ await page.evaluate(() => {
       // Joint 0 is the wrist in the runtime's (enum) order.
       rig.arm.matrixAutoUpdate = false;
       rig.arm.matrix.fromArray(tr, 0).premultiply(grip.matrixWorld);
+      const ps = window.__PB_PROXY_SCALE;
+      if (ps) rig.arm.matrix.scale(new T.Vector3(ps[0], ps[0], ps[1]));
       rig.arm.matrixWorldNeedsUpdate = true;
     }
     requestAnimationFrame(tick);
@@ -234,7 +248,12 @@ function cam(from, to) {
   return { head: from, headQ: lookQ(from, to) };
 }
 
-/** Round 8: every blaster mode from six angles, then skins, colour and a shot. */
+/**
+ * Round 8 (extended round 10): BLASTER, GOO (SPLAT and TETHER) and HAND from
+ * eight angles (incl. top and the menu gem), small/large hands, skins, colour
+ * and a shot from each launcher. SHOTS=1-first,2-side and MODES=blaster,hand
+ * narrow it; NOSIZES=1 skips the hand-size pass.
+ */
 async function runGauntletSuite() {
   if (process.env.ALIGN) {
     await page.evaluate(async () => {
@@ -251,55 +270,191 @@ async function runGauntletSuite() {
   }
   const g = (fn, arg) => page.evaluate(fn, arg);
   const setMode = (m) => g((m) => { window.__PB_WORLD.globals.blasterMode.value = m; }, m);
+  const setSub = (s) => g((s) => { window.__PB_WORLD.globals.webSubMode.value = s; }, s);
+  // Round 10: the forearm IK hangs a body off the head, and these shots move
+  // the head as a camera — pin the body to the eyes of the pose being shot.
+  const setBody = (head, headQ) =>
+    g(({ head, headQ }) => {
+      const gs = window.__PB_WORLD.getSystems().find((s) => s.constructor?.name === 'GauntletSystem');
+      if (gs) gs.debugBodyHead = head ? { position: head, quaternion: headQ } : null;
+    }, { head, headQ });
   const ID = [0, 0, 0, 1];
-  const armForward = { right: [0.18, 1.32, -0.55], rightQ: ID, left: [-0.35, 0.9, -0.1], leftQ: ID };
-  const leftForward = { left: [-0.15, 1.3, -0.5], leftQ: ID, right: [0.35, 0.9, -0.1], rightQ: ID };
+  const eyes = { head: [0.05, 1.55, 0.05], headQ: pitch(-25) };
+  // Round 10: IWER's identity hand has its wrist joint pitched ~29 degrees UP
+  // and yawed ~16 degrees inward off its ray (a bent wrist). These undo that,
+  // so the hand points straight ahead with a neutral wrist and the proxy rod
+  // (on the wrist joint's axis) is a fair stand-in for the forearm.
+  const LEVEL_R = mul(yaw(-16), pitch(-30));
+  const LEVEL_L = mul(yaw(16), pitch(-30));
+  const armForward = { right: [0.18, 1.32, -0.55], rightQ: LEVEL_R, left: [-0.35, 0.9, -0.1], leftQ: ID };
+  const leftForward = { left: [-0.15, 1.3, -0.5], leftQ: LEVEL_L, right: [0.35, 0.9, -0.1], rightQ: ID };
+  const palmUpEyes = { head: [0, 1.6, 0.05], headQ: pitch(-55) };
   const shots = [
-    ['1-first', { head: [0.05, 1.55, 0.05], headQ: pitch(-25), ...armForward }],
-    ['2-side', { ...cam([0.5, 1.4, -0.52], [0.18, 1.33, -0.6]), ...armForward }],
-    ['3-front', { ...cam([0.4, 1.5, -0.86], [0.18, 1.33, -0.56]), ...armForward }],
-    ['4-left', { ...cam([-0.46, 1.45, -0.48], [-0.15, 1.31, -0.56]), ...leftForward }],
-    ['5-hero', { ...cam([0.45, 1.56, -0.42], [0.17, 1.33, -0.62]), ...armForward }],
+    ['1-first', { ...eyes, ...armForward }, eyes],
+    ['2-side', { ...cam([0.5, 1.4, -0.52], [0.18, 1.33, -0.6]), ...armForward }, eyes],
+    ['3-front', { ...cam([0.4, 1.5, -0.86], [0.18, 1.33, -0.56]), ...armForward }, eyes],
+    ['4-left', { ...cam([-0.46, 1.45, -0.48], [-0.15, 1.31, -0.56]), ...leftForward }, eyes],
+    ['5-hero', { ...cam([0.45, 1.56, -0.42], [0.17, 1.33, -0.62]), ...armForward }, eyes],
     ['6-palmup', {
-      head: [0, 1.6, 0.05], headQ: pitch(-55),
+      ...palmUpEyes,
       left: [-0.05, 1.18, -0.32], leftQ: mul(yaw(-35), roll(180)),
       right: [0.35, 0.9, -0.1], rightQ: ID,
-    }],
+    }, palmUpEyes],
+    ['7-top', { ...cam([0.19, 1.62, -0.5], [0.185, 1.32, -0.51]), ...armForward }, eyes],
+    ['8-gem', { ...cam([0.05, 1.5, -0.38], [-0.13, 1.31, -0.58]), ...leftForward }, eyes],
   ];
-  const names = { 0: 'hand', 1: 'blaster', 2: 'web' };
-  for (const m of [1, 2, 0]) {
-    await setMode(m);
-    await page.waitForTimeout(800);
-    for (const [label, p] of shots) {
-      await pose(p);
-      await page.screenshot({ path: join(outDir, `${inputMode}-${names[m]}-${label}.png`) });
+  // Round 10: numeric enclosure check. Samples the proxy forearm's surface
+  // (in the wrist joint's frame, as drawn), maps each point into the shown
+  // sleeve's frame and reports the worst (x/A)^2 + (y/B)^2 against the inner
+  // wall over the sleeve's length: < 1 means the arm is inside everywhere.
+  const enclosure = () => g(() => {
+    const w = window.__PB_WORLD;
+    const T = window.__PB_THREE;
+    const gs = w.getSystems().find((s) => s.constructor?.name === 'GauntletSystem');
+    const res = {};
+    const ps = window.__PB_PROXY_SCALE ?? [1, 1];
+    for (const [hand, side] of [[0, 'left'], [1, 'right']]) {
+      const tr = w.input.visualAdapters.hand[side]?.jointTransforms;
+      if (!tr || !gs.isPosed(hand) || !gs.isHand(hand)) continue;
+      const grip = w.player.gripSpaces[side];
+      grip.updateWorldMatrix(true, false);
+      const m = grip.matrixWorld.clone().multiply(grip.matrixWorld.clone().fromArray(tr, 0));
+      const inv = gs.sleeveQ[hand].clone().invert();
+      const p = new T.Vector3();
+      const ab = { a: 0, b: 0 };
+      const range = [0, 0];
+      let worst = 0;
+      let at = null;
+      for (let zp = 0; zp <= 0.25; zp += 0.01) {
+        const t = zp / 0.25;
+        const a = (0.033 + 0.009 * t) * ps[0];
+        const b = (0.025 + 0.013 * t) * ps[0];
+        for (let k = 0; k < 24; k++) {
+          const th = (k / 24) * Math.PI * 2;
+          p.set(a * Math.cos(th), b * Math.sin(th), zp * ps[1]).applyMatrix4(m);
+          p.sub(gs.sleevePos[hand]).applyQuaternion(inv);
+          gs.sleeveInnerAt(p.z, ab, range);
+          if (p.z < range[0] || p.z > range[1]) continue;
+          const v = (p.x / ab.a) ** 2 + (p.y / ab.b) ** 2;
+          if (v > worst) {
+            worst = v;
+            at = [Math.round(p.z * 1000), Math.round((th * 180) / Math.PI)];
+          }
+        }
+      }
+      res[side] = { worst: Math.round(worst * 1000) / 1000, atZmmDeg: at };
     }
+    return res;
+  });
+  const only = process.env.SHOTS ? process.env.SHOTS.split(',') : null;
+  const want = (label) => !only || only.some((s) => label.startsWith(s));
+  const shoot = async (prefix) => {
+    for (const [label, p, body] of shots) {
+      if (!want(label)) continue;
+      await setBody(body.head, body.headQ);
+      await pose(p);
+      await page.screenshot({ path: join(outDir, `${inputMode}-${prefix}-${label}.png`) });
+      if (prefix !== 'hand') console.log(`enclosure ${prefix}-${label}`, JSON.stringify(await enclosure()));
+    }
+  };
+  const modes = [
+    ['blaster', 1, 0],
+    ['goo-splat', 2, 0],
+    ['goo-tether', 2, 1],
+    ['hand', 0, 0],
+  ];
+  const onlyModes = process.env.MODES ? process.env.MODES.split(',') : null;
+  for (const [name, m, sub] of modes) {
+    if (onlyModes && !onlyModes.includes(name)) continue;
+    await setMode(m);
+    await setSub(sub);
+    await page.waitForTimeout(800);
+    await shoot(name);
   }
-  // Skin + paint colour swap (GOLD RUSH, cyan paint), then a fired shot.
+  await setSub(0);
+
+  // Small and large hands: the sleeve must follow, and the (rescaled) proxy
+  // forearm must stay inside it.
+  if (!process.env.NOSIZES) {
+    await setMode(1);
+    for (const [name, L, P] of [['small', 0.165, 0.072], ['large', 0.215, 0.097]]) {
+      await g(({ L, P }) => {
+        const gs = window.__PB_WORLD.getSystems().find((s) => s.constructor?.name === 'GauntletSystem');
+        gs.measuring = false;
+        gs.setCalibration(L, P);
+        window.__PB_PROXY_SCALE = [P / 0.083, L / 0.187];
+      }, { L, P });
+      for (const i of [1, 6]) {
+        const [label, p, body] = shots[i];
+        await setBody(body.head, body.headQ);
+        await pose(p);
+        await page.waitForTimeout(1500); // size glide
+        await page.screenshot({ path: join(outDir, `${inputMode}-${name}-${label}.png`) });
+        console.log(`enclosure ${name}-${label}`, JSON.stringify(await enclosure()));
+      }
+    }
+    await g(() => {
+      const gs = window.__PB_WORLD.getSystems().find((s) => s.constructor?.name === 'GauntletSystem');
+      gs.setCalibration(0.187, 0.083);
+      gs.measuring = true;
+      window.__PB_PROXY_SCALE = null;
+    });
+  }
+
+  // Skin + paint colour swap (GOLD RUSH, cyan paint), then fired shots.
   await setMode(1);
   await g(() => {
     const gl = window.__PB_WORLD.globals;
     gl.blasterSkin.value = 4;
     gl.activeColor.value = [0.2, 0.85, 1.0, 1];
   });
+  await setBody(eyes.head, eyes.headQ);
   await pose(shots[4][1]);
   await page.screenshot({ path: join(outDir, `${inputMode}-skin-gold.png`) });
   await g(() => { window.__PB_WORLD.globals.blasterSkin.value = 0; });
-  await pose(shots[1][1]);
-  await g(() => {
-    for (const s of window.__PB_WORLD.getSystems()) {
-      if (s.constructor?.name === 'WebShooterSystem') s.fireGesture(1, performance.now() + 10000);
-    }
-  });
-  await page.waitForTimeout(60);
-  await page.screenshot({ path: join(outDir, `${inputMode}-fire.png`) });
-  const info = await g(() => {
+  const fire = async (label) => {
+    await pose(shots[1][1]);
+    await g(() => {
+      for (const s of window.__PB_WORLD.getSystems()) {
+        if (s.constructor?.name === 'WebShooterSystem') s.fireGesture(1, performance.now() + 10000);
+      }
+    });
+    await page.waitForTimeout(60);
+    await page.screenshot({ path: join(outDir, `${inputMode}-fire-${label}.png`) });
+  };
+  await fire('blaster');
+  const probe = () => g(() => {
     const w = window.__PB_WORLD;
+    const T = window.__PB_THREE;
     const m = w.globals.gauntletMuzzles;
     const gs = w.getSystems().find((s) => s.constructor?.name === 'GauntletSystem');
-    return { muzzlesValid: Array.from(m?.valid ?? []), deploy: gs ? Array.from(gs.debugDeploy) : null };
+    const v = new T.Vector3();
+    const r = (x) => Math.round(x * 1000) / 1000;
+    const arr = (x) => [r(x.x), r(x.y), r(x.z)];
+    const out = { muzzlesValid: Array.from(m?.valid ?? []), deploy: gs ? Array.from(gs.debugDeploy) : null };
+    if (gs) {
+      out.nozzleR = arr(gs.nozzleInto(1, v));
+      out.barrelR = arr(gs.barrelMuzzleInto(1, v));
+      out.aimR = arr(gs.aimInto(1, v));
+      out.originR = [r(m.origin[3]), r(m.origin[4]), r(m.origin[5])];
+      out.dirR = [r(m.direction[3]), r(m.direction[4]), r(m.direction[5])];
+      out.gem = gs.menuGemInto(v) ? arr(v) : null;
+      const f = gs.debugFit;
+      out.calib = {
+        handLength: r(f.calibrator.handLength), palmWidth: r(f.calibrator.palmWidth),
+        wristRadius: r(f.calibrator.wristRadius), windows: f.calibrator.windows,
+      };
+      out.fitShown = Array.from(f.shown).map(r);
+      try { out.stored = localStorage.getItem('splotopia.armFit'); } catch { out.stored = 'n/a'; }
+    }
+    return out;
   });
-  console.log(JSON.stringify({ outDir, inputMode, suite, ...info, errors: errors.slice(0, 20) }, null, 2));
+  const infoBlaster = await probe();
+  await setMode(2);
+  await page.waitForTimeout(800);
+  await fire('goo');
+  const infoGoo = await probe();
+  console.log(JSON.stringify({ outDir, inputMode, suite, blaster: infoBlaster, goo: infoGoo, errors: errors.slice(0, 20) }, null, 2));
 }
 
 async function pose({ head, headQ, left, leftQ, right, rightQ }) {

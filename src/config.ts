@@ -1104,9 +1104,11 @@ export const WEB = {
   shooterLengthMeters: 0.11,
   /**
    * Forearm diameter the straps are sized to, metres. 7.5 cm is a generous
-   * adult wrist with the strap standing a little proud of it. Deliberately a
-   * constant: do NOT measure the player's hand at runtime — joint spans are
-   * noisy and this has to look right on frame one.
+   * adult wrist with the strap standing a little proud of it. Only the
+   * optional GLB uses it now: since round 10 the code-built sleeve is sized
+   * from a robust (median-of-window, pose-invariant bone length) measurement
+   * of the player's hand — see ARMFIT — and starts at a generous default, so
+   * it still looks right on frame one.
    */
   shooterBandMeters: 0.075,
   /**
@@ -1128,27 +1130,33 @@ export const WEB = {
    * pose people adopt to look at their wrist.
    */
   shooterRollDeg: 0,
-  /** Metres toward the pinky side, in the RIGHT hand's aim frame. Left mirrors. */
+  /**
+   * Metres toward the pinky side, in the RIGHT hand's TURRET frame (round 10:
+   * origin = the swivel pivot on top of the sleeve, see BLASTER). Left mirrors.
+   */
   shooterOffsetX: 0.0,
   /**
-   * Metres along the aim frame's Y from the wrist joint. **Negative**: the
-   * device rides the underside (palm side) of the forearm, the way a web
-   * shooter is worn — out of the way of the hand when the wrist bends back.
+   * Metres up from the turret pivot to the GOO launcher's axis. **Positive**
+   * since round 10: the launcher moved from under the wrist (where nobody saw
+   * it — owner playtest) to the TOP of the forearm, on the same mount the
+   * BLASTER barrel uses; the two swap places on a mode change. Same axis
+   * height as the barrel (BLASTER.muzzleLocal[1]).
    */
-  shooterOffsetY: -0.034,
+  shooterOffsetY: 0.027,
   /**
-   * Metres along the aim frame's Z from the wrist joint. **Positive**, i.e.
-   * back up the forearm: the body sits on the arm and only the nozzle reaches
-   * the wrist crease.
+   * Metres along the turret's Z from the pivot to the launcher body centre.
+   * Positive = back up the forearm: the goo canister sits over the sleeve and
+   * only the nozzle reaches past the wrist.
    */
-  shooterOffsetZ: 0.05,
+  shooterOffsetZ: 0.012,
   /**
-   * The nozzle tip, in the shooter holder's own (aim-aligned) frame, metres.
-   * Both the web's spawn point and the strand's near end come from here.
-   * Round 8: the spinneret (GauntletSystem) puts its chrome needle's tip here
-   * — housing, collar, glowing cartridge, needle, all on this axis.
+   * The nozzle tip, in the launcher's own (aim-aligned) frame, metres. Both
+   * the goo ball's spawn point and the strand's near end come from here
+   * (nozzleInto / shotOriginInto / globals.gauntletMuzzles). Round 10: with
+   * the offsets above the tip lands where the BLASTER muzzle is, just past the
+   * wrist over the back of the hand.
    */
-  muzzleLocal: [0, 0, -0.082] as [number, number, number],
+  muzzleLocal: [0, 0, -0.083] as [number, number, number],
   /** Metres past the nozzle that a web ball is born, so it clears the hand. */
   muzzleOffset: 0.09,
 
@@ -1833,14 +1841,22 @@ export const BLASTER = {
     { name: 'GOLD RUSH', accent: '#ffd23f', trim: '#ff7a3d', shell: '#2a2c33' },
   ] as ReadonlyArray<BlasterSkin>,
 
-  // ---- The hardware (round 8, GauntletSystem) ------------------------------
+  // ---- The hardware (round 8, refitted in round 10, GauntletSystem) --------
   //
-  // Two pieces per arm. A forearm BRACER posed in the aim frame (-Z = where
-  // shots go, +Y = back of the hand, origin at the wrist joint) carrying the
-  // paint barrel + canister on top (BLASTER mode) or the web spinneret
-  // underneath (WEB mode; its offsets are WEB.shooterOffset*). And a
-  // back-of-hand PLATE posed in the hand's own wrist frame, so it rides the
-  // hand while the fingers stay free. HAND mode shows neither.
+  // Three pieces per arm since round 10:
+  //  - the SLEEVE: a closed armour tube round the forearm (top, sides AND
+  //    underside), posed from the forearm axis (wrist joint + an estimated
+  //    elbow) and sized to the player's measured hand — see ARMFIT. It never
+  //    follows the aim ray, so it stays ON the arm.
+  //  - the TURRET: a swivel mount pinned to the top of the sleeve
+  //    (ARMFIT.turretPivot*) that follows the aim. It carries the BLASTER
+  //    barrel + canister or the GOO launcher; the two swap places on the same
+  //    mount when the mode changes. Muzzles are in the turret frame (origin =
+  //    the pivot on top of the sleeve, -Z = where shots go, +Y = up off the
+  //    back of the forearm).
+  //  - the back-of-hand PLATE, in the hand's own wrist frame (fingers free),
+  //    scaled to the measured palm.
+  // HAND mode shows none of them (only the menu gem, ARMFIT.gemInHandMode).
   //
   // X values are declared for the RIGHT hand and mirrored for the left.
   /**
@@ -1856,11 +1872,14 @@ export const BLASTER = {
    */
   autoFireCooldownMs: 150,
   /**
-   * The paint barrel's muzzle, metres, in the aim frame at the wrist joint
-   * (+Y = over the back of the wrist, -Z = toward the fingers). Trigger,
-   * pinch, flick and thrust shots in BLASTER mode all leave from here.
+   * The paint barrel's muzzle, metres, in the TURRET frame (round 10: origin
+   * = the swivel pivot on top of the sleeve, +Y = up off the forearm, -Z =
+   * where shots go). Trigger, pinch, flick and thrust shots in BLASTER mode
+   * all leave from here. With the pivot ARMFIT.turretPivotZ (5.7 cm) behind
+   * the wrist this puts the muzzle just past the wrist joint, over the back of
+   * the hand — where the R8 muzzle was.
    */
-  muzzleLocal: [0, 0.058, -0.014] as [number, number, number],
+  muzzleLocal: [0, 0.027, -0.071] as [number, number, number],
   /**
    * Metres past the muzzle that a paint ball is born, so it clears the barrel
    * and the knuckles. Smaller than FIRE.muzzleOffset because the barrel
@@ -1869,7 +1888,9 @@ export const BLASTER = {
   muzzleOffset: 0.05,
   /**
    * The back-of-hand plate's centre in the WRIST-JOINT frame (tracked hands):
-   * +Y out of the back of the hand, -Z toward the knuckles.
+   * +Y out of the back of the hand, -Z toward the knuckles. For the default
+   * hand (ARMFIT.default*); Y scales with the measured palm width, Z with the
+   * hand length.
    */
   plateOffsetHand: [0, 0.021, -0.048] as [number, number, number],
   /**
@@ -1879,11 +1900,12 @@ export const BLASTER = {
   plateOffsetController: [0, 0.036, -0.062] as [number, number, number],
   /**
    * Controllers are held thumb-up, so the anatomical back of the hand faces
-   * outward and a barrel "over the wrist" would stick out sideways. Rolls the
-   * controller hardware (bracer, barrel, spinneret — not the hand plate) about
-   * the forearm by this many degrees (right hand; mirrored for the left). 90
-   * brings the barrel up over the thumb side and the spinneret underneath;
-   * 0 keeps it anatomical (barrel pointing out sideways).
+   * outward and a turret "on top of the forearm" would stick out sideways.
+   * Rolls the controller hardware (sleeve and turret — not the hand plate)
+   * about the forearm by this many degrees (right hand; mirrored for the
+   * left). 90 brings the turret up over the thumb side (the sleeve swaps its
+   * breadth and depth so its ellipse still matches the forearm); 0 keeps it
+   * anatomical (turret pointing out sideways).
    */
   controllerRollDeg: 90,
   /** Metres the barrel kicks back up the forearm on each shot. */
@@ -1903,6 +1925,194 @@ export const BLASTER = {
   /** Haptic pulse on both hands when the mode changes. */
   modeSwitchHapticIntensity: 0.35,
   modeSwitchHapticMs: 45,
+} as const;
+
+/**
+ * Round 10: fitting the gauntlets to the player's arm (GauntletSystem).
+ *
+ * Owner playtest: "they look a little too small, so it's kind of just sitting
+ * on top of them". Two causes, both fixed here:
+ *
+ * 1. **Size.** The R8 bracer was a fixed ~6.7 x 5.2 cm tube 11 cm long — a
+ *    wrist-sized ring — while a forearm swells to ~8.5 cm across within 15 cm
+ *    of the wrist. Now the player's hand is MEASURED from tracked joints (bone
+ *    lengths and knuckle span, which do not change with pose), the forearm is
+ *    estimated from it with anthropometric ratios, and the sleeve encloses
+ *    that forearm plus a skin margin, so the real arm in passthrough never
+ *    pokes through.
+ * 2. **Pose.** The bracer rode the AIM frame, which blends the OS ray and can
+ *    sit up to ~30 degrees off the arm. The sleeve now rides the FOREARM axis:
+ *    the wrist joint's own distal axis blended with an elbow estimated by
+ *    two-bone IK from a shoulder hung off the head. Only the turret (barrel /
+ *    goo launcher) follows the aim.
+ *
+ * Anthropometric sources (adult population means; the RATIOS are what this
+ * uses): ANSUR II (US Army anthropometric survey, Gordon et al. 2014) — hand
+ * length M 19.4 / F 18.0 cm, hand breadth M 8.9 / F 7.8 cm, wrist
+ * circumference M 17.4 / F 15.2 cm, forearm circumference (max) M ~29 / F ~25
+ * cm, radiale-stylion (forearm) length M 26.6 / F 24.1 cm, acromion-radiale
+ * (upper arm) M 33.6 / F 31.0 cm. The cross-section shape (flat at the wrist,
+ * rounder toward the elbow) and the widest point (~70% of the way to the
+ * elbow) are standard anatomy; treat those exact numbers as assumptions,
+ * tuned so the sleeve visibly encloses a 6.6 x 5.0 cm wrist / 8.4 cm forearm
+ * proxy in the headless harness.
+ *
+ * WebXR specifics: a joint's radius (XRFrame.fillJointRadii, reached through
+ * the system's `xrFrame` and the hand adapter's `jointSpaces` — IWSDK 0.3.1
+ * itself never reads radii) is "the radius of a sphere placed at its center so
+ * that it roughly touches the skin on both sides of the hand", i.e. half the
+ * wrist's palm-to-back DEPTH. The spec also lets a UA map every hand to a
+ * static hand model for privacy, so on some runtimes all players may measure
+ * alike — the fit then simply stays at that model's size.
+ */
+export const ARMFIT = {
+  /** Master switch for measuring. false = everyone wears the default fit. */
+  enabled: true,
+  /** localStorage key of the per-device calibration (JSON, try/catch). */
+  storageKey: 'splotopia.armFit',
+
+  // ---- Defaults (controllers, and tracked hands before a calibration) -----
+  /**
+   * Hand length, metres: wrist joint to middle fingertip measured ALONG THE
+   * BONES (pose-invariant). ~Mean of ANSUR II male/female (19.4 / 18.0 cm).
+   */
+  defaultHandLengthMeters: 0.187,
+  /**
+   * Palm width, metres: knuckle (index MCP to pinky MCP joint) span plus the
+   * two joint radii, i.e. hand breadth. ~Mean of ANSUR II M/F (8.9 / 7.8 cm),
+   * rounded up a touch: a fit that errs large never shows skin.
+   */
+  defaultPalmWidthMeters: 0.083,
+
+  // ---- Measuring ------------------------------------------------------------
+  /** Joint samples per second per hand (only while tracked and steady). */
+  sampleHz: 15,
+  /** Samples per calibration window (~1-1.6 s with one or both hands feeding it). */
+  windowSamples: 24,
+  /** Seconds after a hand (re)appears before its joints are trusted. */
+  settleAfterReacquireSec: 0.6,
+  /** A palm moving faster than this (m/s) is not sampled (tracking smears). */
+  maxSampleSpeed: 0.9,
+  /** Plausible adult hand length, metres; samples outside are discarded. */
+  handLengthRange: [0.13, 0.25] as [number, number],
+  /** Plausible adult palm width, metres. */
+  palmWidthRange: [0.06, 0.11] as [number, number],
+  /** Plausible wrist joint radius, metres; outside it the radius is ignored. */
+  wristRadiusRange: [0.012, 0.04] as [number, number],
+  /**
+   * Once a window holds 6+ samples, a sample further than this fraction from
+   * the window's running median is rejected as a tracking glitch.
+   */
+  outlierFraction: 0.12,
+  /**
+   * Knuckle joint radius assumed (metres) when the runtime gives no radii:
+   * palm width = knuckle span + 2 x this.
+   */
+  fallbackKnuckleRadius: 0.0095,
+  /**
+   * Weight of the first window of a session against a stored calibration
+   * (someone else may be wearing the headset now). Later windows refine with
+   * weight 1/(n+1), never below `minRefineWeight`, so the fit keeps improving
+   * but cannot be dragged around by one bad window.
+   */
+  firstWindowWeight: 0.7,
+  minRefineWeight: 0.15,
+  /** Re-save to localStorage when a value moves more than this (metres). */
+  persistEpsilonMeters: 0.001,
+
+  // ---- Anthropometric model -------------------------------------------------
+  /** Wrist circumference / hand breadth. ANSUR II: 17.4/8.9 ~ 15.2/7.8 ~ 1.96. */
+  wristCircPerPalmWidth: 1.97,
+  /**
+   * How much the wrist joint radius (when the runtime reports one) counts
+   * against the palm-width estimate of the wrist, 0..1. The joint radius is
+   * half the wrist DEPTH; it is converted to an equivalent round radius with
+   * `aspectWrist` first.
+   */
+  wristJointRadiusWeight: 0.5,
+  /** Forearm (wrist joint to elbow) length / hand length. ANSUR II ~1.36. */
+  forearmLengthPerHandLength: 1.36,
+  /** Upper arm (shoulder to elbow) length / hand length. ANSUR II ~1.73. */
+  upperArmLengthPerHandLength: 1.73,
+  /** Max forearm circumference / wrist circumference. ANSUR II ~1.65. */
+  forearmMaxCircPerWristCirc: 1.62,
+  /** Where the forearm is widest, as a fraction of its length from the wrist. */
+  forearmMaxAt: 0.72,
+  /** Cross-section depth / breadth at the wrist (flat: radius and ulna side by side). */
+  aspectWrist: 0.8,
+  /** Cross-section depth / breadth at the widest point (rounder: muscle belly). */
+  aspectProximal: 0.92,
+
+  // ---- The sleeve -------------------------------------------------------------
+  /** Metres behind the wrist joint the sleeve starts (the wrist must still bend). */
+  sleeveStartMeters: 0.012,
+  /** Fraction of the estimated forearm length the sleeve covers (from the wrist). */
+  sleeveCoverage: 0.65,
+  /**
+   * Gap between the estimated skin and the sleeve's inner wall, metres. Covers
+   * the estimate's error and hand-tracking jitter, so passthrough skin never
+   * pokes through ("render slightly larger than the skin").
+   */
+  skinMarginMeters: 0.008,
+  /** Shell wall thickness, metres (inner wall to outer surface). */
+  shellThicknessMeters: 0.0045,
+  /** Time constant, seconds, of size changes (a recalibration glides, never pops). */
+  sizeSmoothingSec: 0.6,
+  /** Back-of-hand plate width / palm width (fingers and palm stay free). */
+  plateWidthPerPalmWidth: 0.86,
+  /** Back-of-hand plate length / hand length (wrist to just short of the knuckles). */
+  plateLengthPerHandLength: 0.41,
+
+  // ---- Forearm axis (sleeve pose) ---------------------------------------------
+  /**
+   * How much the sleeve's axis follows the IK-estimated forearm (elbow to
+   * wrist) rather than the hand's own wrist-joint axis, 0..1. The hand axis
+   * bends with the wrist; the forearm does not. 0 = pure wrist frame.
+   */
+  forearmIkWeight: 0.35,
+  /**
+   * The sleeve axis never leaves the hand axis by more than this (degrees):
+   * roughly the wrist's comfortable flexion/extension range, and a cap on how
+   * wrong a bad elbow guess can make it.
+   */
+  wristMaxBendDeg: 50,
+  /** Eyes to the neck pivot, metres: down, and back, in the head frame. */
+  neckDownMeters: 0.1,
+  neckBackMeters: 0.08,
+  /** Neck pivot to the shoulder joints: drop and half-width, metres. */
+  shoulderDropMeters: 0.13,
+  shoulderHalfWidthMeters: 0.175,
+  /** Time constant, seconds, of the torso yaw following the head's. */
+  torsoYawSmoothingSec: 0.35,
+
+  // ---- Turret (the swivel mount on top of the sleeve) ---------------------------
+  /** Metres behind the wrist joint of the turret pivot (default-size arm; scales with it). */
+  turretPivotZ: 0.057,
+  /** Metres the pivot stands proud of the sleeve's top surface. */
+  turretPivotLift: 0.0025,
+  /**
+   * The turret (and so the aim it shoots along) never swings more than this
+   * many degrees away from the sleeve; beyond it the barrel would read as
+   * detached from the arm.
+   */
+  turretMaxDeg: 35,
+
+  // ---- Menu gem (left arm) ---------------------------------------------------
+  /**
+   * The menu gem on the LEFT sleeve, for the summonable wrist menu (poked
+   * with the right index tip). Angle round the sleeve from the pinky side
+   * through the top (90 = top dead centre); >90 is the thumb side, which faces
+   * the right hand when the left palm is down — and the turret is not there.
+   */
+  gemAngleDeg: 132,
+  /** Metres behind the sleeve's wrist edge (default-size arm; scales with it). */
+  gemBackMeters: 0.024,
+  /** Gem radius, metres (a poke target: keep >= ~7 mm). */
+  gemRadiusMeters: 0.0085,
+  /** Show the gem (on a slim wrist band) in HAND mode too, so the menu is always reachable. */
+  gemInHandMode: true,
+  /** Gem glow, `#rrggbb` (sRGB). */
+  gemColor: '#c58bff',
 } as const;
 
 /**

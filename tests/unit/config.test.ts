@@ -517,9 +517,10 @@ describe('WEB', () => {
     expect(WEB.shooterBandMeters).toBeLessThan(0.11);
   });
 
-  it('mounts the gauntlet on the palm side, up the forearm from the wrist', () => {
-    // Round 7's aim frame: +Y is the back of the hand, +Z is up the arm.
-    expect(WEB.shooterOffsetY).toBeLessThan(0);
+  it('mounts the GOO launcher on TOP of the forearm, up the arm from the pivot', () => {
+    // Round 10 turret frame: +Y is up off the back of the forearm, +Z is up
+    // the arm. Under the wrist (R7-R9) nobody saw it was loaded.
+    expect(WEB.shooterOffsetY).toBeGreaterThan(0);
     expect(WEB.shooterOffsetZ).toBeGreaterThan(0);
     // On the arm rather than floating off it.
     expect(Math.abs(WEB.shooterOffsetY)).toBeLessThan(WEB.shooterBandMeters);
