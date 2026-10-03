@@ -112,6 +112,22 @@ export function orientationDims(
  * Marks the single easel entity. The numbers mirror what the system computed
  * so `ecs_query_entity` can inspect a live easel from the MCP tools.
  */
+/**
+ * Round 9: height of the board's centre for a head at `headY` metres —
+ * EASEL.boardBelowEyes under the eyes, clamped to
+ * [boardCentreMinHeight, boardCentreMaxHeight]. Seated (~1.2 m) and standing
+ * (~1.6 m) players both get the board at their sight line, with its bottom
+ * edge above the docked HUD's top edge in either orientation, so leaning in
+ * never pushes the HUD (0.95 m ahead of the head) through the board. Non-finite input falls back to EASEL.boardCentreHeight.
+ */
+export function easelCentreHeight(headY: number): number {
+  if (!Number.isFinite(headY)) return EASEL.boardCentreHeight;
+  return Math.min(
+    EASEL.boardCentreMaxHeight,
+    Math.max(EASEL.boardCentreMinHeight, headY - EASEL.boardBelowEyes),
+  );
+}
+
 export const Easel = createComponent('Easel', {
   /** Half the canvas board's width, metres. */
   halfWidth: { type: Types.Float32, default: EASEL.boardWidth / 2 },
@@ -404,7 +420,7 @@ export class EaselSystem extends createSystem({
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
-        anchor.download = `paintblast-painting-${index}.png`;
+        anchor.download = `splotopia-painting-${index}.png`;
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
@@ -740,9 +756,11 @@ export class EaselSystem extends createSystem({
     }
     this.headForward.normalize();
 
+    // Round 9: within seated reach, and planted relative to the eyes (seated
+    // or standing) rather than at a fixed 1.2 m. @see easelCentreHeight
     object3D.position.set(
       this.headPosition.x + this.headForward.x * EASEL.spawnDistance,
-      EASEL.boardCentreHeight,
+      head ? easelCentreHeight(this.headPosition.y) : EASEL.boardCentreHeight,
       this.headPosition.z + this.headForward.z * EASEL.spawnDistance,
     );
 

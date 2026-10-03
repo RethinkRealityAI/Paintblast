@@ -27,7 +27,6 @@ import {
   Follower,
   FollowBehavior,
   XRAnchor,
-  DepthOccludable,
   IBLTexture,
   NoToneMapping,
   NeutralToneMapping,
@@ -72,7 +71,12 @@ import {
   WEB_SHOOTER_ASSET_KEY,
 } from './systems/WebShooterSystem';
 import { Gauntlet, GauntletSystem } from './systems/GauntletSystem';
-import { Target, TargetSystem, ROBOT_ASSET_KEY } from './systems/TargetSystem';
+import {
+  Target,
+  TargetSystem,
+  RobotDepthSensingSystem,
+  ROBOT_ASSET_KEY,
+} from './systems/TargetSystem';
 import { GameStateSystem } from './systems/GameStateSystem';
 import { HudSystem } from './systems/HudSystem';
 import { TutorialSystem } from './systems/TutorialSystem';
@@ -83,6 +87,7 @@ import {
   WristPaletteSystem,
   PALETTE_BOARD_ASSET_KEY,
   PALETTE_VISUALS_KEY,
+  paletteLabelText,
   thinnestAxis,
 } from './systems/WristPaletteSystem';
 import type { PaletteVisuals } from './systems/WristPaletteSystem';
@@ -116,13 +121,23 @@ import {
   TutorialStep,
 } from './types';
 import type { PaletteChipSpec, RoundStats } from './types';
+import {
+  LEGACY_SKIN_STORAGE_KEY,
+  readWithLegacyFallback,
+  safeStorage,
+} from './storage-migrate';
 
 const DEG_TO_RAD = Math.PI / 180;
 
 /** The stored skin index, or 0. Never throws (private mode, blocked storage). */
 function readStoredSkin(): number {
   try {
-    const raw = window.localStorage.getItem(BLASTER.skinStorageKey);
+    // Round 9: falls back to the pre-rebrand key and copies it forward.
+    const raw = readWithLegacyFallback(
+      safeStorage(),
+      BLASTER.skinStorageKey,
+      LEGACY_SKIN_STORAGE_KEY,
+    );
     const n = raw === null ? 0 : Number.parseInt(raw, 10);
     return Number.isFinite(n) && n >= 0 && n < BLASTER.skins.length ? n : 0;
   } catch {
@@ -554,7 +569,7 @@ function buildChipShape(
  */
 function buildChipLabel(text: string, accent = '#48dbfb'): Object3D | undefined {
   if (!isPrintableAscii(text)) {
-    console.warn(`[PaintBlast] palette label "${text}" is not plain ASCII`);
+    console.warn(`[Splotopia] palette label "${text}" is not plain ASCII`);
   }
   const canvas = document.createElement('canvas');
   canvas.width = PALETTE.chipLabelPxW;
@@ -926,14 +941,14 @@ function seedWristPalette(world: World) {
     visuals.chipSockets.push({ kind: spec.kind, style: spec.style, rim: socket.material });
 
     // The label is decoration, not an entity, so nothing can poke it.
-    const label = buildChipLabel(spec.label, spec.color);
+    const label = buildChipLabel(paletteLabelText(spec.label), spec.color);
     if (label) {
       label.position.set(x, faceY + PALETTE.chipLabelLift, labelZ);
       rootGroup.add(label);
     }
   }
 
-  // ---- Launcher mode pads (round 8): HAND / BLASTER / WEB -------------------
+  // ---- Launcher mode pads (round 8): HAND / BLASTER / GOO -------------------
   //
   // Three dark-glass buttons across the middle of the board, each with a white
   // icon, a neon rim in its identity colour and a holo socket. Same three
@@ -986,7 +1001,10 @@ function seedWristPalette(world: World) {
     rootGroup.add(socket.mesh);
     visuals.padSockets.push({ mode, rim: socket.material });
 
-    const label = buildChipLabel(BLASTER_MODE_LABELS[mode], PALETTE.modePadColors[i]);
+    const label = buildChipLabel(
+      paletteLabelText(BLASTER_MODE_LABELS[mode]),
+      PALETTE.modePadColors[i],
+    );
     if (label) {
       label.position.set(
         x,
@@ -1010,9 +1028,9 @@ function seedSplatterField(world: World) {
   const entity = world.createTransformEntity();
   entity.addComponent(SplatterField, {});
   entity.addComponent(XRAnchor);
-  // Whole instanced splat mesh under this entity gets depth-occluded by
-  // real-world geometry when running on a device with depth-sensing.
-  entity.addComponent(DepthOccludable);
+  // No DepthOccludable (round 9): IWSDK's occlusion shader ignores
+  // instanceMatrix, so every instanced splat would test depth at the field's
+  // origin (CLAUDE.md gotcha 20). Only the robots are occluded.
 }
 
 /**
@@ -1167,7 +1185,7 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
       type: AssetType.Audio,
       priority: 'background',
     },
-    thwip: { url: AUDIO.thwip, type: AssetType.Audio, priority: 'background' },
+    flick: { url: AUDIO.flick, type: AssetType.Audio, priority: 'background' },
     webHit: {
       url: AUDIO.webHit,
       type: AssetType.Audio,
@@ -1246,7 +1264,17 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
       anchors: true,
       planeDetection: true,
       meshDetection: true,
-      depthSensing: true,
+      // Round 9: OPTIONAL, with the usage/format preferences the WebXR spec
+      // wants alongside the feature (the bare `true` sent none, so browsers
+      // could drop it). A device without depth simply starts without it, and
+      // DepthSensingSystem stays a no-op. Off entirely with the config flag.
+      depthSensing: RENDER.depthOcclusion
+        ? {
+            required: false,
+            usage: RENDER.depthUsage,
+            format: RENDER.depthFormat,
+          }
+        : false,
       layers: true,
     },
   },
@@ -1307,6 +1335,14 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
   //
   // Every one of these is above IWSDK's InputSystem (priority -4), which is
   // what WebShooterSystem depends on for same-frame hand joint transforms.
+  // Round 9: depth occlusion for the robots. Registered BEFORE TargetSystem
+  // (whose init builds the pool and installs the first art): the system
+  // patches a DepthOccludable entity's materials on its query's qualify, so it
+  // must be listening first. World.create never registers it (gotcha 20).
+  if (RENDER.depthOcclusion) {
+    world.registerSystem(RobotDepthSensingSystem, { priority: 50 });
+  }
+
   world
     .registerSystem(WorldCollisionSystem, { priority: 5 })
     .registerSystem(FloorGuardSystem, { priority: 6 })

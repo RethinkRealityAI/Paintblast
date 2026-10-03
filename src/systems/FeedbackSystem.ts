@@ -132,8 +132,8 @@ export class FeedbackSystem extends createSystem({}) {
     // Non-positional, like the paint trigger it stands in for: the shooter is
     // strapped to your own wrist, so spatialising it buys nothing.
     this.thwipCue = this.createCue(
-      AUDIO.thwip,
-      AUDIO_VOLUME.thwip,
+      AUDIO.flick,
+      AUDIO_VOLUME.flick,
       false,
       PlaybackMode.Restart,
     );
@@ -201,7 +201,7 @@ export class FeedbackSystem extends createSystem({}) {
           const data = events.dataAt(i);
           const side = unpackFiredHand(data);
           if (unpackFiredStyle(data) === BallStyle.Web) {
-            this.playCue(this.thwipCue, AUDIO_VOLUME.thwip);
+            this.playCue(this.thwipCue, AUDIO_VOLUME.flick);
             this.pulse(side, HAPTICS.thwipIntensity, HAPTICS.thwipMs);
           } else {
             this.playCue(this.fireCue, AUDIO_VOLUME.fire);

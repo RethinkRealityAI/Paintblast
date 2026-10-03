@@ -115,19 +115,19 @@ describe('COLLIDABLE_MESH_LABELS', () => {
 describe('formatColliderLog', () => {
   it('reports counts and labels in the documented shape', () => {
     expect(formatColliderLog(6, 2, ['global mesh', 'table'])).toBe(
-      '[PaintBlast] room colliders: 6 planes, 2 meshes (labels: global mesh, table)',
+      '[Splotopia] room colliders: 6 planes, 2 meshes (labels: global mesh, table)',
     );
   });
 
   it('says "none" rather than trailing an empty list', () => {
     expect(formatColliderLog(0, 0, [])).toBe(
-      '[PaintBlast] room colliders: 0 planes, 0 meshes (labels: none)',
+      '[Splotopia] room colliders: 0 planes, 0 meshes (labels: none)',
     );
   });
 
   it('is greppable — the prefix is stable', () => {
     expect(formatColliderLog(1, 1, ['other'])).toMatch(
-      /^\[PaintBlast\] room colliders: /,
+      /^\[Splotopia\] room colliders: /,
     );
   });
 });

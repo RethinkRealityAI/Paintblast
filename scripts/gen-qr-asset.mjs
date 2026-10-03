@@ -3,7 +3,9 @@
 // Run after changing the production URL: node scripts/gen-qr-asset.mjs
 import QRCode from 'qrcode';
 
-const URL = process.env.PAINTBLAST_URL ?? 'https://paintblast-mr.netlify.app';
+// SPLOTOPIA_URL wins; PAINTBLAST_URL (pre-rebrand name) is still honoured.
+const URL =
+  process.env.SPLOTOPIA_URL ?? process.env.PAINTBLAST_URL ?? 'https://paintblast-mr.netlify.app';
 
 await QRCode.toFile('public/landing/qr-play.png', URL, {
   width: 480,

@@ -27,7 +27,7 @@ specs: `docs/superpowers/specs/`.
 **Scene understanding / Quest**
 10. **Guardian is NOT scene data.** Walls come from Space Setup; the OS never auto-prompts a WebXR app. Offer `initiateRoomCapture()` only user-initiated (≥2-3 s after session start, once per session).
 11. The global room mesh reaches `XRMesh` with an **empty semanticLabel** — detect via `isBounded3D === false`. Furniture labels are the WebXR registry vocabulary, not Meta's native enums (`CHAIR` arrives as `couch`).
-12. The census log `[PaintBlast] room colliders: …` prints what the headset actually delivered — first thing to ask for in any collision report.
+12. The census log `[Splotopia] room colliders: …` prints what the headset actually delivered — first thing to ask for in any collision report.
 
 **Input**
 13. PanelUI entities need `Interactable` or XR ray clicks never reach their buttons; panels never receive `Hovered` (shot-blocking is geometric — `isPointingAtPanel`).

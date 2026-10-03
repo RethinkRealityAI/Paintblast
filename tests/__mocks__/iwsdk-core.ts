@@ -177,6 +177,10 @@ export const XRAnchor = { id: 'XRAnchor', schema: {}, data: {}, bitmask: null, t
 // Task 9: depth occlusion tag component (AR-only — DepthSensingSystem
 // silently no-ops on devices without depth-sensing).
 export const DepthOccludable = { id: 'DepthOccludable', schema: {}, data: {}, bitmask: null, typeId: 0 };
+// Round 9: TargetSystem extends it (RobotDepthSensingSystem); never run here.
+export class DepthSensingSystem {
+  update(): void {}
+}
 
 // ---- Additions for Wave B (targets, game state, HUD, feedback) -------------
 //

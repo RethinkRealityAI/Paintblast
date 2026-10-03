@@ -4,6 +4,7 @@ import {
   createShooterFit,
   fitShooterScale,
   forwardSpeed,
+  gooStrandRgb,
   isThwipPose,
   stepGestureGate,
   StrandState,
@@ -349,5 +350,32 @@ describe('StrandState', () => {
     expect(StrandState.Flying).toBe(1);
     expect(StrandState.Fading).toBe(2);
     expect(StrandState.Tethered).toBe(3);
+  });
+});
+
+describe('gooStrandRgb (round 9 GOO colour)', () => {
+  it('uses the sRGB paint colour for a flying strand', () => {
+    const out: [number, number, number] = [0, 0, 0];
+    expect(gooStrandRgb([1, 0.2, 0.4, 1], true, false, 0.35, out)).toEqual([1, 0.2, 0.4]);
+  });
+
+  it('lifts a tether line toward white', () => {
+    const out: [number, number, number] = [0, 0, 0];
+    gooStrandRgb([0, 0.5, 1, 1], true, true, 0.5, out);
+    expect(out[0]).toBeCloseTo(0.5);
+    expect(out[1]).toBeCloseTo(0.75);
+    expect(out[2]).toBeCloseTo(1);
+  });
+
+  it('falls back to white when the knob is off or no colour is loaded', () => {
+    const out: [number, number, number] = [0, 0, 0];
+    expect(gooStrandRgb([1, 0, 0, 1], false, false, 0.35, out)).toEqual([1, 1, 1]);
+    expect(gooStrandRgb(undefined, true, true, 0.35, out)).toEqual([1, 1, 1]);
+  });
+
+  it('clamps garbage input into 0..1', () => {
+    const out: [number, number, number] = [0, 0, 0];
+    gooStrandRgb([2, -1, Number.NaN, 1], true, false, 0, out);
+    expect(out).toEqual([1, 0, 1]);
   });
 });

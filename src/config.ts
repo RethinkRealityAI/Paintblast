@@ -1,4 +1,4 @@
-// Every gameplay tunable in PaintBlast-MR lives in this file.
+// Every gameplay tunable in Splotopia (formerly PaintBlast MR) lives in this file.
 //
 // Pure data on purpose: no IWSDK imports, so unit tests can assert on these
 // values without a live World, and so a designer can retune the game without
@@ -47,6 +47,20 @@ export const FIRE = {
    * not shooting — its trigger pull is swallowed (see BallSpawnSystem).
    */
   uiBlockMaxDistance: 3,
+  /**
+   * Round 9: in Countdown / Playing the docked HUD sits low in front of you, so
+   * shots at low robots (Duster Duke stands at 0.4 m) cross its rectangle. In
+   * those phases only a ray over one of the panel's visible BUTTONS swallows
+   * the shot — elements whose `id` starts with this prefix (uikitml
+   * convention: every <button> is `btn-...`). Menus (Idle, GameOver, Chill)
+   * still block over the whole visible panel. A hidden panel never blocks.
+   */
+  uiInteractiveIdPrefix: 'btn-',
+  /**
+   * Metres of slop around a button when testing "is this ray clicking it".
+   * A little generous so a click on a button edge never also fires.
+   */
+  uiButtonMarginMeters: 0.01,
   /**
    * Aim assist on paint, degrees (round 7). A shot within this cone of a live
    * robot is bent onto the ballistic arc that hits it — judged against the
@@ -775,8 +789,8 @@ export const ROOM = {
    * own radius and invisible in passthrough, which is what sets the ceiling on
    * this number: past ~0.12 the paint visibly floats.
    *
-   * Only **vertical** planes are thickened. Floors and ceilings are left on
-   * `Auto`: a floor already has FloorGuardSystem's half-metre slab a
+   * Only **vertical** planes and (round 9) ceilings are thickened. Floors are
+   * left on `Auto`: a floor already has FloorGuardSystem's half-metre slab a
    * millimetre underneath it catching everything that tunnels, and thickening
    * it would lift every floor splat 3 cm off the carpet for no gain.
    */
@@ -799,6 +813,14 @@ export const ROOM = {
   spawnAttempts: 4,
   /** Longest wall probe, metres. Past this a direction counts as wide open. */
   spawnRayMaxDist: 15,
+  /**
+   * Round 9: a horizontal plane at least this high (metres above the floor),
+   * or one labelled `ceiling`, is treated as a ceiling and given the same
+   * thickened box ({@link ROOM.wallThicknessMeters}) walls get, so high lobs
+   * stop tunnelling through the 1 mm plane. Floors and table tops stay on
+   * `Auto` (FloorGuard covers the floor). Above any standing head on purpose.
+   */
+  ceilingMinHeightMeters: 1.9,
 
   /**
    * Seconds of immersive session before an empty scene counts as "unscanned".
@@ -906,8 +928,27 @@ export const CHILL = {
  * that SAVE PAINTING can hand back as a PNG.
  */
 export const EASEL = {
-  /** Metres in front of the head the easel is planted on entering Chill. */
-  spawnDistance: 1.4,
+  /**
+   * Metres in front of the head the easel is planted on entering Chill.
+   * Round 9: 0.7 (was 1.4, out of reach seated). 0.7 puts the board at a
+   * comfortable seated arm's reach for grabbing, and the docked HUD
+   * (HUD.playOffset, 0.95 m out and 0.52 m down) stays behind and below it.
+   */
+  spawnDistance: 0.7,
+  /**
+   * Round 9: the board's centre is planted this far below the eyes (0 = at
+   * eye height), for a seated (~1.2 m) and a standing (~1.6 m) player alike.
+   * The limit is the docked HUD: it rides 0.95 m ahead of the head and its
+   * top edge is ~0.35 m below the eyes, so if the player leans in to paint it
+   * swings into the easel's depth. The board's bottom edge must stay above
+   * that top edge in BOTH orientations (portrait is 0.62 m tall: 0 leaves
+   * ~4 cm, landscape ~11 cm). Raise past ~0.03 only if the HUD moves down.
+   */
+  boardBelowEyes: 0,
+  /** Lowest the board centre is ever planted, metres (floor-seated players). */
+  boardCentreMinHeight: 0.85,
+  /** Highest the board centre is ever planted, metres (tall standing players). */
+  boardCentreMaxHeight: 1.8,
   /** Canvas board width, metres, in landscape. */
   boardWidth: 0.62,
   /** Canvas board height, metres. 4:3 against the width, matching the pixels. */
@@ -921,7 +962,10 @@ export const EASEL = {
   portraitBoardHeight: 0.62,
   /** Canvas board thickness, metres. Also the physics box depth. */
   boardDepth: 0.02,
-  /** Height of the board's centre above the floor, metres. */
+  /**
+   * Height of the board's centre above the floor, metres — the fallback when
+   * no head pose is available. Normally {@link EASEL.boardBelowEyes} decides.
+   */
   boardCentreHeight: 1.2,
   /** Degrees the easel leans back, like a real A-frame. */
   tiltDeg: 12,
@@ -984,8 +1028,8 @@ export const EASEL = {
  *
  * Three ways to fire, all landing on the same white ball: the trigger (through
  * BallSpawnSystem's ordinary firing path, so it obeys the same cooldown, the
- * same HUD-swallowing rule and the same spray-on-hold in Chill), a THWIP hand
- * gesture, and a forward thrust of the hand. Every web ball trails a strand
+ * same HUD-swallowing rule and the same spray-on-hold in Chill), a FLICK hand
+ * gesture (off by default since round 9), and a forward thrust of the hand. Every web ball trails a strand
  * from the wrist that threw it and sticks a white web splat where it lands.
  *
  * ### The grip frame, since every offset below is in it
@@ -1136,13 +1180,19 @@ export const WEB = {
    */
   aimAssistDeg: 9,
 
-  // ---- THWIP gesture (hand tracking) --------------------------------------
+  // ---- FLICK gesture (hand tracking; was "THWIP" before the round 9 rebrand)
   /**
-   * Master switch for the joint-driven gesture. The trigger and the thrust are
-   * unconditional; this only gates the finger-curl classifier, so web ammo
-   * still has two working triggers if hand joints are ever unavailable.
+   * Master switch for the joint-driven finger-curl gesture (middle + ring
+   * curled, index + pinky out). The trigger/pinch and the thrust are
+   * unconditional; this only gates the finger-curl classifier.
+   *
+   * Round 9: **off by default.** The pose reads as the rock / "devil horns"
+   * sign, it misfires on relaxed hands, and the curl-to-shoot hand sign leaned
+   * on a famous comic-book web-slinger the rebrand steers well clear of.
+   * Pinch/trigger and the thrust still fire everything; flip this to true to
+   * bring the gesture back.
    */
-  gestureEnabled: true,
+  gestureEnabled: false,
   /**
    * Fingertip-to-wrist distance, metres, below which a finger counts as curled
    * into the palm. Middle and ring must both be under this.
@@ -1156,7 +1206,7 @@ export const WEB = {
   /**
    * Fingertip-to-wrist distance, metres, above which a finger counts as
    * extended. Index and pinky must both clear this — that pair staying out is
-   * what separates a thwip from a fist.
+   * what separates a flick from a fist.
    */
   extendThreshold: 0.13,
   /** Minimum milliseconds between gesture shots from one hand. */
@@ -1184,6 +1234,18 @@ export const WEB = {
   strandRadius: 0.004,
   /** Seconds a strand hangs at the impact point, fading, before it frees its slot. */
   strandLingerSec: 0.6,
+  /**
+   * GOO (round 9): strands take the player's loaded paint colour
+   * (globals.activeColor) instead of plain white, so the goo reads as paint
+   * pulled into sticky strings. false restores the white thread.
+   */
+  gooUsesPaintColor: true,
+  /**
+   * How far a TETHER line is lifted toward white over the paint colour, 0..1.
+   * A held line sits a touch brighter than a flying strand so "this one is
+   * hooked" still reads at a glance. 0 = same as the strand, 1 = white.
+   */
+  gooTetherLift: 0.35,
 
   // ---- The paint -----------------------------------------------------------
   /** Web splat decals held before the pool recycles. Its own pool, not SPLAT's. */
@@ -1328,8 +1390,8 @@ export const AUDIO = {
   uiClick: '/audio/ui-click.mp3',
   /** Ambient loop that plays for the whole of Chill mode. */
   chillMusic: '/audio/chill-music.mp3',
-  /** The web shooter going off. Non-positional — it happens at your wrist. */
-  thwip: '/audio/thwip.mp3',
+  /** The GOO launcher going off. Non-positional — it happens at your wrist. */
+  flick: '/audio/flick.mp3',
   /** Webbing hitting a surface. Positional, like the paint splat. */
   webHit: '/audio/web-hit.mp3',
 } as const;
@@ -1352,8 +1414,8 @@ export const AUDIO_VOLUME = {
   uiClick: 0.5,
   /** Ambient bed. Deliberately low — it plays under everything, forever. */
   chillMusic: 0.25,
-  /** The thwip. Loud: it is the whole point of the mode. */
-  thwip: 0.55,
+  /** The GOO launch. Loud: it is the whole point of the mode. */
+  flick: 0.55,
   /** Webbing landing. Level with the paint splat it replaces. */
   webHit: 0.5,
   /**
@@ -1392,7 +1454,7 @@ export const HAPTICS = {
   popMs: 100,
   /**
    * Web-shooting hand only. Punchier and shorter than the paint trigger: a
-   * thwip should feel like a snap, not the soft thud of a paintball leaving.
+   * GOO launch should feel like a snap, not the soft thud of a paintball leaving.
    */
   thwipIntensity: 0.5,
   thwipMs: 50,
@@ -1541,6 +1603,20 @@ export const RENDER = {
    * a glow creeping over the whole body.
    */
   robotRimPower: 2.5,
+  /**
+   * Round 9: real-world depth occlusion for the Splotbots ONLY — a robot
+   * behind your real couch is hidden by it (Peekaboo actually hides). Uses
+   * IWSDK's DepthSensingSystem + DepthOccludable; the `depth-sensing` session
+   * feature is requested as OPTIONAL, so a device without depth just shows
+   * robots unoccluded (no failure). Never applied to the instanced splats or
+   * balls (gotcha 20: the occlusion shader ignores instanceMatrix). false
+   * skips the system entirely.
+   */
+  depthOcclusion: true,
+  /** Depth data path requested from the browser (Quest supports GPU). */
+  depthUsage: 'gpu-optimized' as 'gpu-optimized' | 'cpu-optimized',
+  /** Depth data format requested from the browser. */
+  depthFormat: 'float32' as 'float32' | 'luminance-alpha',
 } as const;
 
 /** Particle silhouette for one VFX burst. @see VfxBurstConfig.shape */
@@ -1744,8 +1820,11 @@ export interface BlasterSkin {
 }
 
 export const BLASTER = {
-  /** localStorage key holding the selected skin index. */
-  skinStorageKey: 'paintblast.blasterSkin',
+  /**
+   * localStorage key holding the selected skin index. Round 9 rebrand: reads
+   * fall back to the pre-rebrand `paintblast.blasterSkin` and copy it forward.
+   */
+  skinStorageKey: 'splotopia.blasterSkin',
   skins: [
     { name: 'NEON CORAL', accent: '#ff4f81', trim: '#ffb347', shell: '#ecebe6' },
     { name: 'CYBER LIME', accent: '#b6ff3b', trim: '#3bf0ff', shell: '#e6ece6' },
@@ -1779,7 +1858,7 @@ export const BLASTER = {
   /**
    * The paint barrel's muzzle, metres, in the aim frame at the wrist joint
    * (+Y = over the back of the wrist, -Z = toward the fingers). Trigger,
-   * pinch, thwip and thrust shots in BLASTER mode all leave from here.
+   * pinch, flick and thrust shots in BLASTER mode all leave from here.
    */
   muzzleLocal: [0, 0.058, -0.014] as [number, number, number],
   /**
@@ -1828,7 +1907,7 @@ export const BLASTER = {
 
 /**
  * The enter-AR intro (round 8): the first time a session becomes visible, the
- * PAINTBLAST logo bursts out of a paint splat ~1.5 m in front of you, a ring of
+ * SPLOTOPIA logo bursts out of a paint splat ~1.5 m in front of you, a ring of
  * neon splats flies out, the tagline lands, then the whole thing lifts away
  * and the title HUD takes over. Any pinch or trigger skips it. Times are
  * seconds from the moment it starts.
@@ -2079,7 +2158,8 @@ export interface SplotbotArchetypeConfig {
 }
 
 /**
- * The Splotbots (round 8): the cast of cleaning robots that replaced the
+ * The Neatniks (round 8 "Splotbots", renamed round 9; identifiers keep the old
+ * name): the cast of cleaning robots that replaced the
  * generic robot. Roles and behaviours are the art bible's
  * (docs/COMPETITION_PLAN.md section 6):
  *
@@ -2167,6 +2247,18 @@ export const SPLOTBOTS = {
   lanes: 5,
   /** Seconds between two spawns when several slots are free at once. */
   spawnStaggerSec: 0.45,
+  /**
+   * Round 9: rest beat at every wave boundary (after the first wave), seconds.
+   * No new robots spawn for this long once a wave starts, so arms get a
+   * breather (comfort / gorilla arm). Robots already up stay up. 0 disables.
+   */
+  waveBreatherSec: 3,
+  /**
+   * Round 9: seconds a robot let off a tether (tap or timeout) takes to drift
+   * back out to at least ROOM.spawnMinDist from your head, instead of
+   * hovering in your face. Duster Duke uses boss.returnSec instead.
+   */
+  releaseReturnSec: 1.0,
 
   /**
    * Wave composition by round time. Each wave starts `startSec` seconds into
@@ -2258,6 +2350,11 @@ export const SPLOTBOTS = {
     peekAbove: 0.18,
     /** Metres behind the furniture's far face the hiding spot sits. */
     behindMargin: 0.22,
+    /**
+     * Round 9: two Peekaboos never hide closer than this, metres. A second
+     * one slides sideways along the furniture, or picks another piece.
+     */
+    minSpacing: 0.3,
     /** Furniture whose top is lower than this (metres) is ignored (rugs). */
     furnitureMinTop: 0.35,
     /** Furniture whose top is higher than this is ignored (wardrobes). */

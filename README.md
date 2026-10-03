@@ -1,26 +1,30 @@
-# PaintBlast MR
+# Splotopia
 
-Mixed-reality paintball arcade for **Meta Quest 3 / 3S**, built on Meta's
+**YOUR ROOM IS THE ARENA.** Mixed-reality paint arcade for **Meta Quest 3 / 3S**
+(formerly *PaintBlast MR*), built on Meta's
 [Immersive Web SDK](https://developers.meta.com/horizon/documentation/web/immersive-web-sdk/)
-(`@iwsdk/core`). Your real room is the arena: rogue robots materialize around
-you, you blast them with paintballs, and the paint splats stick to your actual
-walls and furniture.
+(`@iwsdk/core`). The Neatniks, a gang of rogue cleaning robots (Mopsy,
+Squeegee, Peekaboo and their boss Duster Duke), materialize around you; you
+splat them with paint, and the paint sticks to your actual walls and furniture.
+Pip, a palette drone, is your sidekick.
 
 **Play it now:** https://paintblast-mr.netlify.app — or run `npm run qr` and
 scan the code with your headset.
 
 ## Gameplay
 
-- **Fire three ways** — trigger/pinch, the **thwip gesture** (curl middle+ring
-  fingers, Spider-style), or a forward hand thrust. All fire whatever's loaded.
+- **Fire** — trigger/pinch, or a forward hand thrust. Both fire whatever's
+  loaded. (An optional finger-curl **FLICK** gesture ships off; see
+  `WEB.gestureEnabled` in `src/config.ts`.)
 - **Painter's palette on your left wrist** — tap or squeeze a paint **dab** for
   color, a **chip** for ammo: NORMAL · BOUNCY (3 ricochets) · STICKY (welds) ·
-  SPLASH (9-splat flower) · **WEB**.
-- **Web ammo** mounts wrist shooters: splat webs, or flip the holo pad / press
-  **B** for **tether webs** — latch a robot, yank to reel it in, pop it up close.
-- **90-second rounds**: robots = 100 × combo, painting the room = 5 a splat,
+  SPLASH (9-splat flower) · **GOO**.
+- **GOO** mounts wrist launchers that fling sticky strands in your paint colour:
+  SPLAT goo on the walls, or flip the holo pad / press **B** for **TETHER** —
+  hook a Neatnik, yank to reel it in, pop it up close.
+- **90-second rounds**: Neatniks = 100 × combo, painting the room = 5 a splat,
   best score remembered. **CHILL MODE**: no clock, easel painting you can save
-  as a PNG, lofi loop, hold-to-spray. **WEB MODE**: chill with webs preloaded.
+  as a PNG, lofi loop, hold-to-spray. **GOO MODE**: chill with goo preloaded.
 - First visit in a new room: tap **SCAN ROOM** if prompted — walls need Quest's
   Space Setup scan (Guardian alone isn't a room scan).
 
