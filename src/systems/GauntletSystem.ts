@@ -987,6 +987,7 @@ export class GauntletSystem extends createSystem({
   private readonly plateEntities: Array<Entity | undefined> = [undefined, undefined];
   private readonly bracers: Object3D[] = [];
   private readonly plateFits: Object3D[] = [];
+  private readonly turretBases: Object3D[] = [];
   private readonly paintModules: Object3D[] = [];
   private readonly webModules: Object3D[] = [];
   private readonly plateHinges: Object3D[] = [];
@@ -1791,6 +1792,12 @@ export class GauntletSystem extends createSystem({
         const w = 0.6 + 0.4 * eb;
         br.scale.set(fs[0] * w, fs[1] * w, fs[2] * (0.15 + 0.85 * ebz));
       }
+      const tb = this.turretBases[hand];
+      if (tb) {
+        tb.visible = bracer > 0.001;
+        const s = 0.3 + 0.7 * eb;
+        tb.scale.set(s, s, s);
+      }
       const pf = this.plateFits[hand];
       if (pf) {
         const isHand = this.wrists[hand].isHand;
@@ -2037,7 +2044,9 @@ export class GauntletSystem extends createSystem({
       .createTransformEntity(turret, { parent: this.world.sceneEntity, persistent: true })
       .addComponent(Gauntlet, { side: hand, part: GauntletPart.Turret });
 
-    turret.add(this.buildTurretBase());
+    const base = this.buildTurretBase();
+    turret.add(base);
+    this.turretBases[hand] = base;
 
     const paint = this.buildPaintModule(hand);
     turret.add(paint);
