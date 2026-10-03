@@ -412,10 +412,10 @@ describe('Pip pointing + speech bubble', () => {
   });
 
   it('sizes the bubble for its distance, within bounds', () => {
-    expect(bubbleWidth(0.4)).toBeCloseTo(0.28, 6);
-    expect(bubbleWidth(2.5)).toBeCloseTo(0.5, 6);
-    expect(bubbleWidth(10)).toBeCloseTo(0.75, 6);
-    expect(bubbleWidth(Number.NaN)).toBeCloseTo(0.28, 6);
+    expect(bubbleWidth(0.4)).toBeCloseTo(0.34, 6);
+    expect(bubbleWidth(2.5)).toBeCloseTo(0.65, 6);
+    expect(bubbleWidth(10)).toBeCloseTo(0.9, 6);
+    expect(bubbleWidth(Number.NaN)).toBeCloseTo(0.34, 6);
   });
 
   it('PipFocus starts inactive', () => {

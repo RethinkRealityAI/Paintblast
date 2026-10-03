@@ -183,7 +183,7 @@
 
   /* --- Title -------------------------------------------------------------- */
   .logo {
-    width: 50;
+    width: 34;
     margin-top: -0.4;
     margin-bottom: -0.4;
   }
@@ -566,6 +566,9 @@
   }
   .bots {
     display: flex;
+    flex-shrink: 0;
+    width: 18;
+    justify-content: center;
     flex-direction: row;
     align-items: center;
     gap: 0.6;
@@ -582,6 +585,7 @@
     color: #f4f1ea;
   }
   .status {
+    flex-shrink: 1;
     font-size: 2;
     color: #c9cad6;
     text-align: center;
@@ -672,7 +676,8 @@
     display: flex;
     flex-direction: row;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
+    gap: 2.4;
     width: 100%;
   }
   .tut-count {
@@ -682,7 +687,7 @@
     color: #9a9cb0;
   }
   .tut-line {
-    font-size: 3.4;
+    font-size: 3;
     font-weight: bold;
     color: #f4f1ea;
     text-align: center;

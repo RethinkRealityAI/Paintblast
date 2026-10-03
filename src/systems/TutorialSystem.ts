@@ -564,9 +564,9 @@ export class TutorialSystem extends createSystem({
         p[0] = this.scratch.x;
         p[1] = this.scratch.y;
         p[2] = this.scratch.z;
-        o[0] = 0.12;
+        o[0] = TUTORIAL.pipWristBeside;
         o[1] = TUTORIAL.pipWristAbove;
-        o[2] = 0.04;
+        o[2] = -TUTORIAL.pipWristBeyond;
         return;
       }
       case TutorialStep.Pop:

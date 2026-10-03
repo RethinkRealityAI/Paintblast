@@ -2033,7 +2033,7 @@ export const TUTORIAL = {
    */
   lines: {
     fire: 'Pinch to fire at the ring!',
-    palette: 'Tap a colour on your left wrist',
+    palette: 'Tap a colour on your wrist',
     pop: 'Pop a Mopsy!',
     goo: 'Tap GOO on your wrist palette',
     tether: 'Now tap TETHER',
@@ -2080,8 +2080,14 @@ export const TUTORIAL = {
   pipAbove: 0.12,
   /** Metres toward the viewer. */
   pipToward: 0.15,
-  /** Over the wrist palette Pip hovers this far above the left hand, metres. */
-  pipWristAbove: 0.16,
+  /**
+   * Over the wrist palette Pip hovers this far above the left hand, metres,
+   * this far out to its side, and this far BEYOND it (he is close to the
+   * eyes there; any nearer and he hides the palette he is pointing at).
+   */
+  pipWristAbove: 0.24,
+  pipWristBeside: 0.22,
+  pipWristBeyond: 0.14,
 
   /** Step-complete chime (existing file) and its volume. 0 mutes it. */
   chimeSrc: '/audio/chime.mp3',

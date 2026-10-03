@@ -163,8 +163,8 @@ export function focusHoverPoint(
 
 /** Speech-bubble width, metres, for a bubble `dist` metres from the eyes. */
 export function bubbleWidth(dist: number): number {
-  const w = 0.2 * (Number.isFinite(dist) ? dist : 1);
-  return w < 0.28 ? 0.28 : w > 0.75 ? 0.75 : w;
+  const w = 0.26 * (Number.isFinite(dist) ? dist : 1);
+  return w < 0.34 ? 0.34 : w > 0.9 ? 0.9 : w;
 }
 
 /**
