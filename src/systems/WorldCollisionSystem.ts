@@ -109,7 +109,7 @@ export function formatColliderLog(
   labels: readonly string[],
 ): string {
   const seen = labels.length > 0 ? labels.join(', ') : 'none';
-  return `[PaintBlast] room colliders: ${planeCount} planes, ${meshCount} meshes (labels: ${seen})`;
+  return `[Splotopia] room colliders: ${planeCount} planes, ${meshCount} meshes (labels: ${seen})`;
 }
 
 const STATIC_BODY_DEFAULTS = {

@@ -12,6 +12,7 @@ import {
   OneHandGrabbable,
   PokeInteractable,
   Quaternion,
+  SRGBColorSpace,
   TorusGeometry,
   Types,
   Vector3,
@@ -118,7 +119,37 @@ export const WebStrand = createComponent('WebStrand', {
   state: { type: Types.Int8, default: StrandState.Free },
 });
 
-/** The four fingertip-to-wrist distances a thwip is judged on, in metres. */
+/**
+ * GOO strand colour (round 9), as an sRGB triple written into `out`.
+ *
+ * With `usePaint` the strand wears the loaded paint colour (an sRGB palette
+ * tuple, gotcha 23); a tether line is lifted `tetherLift` (0..1) of the way
+ * toward white so a held line still reads brighter than a flying one. Without
+ * it, or with no colour to read, the strand is the classic white thread.
+ * Pure and allocation-free: the caller owns `out`.
+ */
+export function gooStrandRgb(
+  paint: ArrayLike<number> | undefined,
+  usePaint: boolean,
+  tether: boolean,
+  tetherLift: number,
+  out: [number, number, number],
+): [number, number, number] {
+  if (!usePaint || !paint || paint.length < 3) {
+    out[0] = 1;
+    out[1] = 1;
+    out[2] = 1;
+    return out;
+  }
+  const lift = tether ? Math.min(1, Math.max(0, tetherLift)) : 0;
+  for (let i = 0; i < 3; i++) {
+    const c = Math.min(1, Math.max(0, Number.isFinite(paint[i]) ? paint[i] : 1));
+    out[i] = c + (1 - c) * lift;
+  }
+  return out;
+}
+
+/** The four fingertip-to-wrist distances a flick (ex-"thwip") is judged on, in metres. */
 export interface ThwipPose {
   readonly indexDist: number;
   readonly middleDist: number;
@@ -336,6 +367,10 @@ export class WebShooterSystem extends createSystem({
   private gamePhase!: Signal<GamePhase>;
   private activeStyle!: Signal<BallStyle>;
   private webSubMode!: Signal<WebSubMode>;
+  /** Loaded paint colour (sRGB RGBA tuple); GOO strands wear it (round 9). */
+  private activeColor?: Signal<readonly [number, number, number, number]>;
+  /** Scratch sRGB triple for {@link gooStrandRgb}. */
+  private readonly gooRgb: [number, number, number] = [1, 1, 1];
   private events!: GameEventBuffer;
   private spawner?: BallSpawnSystem;
   private targets?: TargetSystem;
@@ -472,6 +507,9 @@ export class WebShooterSystem extends createSystem({
     this.gamePhase = this.globals.gamePhase as Signal<GamePhase>;
     this.activeStyle = this.globals.activeStyle as Signal<BallStyle>;
     this.webSubMode = this.globals.webSubMode as Signal<WebSubMode>;
+    this.activeColor = this.globals.activeColor as
+      | Signal<readonly [number, number, number, number]>
+      | undefined;
     this.events = this.globals.gameEvents as GameEventBuffer;
 
     const pool = WEB.strandPool;
@@ -524,6 +562,11 @@ export class WebShooterSystem extends createSystem({
     this.cleanupFuncs.push(
       this.gamePhase.subscribe(() => this.applyArmedState()),
       this.activeStyle.subscribe(() => this.applyArmedState()),
+      // GOO strands re-tint the moment the player dips a new colour. Event
+      // driven, so update() never touches the colour.
+      ...(this.activeColor
+        ? [this.activeColor.subscribe(() => this.applyGooColors())]
+        : []),
       // Any ball, however it was fired, lets go of whatever that hand was
       // reeling — "the same hand fires again" is one of the five ways a tether
       // ends, and keying it off the ball appearing catches the trigger, the
@@ -1242,6 +1285,7 @@ export class WebShooterSystem extends createSystem({
     this.strandBalls[slot] = undefined;
     this.strandBallObjects[slot] = undefined;
     this.strandMaterials[slot].opacity = 1;
+    this.tintStrand(slot, false);
 
     const entity = this.strandEntities[slot];
     if (entity?.object3D) entity.object3D.visible = true;
@@ -1281,6 +1325,7 @@ export class WebShooterSystem extends createSystem({
     this.strandBalls[slot] = undefined;
     this.strandBallObjects[slot] = undefined;
     this.strandMaterials[slot].opacity = 1;
+    this.tintStrand(slot, true);
     this.tetherStrand[hand] = slot;
 
     const entity = this.strandEntities[slot];
@@ -1567,7 +1612,7 @@ export class WebShooterSystem extends createSystem({
         mode === WebSubMode.Tether
           ? buildHookPad(size, material)
           : buildSplatPad(size, material, accent, selected);
-      pad.name = mode === WebSubMode.Tether ? 'WebPadTether' : 'WebPadSplat';
+      pad.name = mode === WebSubMode.Tether ? 'GooPadTether' : 'GooPadSplat';
       // Both pads face the holder's -Y, i.e. out through the palm side, which
       // is where the player's eyes are once the forearm is supinated.
       pad.rotation.x = Math.PI / 2;
@@ -1586,6 +1631,31 @@ export class WebShooterSystem extends createSystem({
       entity.addComponent(PokeInteractable);
       entity.addComponent(OneHandGrabbable, { rotate: false, translate: false });
       entity.addComponent(WebModePad, { mode });
+    }
+  }
+
+  /**
+   * Colour one strand's material: the loaded paint colour for GOO (or white
+   * with {@link WEB.gooUsesPaintColor} off), lifted toward white for a tether.
+   * Writes into the existing Color — no allocation.
+   */
+  private tintStrand(slot: number, tether: boolean): void {
+    const material = this.strandMaterials[slot];
+    if (!material) return;
+    const rgb = gooStrandRgb(
+      this.activeColor?.peek(),
+      WEB.gooUsesPaintColor,
+      tether,
+      WEB.gooTetherLift,
+      this.gooRgb,
+    );
+    material.color.setRGB(rgb[0], rgb[1], rgb[2], SRGBColorSpace);
+  }
+
+  /** Re-tint every strand after a colour change; tether lines keep their lift. */
+  private applyGooColors(): void {
+    for (let slot = 0; slot < this.strandMaterials.length; slot++) {
+      this.tintStrand(slot, this.strandState[slot] === StrandState.Tethered);
     }
   }
 
@@ -1618,7 +1688,7 @@ export class WebShooterSystem extends createSystem({
         depthWrite: false,
       });
       const mesh = new Mesh(geometry, material);
-      mesh.name = `WebStrand_${slot}`;
+      mesh.name = `GooStrand_${slot}`;
       mesh.visible = false;
       mesh.frustumCulled = false;
 
@@ -1635,6 +1705,7 @@ export class WebShooterSystem extends createSystem({
       this.strandBallObjects.push(undefined);
       this.strandState[slot] = StrandState.Free;
     }
+    this.applyGooColors();
   }
 }
 

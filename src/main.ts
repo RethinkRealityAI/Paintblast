@@ -81,6 +81,7 @@ import {
   WristPaletteSystem,
   PALETTE_BOARD_ASSET_KEY,
   PALETTE_VISUALS_KEY,
+  paletteLabelText,
   thinnestAxis,
 } from './systems/WristPaletteSystem';
 import type { PaletteVisuals } from './systems/WristPaletteSystem';
@@ -112,13 +113,23 @@ import {
   superellipsePoint,
 } from './types';
 import type { PaletteChipSpec } from './types';
+import {
+  LEGACY_SKIN_STORAGE_KEY,
+  readWithLegacyFallback,
+  safeStorage,
+} from './storage-migrate';
 
 const DEG_TO_RAD = Math.PI / 180;
 
 /** The stored skin index, or 0. Never throws (private mode, blocked storage). */
 function readStoredSkin(): number {
   try {
-    const raw = window.localStorage.getItem(BLASTER.skinStorageKey);
+    // Round 9: falls back to the pre-rebrand key and copies it forward.
+    const raw = readWithLegacyFallback(
+      safeStorage(),
+      BLASTER.skinStorageKey,
+      LEGACY_SKIN_STORAGE_KEY,
+    );
     const n = raw === null ? 0 : Number.parseInt(raw, 10);
     return Number.isFinite(n) && n >= 0 && n < BLASTER.skins.length ? n : 0;
   } catch {
@@ -538,7 +549,7 @@ function buildChipShape(
  */
 function buildChipLabel(text: string, accent = '#48dbfb'): Object3D | undefined {
   if (!isPrintableAscii(text)) {
-    console.warn(`[PaintBlast] palette label "${text}" is not plain ASCII`);
+    console.warn(`[Splotopia] palette label "${text}" is not plain ASCII`);
   }
   const canvas = document.createElement('canvas');
   canvas.width = PALETTE.chipLabelPxW;
@@ -910,14 +921,14 @@ function seedWristPalette(world: World) {
     visuals.chipSockets.push({ kind: spec.kind, style: spec.style, rim: socket.material });
 
     // The label is decoration, not an entity, so nothing can poke it.
-    const label = buildChipLabel(spec.label, spec.color);
+    const label = buildChipLabel(paletteLabelText(spec.label), spec.color);
     if (label) {
       label.position.set(x, faceY + PALETTE.chipLabelLift, labelZ);
       rootGroup.add(label);
     }
   }
 
-  // ---- Launcher mode pads (round 8): HAND / BLASTER / WEB -------------------
+  // ---- Launcher mode pads (round 8): HAND / BLASTER / GOO -------------------
   //
   // Three dark-glass buttons across the middle of the board, each with a white
   // icon, a neon rim in its identity colour and a holo socket. Same three
@@ -970,7 +981,10 @@ function seedWristPalette(world: World) {
     rootGroup.add(socket.mesh);
     visuals.padSockets.push({ mode, rim: socket.material });
 
-    const label = buildChipLabel(BLASTER_MODE_LABELS[mode], PALETTE.modePadColors[i]);
+    const label = buildChipLabel(
+      paletteLabelText(BLASTER_MODE_LABELS[mode]),
+      PALETTE.modePadColors[i],
+    );
     if (label) {
       label.position.set(
         x,
@@ -1151,7 +1165,7 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
       type: AssetType.Audio,
       priority: 'background',
     },
-    thwip: { url: AUDIO.thwip, type: AssetType.Audio, priority: 'background' },
+    flick: { url: AUDIO.flick, type: AssetType.Audio, priority: 'background' },
     webHit: {
       url: AUDIO.webHit,
       type: AssetType.Audio,

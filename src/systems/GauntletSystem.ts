@@ -358,7 +358,7 @@ export class GauntletSystem extends createSystem({
       ...(this.webSubMode ? [this.webSubMode.subscribe(() => this.applyWebGlow())] : []),
       // Recoil: any paint ball an arm fires while the barrel is out. Keyed off
       // the ball appearing (like WebShooterSystem's strands), so the trigger,
-      // auto-fire, the thwip and the thrust all kick the same way.
+      // auto-fire, the flick and the thrust all kick the same way.
       this.queries.balls.subscribe('qualify', (ball) => {
         if (this.blasterMode.peek() !== BlasterMode.Paint) return;
         if (ball.getValue(Ball, 'style') !== BallStyle.Paint) return;
@@ -801,7 +801,7 @@ export class GauntletSystem extends createSystem({
     // The spinneret is its own entity so the web selector pads (entities) can
     // be parented into it and ride its deploy animation.
     const web = new Group();
-    web.name = hand === 0 ? 'SpinneretLeft' : 'SpinneretRight';
+    web.name = hand === 0 ? 'GooLauncherLeft' : 'GooLauncherRight';
     web.position.set(
       handMirror(hand) * WEB.shooterOffsetX,
       WEB.shooterOffsetY,
@@ -947,7 +947,7 @@ export class GauntletSystem extends createSystem({
    */
   private buildPaintModule(hand: number): Object3D {
     const group = new Group();
-    group.name = 'PaintBlaster';
+    group.name = 'SplotBlaster';
     group.position.set(PAINT_PIVOT[0], PAINT_PIVOT[1], PAINT_PIVOT[2]);
     const px = -PAINT_PIVOT[0];
     const py = -PAINT_PIVOT[1];
@@ -1067,7 +1067,7 @@ export class GauntletSystem extends createSystem({
    */
   private buildSpinneret(): Object3D {
     const group = new Group();
-    group.name = 'SpinneretModel';
+    group.name = 'GooLauncherModel';
 
     const housing = new CapsuleGeometry(0.0125, 0.052, 5, 16);
     housing.rotateX(Math.PI / 2);

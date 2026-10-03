@@ -51,6 +51,24 @@ export interface PaletteVisuals {
 /** userData key main.ts stores {@link PaletteVisuals} under. */
 export const PALETTE_VISUALS_KEY = 'paletteVisuals';
 
+/**
+ * Round 9 rebrand: the printed name a palette chip or launcher pad wears.
+ *
+ * The ammo/mode tables in types.ts still carry the internal names (the web
+ * launcher is `BlasterMode.Web`, the chip `'WEB'`); the player sees GOO, and the
+ * finger-curl shot is FLICK. Mapping at print time keeps the board right
+ * whatever those tables say, and is a no-op once they say GOO themselves.
+ * ASCII caps only (gotcha 24).
+ */
+const PALETTE_LABEL_RENAMES: Readonly<Record<string, string>> = {
+  WEB: 'GOO',
+  THWIP: 'FLICK',
+};
+
+export function paletteLabelText(label: string): string {
+  return PALETTE_LABEL_RENAMES[label.trim().toUpperCase()] ?? label;
+}
+
 /** Squared colour distance under which a dab counts as the loaded colour. */
 const SAME_COLOR_EPS = 1e-4;
 

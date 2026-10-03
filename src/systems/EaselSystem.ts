@@ -404,7 +404,7 @@ export class EaselSystem extends createSystem({
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
-        anchor.download = `paintblast-painting-${index}.png`;
+        anchor.download = `splotopia-painting-${index}.png`;
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();

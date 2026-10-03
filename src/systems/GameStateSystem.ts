@@ -3,6 +3,11 @@ import type { Signal } from '@preact/signals-core';
 
 import { CHILL, GAME } from '../config';
 import {
+  LEGACY_BEST_SCORE_STORAGE_KEY,
+  readWithLegacyFallback,
+  safeStorage,
+} from '../storage-migrate';
+import {
   GameEvent,
   GameEventBuffer,
   GamePhase,
@@ -24,8 +29,11 @@ export function popBasePoints(data: number): number {
   return packed > 0 ? packed : GAME.scoreTargetHit;
 }
 
-/** localStorage key holding the all-time best score. */
-export const BEST_SCORE_STORAGE_KEY = 'paintblast.bestScore';
+/**
+ * localStorage key holding the all-time best score. Round 9 rebrand: reads fall
+ * back to the pre-rebrand `paintblast.bestScore` and copy it forward.
+ */
+export const BEST_SCORE_STORAGE_KEY = 'splotopia.bestScore';
 
 /** The slice of GAME that advancePhase() reads. @see advancePhase */
 export interface PhaseTimings {
@@ -377,7 +385,11 @@ export function formatTimer(seconds: number): string {
 /** Best score from a previous session, or 0 outside a browser. */
 function readBestScore(): number {
   try {
-    const raw = globalThis.localStorage?.getItem(BEST_SCORE_STORAGE_KEY);
+    const raw = readWithLegacyFallback(
+      safeStorage(),
+      BEST_SCORE_STORAGE_KEY,
+      LEGACY_BEST_SCORE_STORAGE_KEY,
+    );
     const parsed = raw == null ? Number.NaN : Number.parseInt(raw, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
   } catch {

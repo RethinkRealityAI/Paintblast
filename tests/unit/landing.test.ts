@@ -68,10 +68,12 @@ describe('landing page', () => {
     initLanding();
     const text = document.getElementById('landing-root')!.textContent ?? '';
     for (const b of SPLOTBOTS) expect(text).toContain(b.name);
-    for (const m of ['BLASTER', 'WEB', 'HAND']) expect(text).toContain(m);
+    for (const m of ['BLASTER', 'GOO', 'HAND']) expect(text).toContain(m);
+    expect(text).toMatch(/Meet the Neatniks/);
+    expect(text).not.toMatch(/Splotbot|PaintBlast/i);
     expect(text).toMatch(/Pinch to fire/);
     expect(text).toMatch(/Tap the wrist palette/);
-    expect(text).toMatch(/Haul robots in/);
+    expect(text).toMatch(/Haul Neatniks in/);
     expect(text).toMatch(/Chill/i);
   });
 
@@ -80,6 +82,7 @@ describe('landing page', () => {
     const html = document.getElementById('landing-root')!.innerHTML + readFileSync('index.html', 'utf8');
     expect(html).not.toMatch(/spider/i);
     expect(html).not.toMatch(/thwip/i);
+    expect(html).not.toMatch(/\bweb (launcher|shooter|sling)/i);
   });
 
   it('every image has alt text and points at a real file', () => {
@@ -91,6 +94,13 @@ describe('landing page', () => {
       const src = img.getAttribute('src')!;
       expect(existsSync(`public${src}`)).toBe(true);
     }
+  });
+
+  it('index.html carries the Splotopia name, not the old one', () => {
+    const html = readFileSync('index.html', 'utf8');
+    expect(html).toMatch(/<title>Splotopia \|/);
+    expect(html).toMatch(/og:site_name" content="Splotopia"/);
+    expect(html).not.toMatch(/PaintBlast MR|Splotbot/);
   });
 
   it('index.html shares the OG card', () => {
