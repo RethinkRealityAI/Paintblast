@@ -885,7 +885,7 @@
       <div class="bar-short-lime"></div>
       <div class="bar-short-violet"></div>
     </div>
-    <span id="hud-chill-status" class="status">Hold trigger or pinch to spray. Tap the palette to change paint.</span>
+    <span id="hud-chill-status" class="status">Hold trigger or pinch to spray. Tap the gem on your left wrist for paint.</span>
     <span class="hint">Paint the easel, then save the picture</span>
     <span class="hint">Pinch or squeeze the easel with both hands to move it</span>
     <div class="btn-row">

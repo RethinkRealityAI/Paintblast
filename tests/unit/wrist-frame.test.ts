@@ -13,11 +13,7 @@ import {
   rotateByQuat,
   smoothingAlpha,
 } from '../../src/wrist-frame';
-import {
-  createPaletteLock,
-  stepPaletteLock,
-  thinnestAxis,
-} from '../../src/systems/WristPaletteSystem';
+import { createPaletteLock, stepPaletteLock } from '../../src/wrist-menu';
 import { AimTargets } from '../../src/types';
 import { isTracked } from '../../src/wrist-pose';
 import { WEB } from '../../src/config';
@@ -560,25 +556,6 @@ describe('buildFacingBasis', () => {
 
   it('refuses a zero normal', () => {
     expect(buildFacingBasis(0, 0, 0, 0, 0, -1, new Float32Array(9))).toBe(false);
-  });
-});
-
-describe('thinnestAxis', () => {
-  it('finds the shipped palette GLB is a slab thin along Z', () => {
-    // Measured off public/gltf/palette-board.glb's POSITION accessor.
-    expect(thinnestAxis(1.899, 1.318, 0.23)).toBe(2);
-  });
-
-  it('leaves a board already thin along Y alone', () => {
-    expect(thinnestAxis(0.22, 0.008, 0.187)).toBe(1);
-  });
-
-  it('handles a slab thin along X', () => {
-    expect(thinnestAxis(0.01, 0.3, 0.2)).toBe(0);
-  });
-
-  it('prefers no rotation on a tie', () => {
-    expect(thinnestAxis(1, 1, 1)).toBe(1);
   });
 });
 

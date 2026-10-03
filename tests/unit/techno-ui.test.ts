@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 
-import { BLASTER, HUD, PALETTE } from '../../src/config';
+import { BLASTER, HUD, MENU } from '../../src/config';
+import { buildMenuLayout } from '../../src/wrist-menu';
 import {
   BLASTER_MODE_DESCRIPTIONS,
   BLASTER_MODE_LABELS,
@@ -256,12 +257,12 @@ describe('appear animation easing', () => {
     expect(out.scale).toBe(1);
   });
 
-  it('config keeps the pop quick and visible', () => {
-    expect(PALETTE.appearSec).toBeGreaterThan(0);
-    expect(PALETTE.appearSec).toBeLessThan(0.6);
-    expect(PALETTE.appearFromScale).toBeGreaterThan(0);
-    expect(PALETTE.appearFromScale).toBeLessThan(1);
-    expect(PALETTE.hideAfterLostSec).toBeGreaterThan(0.1);
+  it('config keeps the wrist menu pop quick and visible', () => {
+    expect(MENU.openSec).toBeGreaterThan(0);
+    expect(MENU.openSec).toBeLessThan(0.6);
+    expect(MENU.openFromScale).toBeGreaterThan(0);
+    expect(MENU.openFromScale).toBeLessThan(1);
+    expect(MENU.gemHideAfterLostSec).toBeGreaterThan(0.1);
   });
 });
 
@@ -281,12 +282,6 @@ describe('holo board geometry', () => {
     expect(Math.abs(square[0]) ** 4 + Math.abs(square[1]) ** 4).toBeCloseTo(1, 6);
   });
 
-  it('the holo outline contains the old oval, so every dab, chip and pad stays on the board', () => {
-    // n >= 2 superellipse with the same semi-axes encloses the ellipse that
-    // config.test's onBoard() checks layout against.
-    expect(PALETTE.holoSquareness).toBeGreaterThanOrEqual(2);
-  });
-
   it('ramps edge colours and closes the loop', () => {
     const out: [number, number, number] = [0, 0, 0];
     rampColor(0, ['#ff0000', '#0000ff'], out);
@@ -300,59 +295,60 @@ describe('holo board geometry', () => {
     expect(out).toEqual([0, 1, 0]);
     rampColor(0.3, [], out);
     expect(out).toEqual([1, 1, 1]);
-    // The configured ramp starts and ends on the same colour: no seam.
-    const stops = PALETTE.holoEdgeColors;
-    expect(stops[0]).toBe(stops[stops.length - 1]);
   });
 });
 
-describe('palette touch targets (Meta hands guidance)', () => {
-  const MIN_TARGET = 0.022;
+describe('wrist menu touch targets (Meta hands guidance)', () => {
+  const MIN_TARGET = 0.026;
   const MIN_GAP = 0.01;
+  const layouts = [buildMenuLayout(false, MENU), buildMenuLayout(true, MENU)];
 
-  it('every pressable is at least ~22 mm across', () => {
-    expect(PALETTE.dabRadius * 2).toBeGreaterThanOrEqual(MIN_TARGET);
-    expect(PALETTE.chipRadius * 2).toBeGreaterThanOrEqual(MIN_TARGET);
-    expect(PALETTE.modePadRadius * 2).toBeGreaterThanOrEqual(MIN_TARGET);
+  it('every button is at least 26 mm in both directions', () => {
+    for (const layout of layouts) {
+      for (const it of layout.items) {
+        expect(it.w).toBeGreaterThanOrEqual(MIN_TARGET - 1e-9);
+        expect(it.h).toBeGreaterThanOrEqual(MIN_TARGET - 1e-9);
+      }
+    }
   });
 
-  it('neighbouring chips and pads keep ~10 mm of air between them', () => {
-    expect(PALETTE.chipSpacing - PALETTE.chipRadius * 2).toBeGreaterThanOrEqual(MIN_GAP - 1e-9);
-    expect(PALETTE.modePadSpacing - PALETTE.modePadRadius * 2).toBeGreaterThanOrEqual(MIN_GAP - 1e-9);
+  it('neighbouring buttons keep >= 10 mm of air, across and down', () => {
+    for (const layout of layouts) {
+      const shown = layout.items.filter((i) => i.shown);
+      for (const a of shown) {
+        for (const b of shown) {
+          if (a === b) continue;
+          const gapX = Math.abs(a.x - b.x) - (a.w + b.w) / 2;
+          const gapY = Math.abs(a.y - b.y) - (a.h + b.h) / 2;
+          // Separated along at least one axis by the minimum gap.
+          expect(Math.max(gapX, gapY)).toBeGreaterThanOrEqual(MIN_GAP - 1e-9);
+        }
+      }
+    }
   });
 
-  it('holo sockets never touch their neighbours', () => {
-    const tube = 0.0008;
-    expect(
-      PALETTE.chipSpacing - 2 * (PALETTE.chipRadius * PALETTE.socketRimScale + tube),
-    ).toBeGreaterThan(0.0015);
-    expect(
-      PALETTE.modePadSpacing - 2 * (PALETTE.modePadRadius * PALETTE.socketRimScale + tube),
-    ).toBeGreaterThan(0.0015);
-  });
-
-  it('well rims ring the dab without overlapping the next well', () => {
-    const span = ((PALETTE.dabArcEndDeg - PALETTE.dabArcStartDeg) * Math.PI) / 180;
-    const spacing = (PALETTE.dabArcRadius * span) / 3;
-    expect(PALETTE.wellRimScale).toBeGreaterThan(1);
-    expect(spacing).toBeGreaterThan(2 * PALETTE.dabRadius * PALETTE.wellRimScale);
-  });
-
-  it('opacities are real opacities', () => {
+  it('opacities are real opacities and selection reads brighter', () => {
     for (const v of [
-      PALETTE.holoFaceOpacity,
-      PALETTE.holoGlowOpacity,
-      PALETTE.wellRimOpacity,
-      PALETTE.wellRimSelectedOpacity,
-      PALETTE.wellGlowOpacity,
-      PALETTE.wellGlowSelectedOpacity,
-      PALETTE.socketRimOpacity,
-      PALETTE.socketRimSelectedOpacity,
+      MENU.panelOpacity,
+      MENU.edgeGlowOpacity,
+      MENU.buttonOpacity,
+      MENU.rimOpacity,
+      MENU.rimSelectedOpacity,
+      MENU.rimHoverOpacity,
+      MENU.glowSelectedOpacity,
+      MENU.glowHoverOpacity,
+      MENU.dimmedRowOpacity,
+      MENU.gemGlowOpacity,
     ]) {
       expect(v).toBeGreaterThanOrEqual(0);
       expect(v).toBeLessThanOrEqual(1);
     }
-    expect(PALETTE.wellRimSelectedOpacity).toBeGreaterThan(PALETTE.wellRimOpacity);
-    expect(PALETTE.socketRimSelectedOpacity).toBeGreaterThan(PALETTE.socketRimOpacity);
+    expect(MENU.rimSelectedOpacity).toBeGreaterThan(MENU.rimOpacity);
+    expect(MENU.rimHoverOpacity).toBeGreaterThan(MENU.rimOpacity);
+  });
+
+  it('identity colours cover every launcher and GOO verb', () => {
+    expect(MENU.launcherColors).toHaveLength(3);
+    expect(MENU.subModeColors).toHaveLength(2);
   });
 });

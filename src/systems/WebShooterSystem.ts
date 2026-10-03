@@ -1,19 +1,11 @@
 import {
-  AssetManager,
-  CircleGeometry,
   Color,
   CylinderGeometry,
-  Group,
   InputComponent,
-  Interactable,
   Mesh,
   MeshBasicMaterial,
-  MeshStandardMaterial,
-  OneHandGrabbable,
-  PokeInteractable,
   Quaternion,
   SRGBColorSpace,
-  TorusGeometry,
   Types,
   Vector3,
   createComponent,
@@ -21,7 +13,7 @@ import {
   setWorldPosition,
   setWorldQuaternion,
 } from '@iwsdk/core';
-import type { Entity, Object3D, Texture } from '@iwsdk/core';
+import type { Entity, Object3D } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
 import { FIRE, WEB } from '../config';
@@ -32,19 +24,11 @@ import {
   GameEvent,
   GameEventBuffer,
   GamePhase,
-  WebSubMode,
   packTetherData,
 } from '../types';
-import {
-  Ball,
-  BallSpawnSystem,
-  SELECTED_PAD_SCALE,
-  WebModePad,
-  canFireInPhase,
-} from './BallSpawnSystem';
+import { Ball, BallSpawnSystem, canFireInPhase } from './BallSpawnSystem';
 import { TargetSystem, shiftTimestamps } from './TargetSystem';
 import { PauseClock } from './GameStateSystem';
-import { WEB_SPLAT_TEXTURE_KEY } from './SplatterSystem';
 
 /**
  * Round 8: the hardware (and the optional GLB, its asset key and the band
@@ -57,21 +41,6 @@ export {
   fitShooterScale,
 } from './GauntletSystem';
 export type { ShooterFit } from './GauntletSystem';
-
-/**
- * Selector pad colours. The splat pad wears the same web-grey as the WEB chip
- * on the palette, so the two read as the same thing; the tether pad takes the
- * HUD's sky accent, because a hook is a different verb and should not have to
- * be read by shape alone at 2 cm across.
- */
-const SELECTOR_SPLAT_COLOR = '#e8e8ee';
-const SELECTOR_TETHER_COLOR = '#48dbfb';
-/**
- * The disc behind the splat pad's web. Near-black, so a pale web mask has
- * something to read against — on its own the mask disappears into a passthrough
- * hand. @see buildSplatPad
- */
-const SELECTOR_BACKING_COLOR = '#33383f';
 
 /** Cached joint slots. Index into WebShooterSystem's per-hand joint tables. */
 const JOINT_WRIST = 0;
@@ -334,7 +303,9 @@ export function forwardSpeed(
  *   pinky out;
  * - a **thrust**: shoving the hand forward along its own pointing axis.
  *
- * Plus the wrist sub-mode selector and the strand pool. Strands are attached
+ * Plus the strand pool. (Round 10: the SPLAT / TETHER selector pads that hung
+ * under the left spinneret are gone; GOO's sub-mode is picked on the wrist
+ * menu's GOO MODE row, or with B.) Strands are attached
  * by watching Ball entities appear rather than by the firing code asking for
  * one — see the `webBalls` query — so a web thrown by the trigger, the thwip
  * or the thrust all trail exactly the same thread, and BallSpawnSystem never
@@ -345,9 +316,7 @@ export function forwardSpeed(
  * The hardware and the pose. GauntletSystem now owns both arms' WristPose,
  * the smoothed aim frame, and every model (bracer, paint barrel, spinneret,
  * hand plate) across the three blaster modes. This system reads the palm, the
- * aim and the nozzle back through GauntletSystem's public API, and parents
- * its selector pads into the left spinneret entity, so the pads ride the
- * spinneret's deploy animation and hide with it.
+ * aim and the nozzle back through GauntletSystem's public API.
  *
  * Runs at priority 10 — after GauntletSystem (9, which poses this frame's
  * wrists), before BallSpawnSystem (11). It must sit well above IWSDK's
@@ -366,7 +335,6 @@ export class WebShooterSystem extends createSystem({
 }) {
   private gamePhase!: Signal<GamePhase>;
   private activeStyle!: Signal<BallStyle>;
-  private webSubMode!: Signal<WebSubMode>;
   /** Loaded paint colour (sRGB RGBA tuple); GOO strands wear it (round 9). */
   private activeColor?: Signal<readonly [number, number, number, number]>;
   /** Scratch sRGB triple for {@link gooStrandRgb}. */
@@ -376,8 +344,6 @@ export class WebShooterSystem extends createSystem({
   private targets?: TargetSystem;
   /** Pose, aim and nozzle source (round 8). Resolved lazily. */
   private gauntlet?: GauntletSystem;
-  /** True once the selector pads hang off the left spinneret. */
-  private selectorBuilt = false;
 
   /**
    * The strand pool. Fixed-length, built once, reused forever — an object
@@ -506,7 +472,6 @@ export class WebShooterSystem extends createSystem({
   init() {
     this.gamePhase = this.globals.gamePhase as Signal<GamePhase>;
     this.activeStyle = this.globals.activeStyle as Signal<BallStyle>;
-    this.webSubMode = this.globals.webSubMode as Signal<WebSubMode>;
     this.activeColor = this.globals.activeColor as
       | Signal<readonly [number, number, number, number]>
       | undefined;
@@ -554,9 +519,6 @@ export class WebShooterSystem extends createSystem({
     this.tetherAnchor = new Vector3();
     this.headPosition = new Vector3();
 
-    // GauntletSystem is registered first, so its spinnerets exist by now; if
-    // they do not (a different registration order), update() retries.
-    this.ensureSelector();
     this.buildStrandPool();
 
     this.cleanupFuncs.push(
@@ -590,7 +552,6 @@ export class WebShooterSystem extends createSystem({
     // fired at all". The gestures are a second trigger now, not a web feature,
     // so they have to be read whatever the palette says. (The hardware tracks
     // the wrist in every phase; GauntletSystem owns that since round 8.)
-    if (!this.selectorBuilt) this.ensureSelector();
     if (!this.canFire()) return;
 
     const nowMs = performance.now();
@@ -1522,7 +1483,7 @@ export class WebShooterSystem extends createSystem({
    * to a paint chip, or the round ending under you.
    *
    * Since round 8 this no longer touches the hardware: GauntletSystem shows
-   * the spinneret (and the selector pads parented into it) by blaster mode.
+   * the spinneret by blaster mode.
    *
    * Unloading drops every tether and every strand immediately rather than
    * letting them fade: a line hanging in mid-air off a wrist whose spinneret
@@ -1546,93 +1507,6 @@ export class WebShooterSystem extends createSystem({
   }
 
   // ---- Construction --------------------------------------------------------
-
-  /**
-   * Hang the sub-mode selector off the LEFT spinneret, once GauntletSystem
-   * has built it.
-   *
-   * One gadget, not two: it is a setting, and two of them would raise the
-   * question of what happens when they disagree. Left because that is already
-   * the arm the palette is strapped to, so "look at your left arm to change
-   * what you are firing" stays one habit rather than two.
-   */
-  private ensureSelector(): void {
-    if (this.selectorBuilt) return;
-    const spinneret = this.resolveGauntlet()?.spinneretEntity(0);
-    if (!spinneret) return;
-    this.buildModeSelector(spinneret);
-    this.selectorBuilt = true;
-  }
-
-  /**
-   * The wrist gadget: two mini pads floating just off the left spinneret, one
-   * per {@link WebSubMode}.
-   *
-   * Parented **into the spinneret entity** (GauntletSystem's, round 8), so it
-   * inherits the forearm pose for free, rides the spinneret's deploy
-   * animation, and hides with it outside WEB mode — there is no sub-mode to
-   * choose without webbing on. It sits on the palm-side face, a little proud
-   * of it (see {@link WEB.selectorOffsetY}), which a supinated forearm turns
-   * straight toward the player's face.
-   *
-   * Each pad wears the same three pointer tags as a palette chip —
-   * RayInteractable, PokeInteractable, OneHandGrabbable — so a fingertip poke,
-   * a hand pinch and a controller squeeze all arrive at the same `Pressed` tag
-   * BallSpawnSystem selects off. Plus the proximity path, plus the B button.
-   * Four routes to a two-way switch is not excessive for something worn on a
-   * wrist and read at a glance mid-round.
-   */
-  private buildModeSelector(shooter: Entity): void {
-    const size = WEB.selectorPadMeters;
-    const step = size + WEB.selectorPadGap;
-
-    for (let i = 0; i < 2; i++) {
-      const mode = i === 0 ? WebSubMode.Splat : WebSubMode.Tether;
-      const selected = mode === this.webSubMode.peek();
-      const accent = new Color(
-        mode === WebSubMode.Tether
-          ? SELECTOR_TETHER_COLOR
-          : SELECTOR_SPLAT_COLOR,
-      );
-      const material = new MeshStandardMaterial({
-        color: accent,
-        roughness: 0.35,
-        metalness: 0,
-        // Baked once, exactly like a palette chip's: BallSpawnSystem only ever
-        // moves the intensity, so a pad always glows in its own colour.
-        emissive: accent.clone(),
-        emissiveIntensity: selected
-          ? WEB.selectorSelectedEmissive
-          : WEB.selectorIdleEmissive,
-        transparent: true,
-        opacity: 0.92,
-      });
-
-      const pad =
-        mode === WebSubMode.Tether
-          ? buildHookPad(size, material)
-          : buildSplatPad(size, material, accent, selected);
-      pad.name = mode === WebSubMode.Tether ? 'GooPadTether' : 'GooPadSplat';
-      // Both pads face the holder's -Y, i.e. out through the palm side, which
-      // is where the player's eyes are once the forearm is supinated.
-      pad.rotation.x = Math.PI / 2;
-      pad.position.set(
-        (i - 0.5) * step,
-        WEB.selectorOffsetY,
-        WEB.selectorOffsetZ,
-      );
-      if (selected) pad.scale.setScalar(SELECTED_PAD_SCALE);
-
-      const entity = this.world.createTransformEntity(pad, {
-        parent: shooter,
-        persistent: true,
-      });
-      entity.addComponent(Interactable);
-      entity.addComponent(PokeInteractable);
-      entity.addComponent(OneHandGrabbable, { rotate: false, translate: false });
-      entity.addComponent(WebModePad, { mode });
-    }
-  }
 
   /**
    * Colour one strand's material: the loaded paint colour for GOO (or white
@@ -1707,118 +1581,6 @@ export class WebShooterSystem extends createSystem({
     }
     this.applyGooColors();
   }
-}
-
-/**
- * The splat pad: a dark disc with the web mask glowing on its face.
- *
- * **Two meshes, and the backing one is not optional.** The first attempt was a
- * single disc wearing the mask as an `alphaMap`, which is how SplatterSystem
- * paints its decals — and in the emulator the pad simply was not there. A web
- * mask is mostly *black*: alpha-testing it away leaves a few pale threads
- * floating over a white controller, which is a perfectly good decal on a wall
- * and completely illegible as a 2.2 cm button on your own wrist.
- *
- * So the mask goes on a slightly smaller face over an opaque backing, which
- * gives the pad an outline, something for the thread to read against, and a
- * silhouette that survives being glanced at mid-round.
- *
- * The mask still binds as `alphaMap` and never as `map`, for the same reason it
- * does on a decal: the PNG is a white shape on black with no alpha channel, so
- * bound as `map` it would multiply the whole face toward black instead of
- * cutting a web out of it.
- *
- * A missing texture leaves the plain backing disc, which is still a perfectly
- * readable "the round one" next to a hook.
- */
-function buildSplatPad(
-  size: number,
-  material: MeshStandardMaterial,
-  accent: Color,
-  selected: boolean,
-): Object3D {
-  const group = new Group();
-
-  const backing = new Mesh(
-    new CircleGeometry(size / 2, 20),
-    new MeshStandardMaterial({
-      color: new Color(SELECTOR_BACKING_COLOR),
-      roughness: 0.5,
-      metalness: 0,
-      transparent: true,
-      opacity: 0.88,
-      // The backing carries the accent as its emissive too, so the selection
-      // lift reaches the whole pad rather than a few threads of web. Without
-      // it the *unselected* cyan hook out-glows the *selected* splat pad,
-      // which is exactly backwards — a vivid colour beats a dark disc on raw
-      // brightness whatever the emissive says.
-      emissive: accent.clone(),
-      emissiveIntensity: selected
-        ? WEB.selectorSelectedEmissive
-        : WEB.selectorIdleEmissive,
-    }),
-  );
-  group.add(backing);
-
-  const face = new Mesh(new CircleGeometry(size * 0.44, 20), material);
-  // A hair in front of the backing. Both discs are coplanar otherwise, and
-  // z-fighting on something held 30 cm from the player's eye is very visible.
-  face.position.z = size * 0.02;
-  try {
-    const texture = AssetManager.getTexture(WEB_SPLAT_TEXTURE_KEY) as
-      | Texture
-      | undefined;
-    if (texture) {
-      material.alphaMap = texture;
-      material.alphaTest = 0.35;
-      material.needsUpdate = true;
-      group.add(face);
-    } else {
-      // No mask to cut a web out of: fall back to a solid face, so the pad
-      // still has its accent colour and still lights up when selected.
-      group.add(face);
-    }
-  } catch {
-    // AssetManager not initialised (unit tests) or key absent.
-    group.add(face);
-  }
-
-  return group;
-}
-
-/**
- * The tether pad: a hook.
- *
- * Three quarters of a torus for the curve of the hook plus a straight shank
- * above it, which at 2.2 cm reads unmistakably as "the pointy one that grabs"
- * next to a disc. Both parts share the pad's material, so the selected glow
- * lights the whole silhouette at once rather than half of it.
- *
- * Authored in the XY plane like the torus it is built from, so the caller's one
- * quarter-turn about X lays the whole pad face-out with everything else.
- */
-function buildHookPad(size: number, material: MeshStandardMaterial): Object3D {
-  const group = new Group();
-  const radius = size * 0.3;
-  const tube = size * 0.075;
-
-  const curve = new Mesh(
-    new TorusGeometry(radius, tube, 6, 16, Math.PI * 1.45),
-    material,
-  );
-  // Open the arc's mouth downward, so the hook looks like it could catch
-  // something rather than like a broken ring.
-  curve.rotation.z = Math.PI * 0.28;
-  group.add(curve);
-
-  const shank = new Mesh(
-    new CylinderGeometry(tube, tube, size * 0.42, 6),
-    material,
-  );
-  shank.position.set(0, radius + size * 0.16, 0);
-  group.add(shank);
-
-  return group;
 }
 
 /**
