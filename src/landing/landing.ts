@@ -112,7 +112,7 @@ function markup(): string {
 
     <header class="pb-nav" role="banner">
       <a class="pb-nav-logo" href="#pb-top" aria-label="Splotopia, back to top">
-        <img src="/landing/logo-360.webp" alt="Splotopia" width="180" height="37" />
+        <img src="/landing/logo-360.webp" alt="Splotopia" width="180" height="61" />
       </a>
       <nav aria-label="Sections">
         <ul class="pb-nav-links">
@@ -137,7 +137,7 @@ function markup(): string {
           <p class="pb-kicker"><span class="pb-live-dot" aria-hidden="true"></span>Mixed reality &middot; Meta Quest 3 / 3S</p>
           <h1 id="pb-hero-title" class="pb-logo-title">
             <span class="pb-logo-splash" aria-hidden="true"></span>
-            <img src="/landing/logo-1100.webp" alt="Splotopia" width="1100" height="223" decoding="async" />
+            <img src="/landing/logo-1100.webp" alt="Splotopia" width="1100" height="370" decoding="async" />
           </h1>
           <p class="pb-tagline">Your room is the arena.</p>
           <p class="pb-sub">
@@ -282,7 +282,7 @@ function markup(): string {
     </main>
 
     <footer class="pb-footer">
-      <img src="/landing/logo-360.webp" alt="Splotopia" width="140" height="28" loading="lazy" />
+      <img src="/landing/logo-360.webp" alt="Splotopia" width="140" height="47" loading="lazy" />
       <p>Splotopia: a mixed-reality paint arcade for Meta Quest 3 / 3S. Paint your room, pop the Neatniks. Built with Meta's Immersive Web SDK and WebXR.</p>
       <p class="pb-footer-small">A RethinkReality game &middot; Play somewhere with a little space around your seat.</p>
       <a href="#pb-top" class="pb-top-link">Back to top</a>

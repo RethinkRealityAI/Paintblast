@@ -179,7 +179,8 @@
 }
 
 .pb-nav-logo img {
-  width: 150px;
+  /* R9 Splotopia logo is ~3:1 (R8's was ~5:1): narrower keeps the nav height. */
+  width: 112px;
   height: auto;
 }
 
@@ -417,7 +418,7 @@
 .pb-logo-title {
   position: relative;
   margin: 0;
-  width: min(860px, 100%);
+  width: min(640px, 100%);
 }
 
 .pb-logo-title img {
@@ -1131,7 +1132,7 @@
 }
 
 .pb-footer img {
-  width: 140px;
+  width: 104px;
   height: auto;
   opacity: 0.9;
   margin-bottom: 6px;
@@ -1243,7 +1244,7 @@
   }
 
   .pb-nav-logo img {
-    width: 120px;
+    width: 92px;
   }
 
   .pb-btn-hero {
