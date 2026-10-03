@@ -1,4 +1,5 @@
-# Netlify configuration for PaintBlast MR.
+# Netlify configuration for Splotopia (formerly PaintBlast MR; the site
+# is still served from paintblast-mr.netlify.app).
 # Deploys the Vite production build. WebXR requires HTTPS, which Netlify provides.
 
 [build]

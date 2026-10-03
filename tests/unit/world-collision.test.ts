@@ -7,7 +7,7 @@ import {
   isCollidableMesh,
   isGlobalMesh,
 } from '../../src/systems/WorldCollisionSystem';
-import { BALLS, FIRE, ROOM } from '../../src/config';
+import { BALLS, FIRE, ROOM, NEATNIKS, WEB } from '../../src/config';
 
 /**
  * Every semantic label the WebXR registry defines, verbatim. Quest maps its own
@@ -115,19 +115,19 @@ describe('COLLIDABLE_MESH_LABELS', () => {
 describe('formatColliderLog', () => {
   it('reports counts and labels in the documented shape', () => {
     expect(formatColliderLog(6, 2, ['global mesh', 'table'])).toBe(
-      '[PaintBlast] room colliders: 6 planes, 2 meshes (labels: global mesh, table)',
+      '[Splotopia] room colliders: 6 planes, 2 meshes (labels: global mesh, table)',
     );
   });
 
   it('says "none" rather than trailing an empty list', () => {
     expect(formatColliderLog(0, 0, [])).toBe(
-      '[PaintBlast] room colliders: 0 planes, 0 meshes (labels: none)',
+      '[Splotopia] room colliders: 0 planes, 0 meshes (labels: none)',
     );
   });
 
   it('is greppable — the prefix is stable', () => {
     expect(formatColliderLog(1, 1, ['other'])).toMatch(
-      /^\[PaintBlast\] room colliders: /,
+      /^\[Splotopia\] room colliders: /,
     );
   });
 });
@@ -141,6 +141,22 @@ describe('ROOM.wallThicknessMeters', () => {
     const travelPerFrame = FIRE.speed / 72;
     const captureBand = ROOM.wallThicknessMeters + 2 * BALLS.radius;
     expect(captureBand).toBeGreaterThan(travelPerFrame);
+  });
+
+  it('is thicker than one frame of WEB travel too', () => {
+    // Round 7 made webs faster than paint. Its first cut (x1.45, 17 cm per
+    // step) strode over the 14 cm band one head-on shot in five; this pins
+    // the fastest thing that flies, not just the trigger speed.
+    const fastest = FIRE.speed * Math.max(1, WEB.webSpeedMult);
+    const captureBand = ROOM.wallThicknessMeters + 2 * BALLS.radius;
+    expect(captureBand).toBeGreaterThan(fastest / 72);
+  });
+
+  it('is thicker than one frame of a shield-deflected ball', () => {
+    // Round 8: a Squeegee's shield re-launches the ball with an upward kick,
+    // so the deflect gets its own speed cap — pinned here like the others.
+    const captureBand = ROOM.wallThicknessMeters + 2 * BALLS.radius;
+    expect(captureBand).toBeGreaterThan(NEATNIKS.shield.maxDeflectSpeed / 72);
   });
 
   it('stays thin enough that the bulge is invisible in passthrough', () => {
@@ -169,23 +185,28 @@ describe('title screen copy', () => {
     markup.indexOf('id="section-playing"'),
   );
 
-  it('offers WEB MODE as a title-screen button', () => {
-    // Round 5 left webbing discoverable only as one chip in a row of five on
-    // your own wrist, and the field report was that nobody found it. The button
-    // is a signpost, not a phase — see HudSystem.startWebMode.
-    expect(idle).toContain('id="btn-web"');
-    expect(idle).toContain('>WEB MODE<');
+  it('reaches GOO through LOADOUT, not a separate WEB MODE button (round 9)', () => {
+    // Round 6 put a WEB MODE shortcut on the title because nobody found the
+    // web chip. Round 9 made GOO a launcher with its own palette pad and a
+    // tutorial step that has you tap it, so the title keeps one way in.
+    expect(idle).not.toContain('id="btn-web"');
+    expect(idle).not.toContain('WEB MODE');
+    expect(idle).toContain('id="btn-armory"');
+    expect(idle).toContain('LOADOUT &gt;');
   });
 
-  it('teaches the palette chip as well, so the button is not the only route', () => {
-    expect(idle).toMatch(/WEB chip/);
+  it('uses the round-9 names only (Splotopia / Neatniks / GOO / FLICK)', () => {
+    const body = markup.slice(markup.indexOf('</style>'));
+    for (const stale of ['PaintBlast', 'Splotbot', 'THWIP', 'ARMORY', 'BLASTERS', 'Web shooter', 'Spider', '>WEB<']) {
+      expect(body, stale).not.toContain(stale);
+    }
+    expect(body).toContain('>GOO<');
+    expect(body).toContain('Neatnik');
   });
 
-  it('teaches the gestures without tying them to web ammo', () => {
-    // Round 6 made the gestures universal: they fire the loadout, so copy that
-    // says "with WEB loaded" would now be wrong.
-    expect(idle).toContain('THWIP');
-    expect(idle).not.toMatch(/with WEB loaded/i);
+  it('offers the tutorial replay on the title', () => {
+    expect(idle).toContain('id="btn-tutorial"');
+    expect(idle).toContain('>TUTORIAL<');
   });
 
   it('keeps every rendered string ASCII (the MSDF font has no fancy glyphs)', () => {

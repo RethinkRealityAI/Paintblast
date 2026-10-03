@@ -177,6 +177,10 @@ export const XRAnchor = { id: 'XRAnchor', schema: {}, data: {}, bitmask: null, t
 // Task 9: depth occlusion tag component (AR-only — DepthSensingSystem
 // silently no-ops on devices without depth-sensing).
 export const DepthOccludable = { id: 'DepthOccludable', schema: {}, data: {}, bitmask: null, typeId: 0 };
+// Round 9: TargetSystem extends it (RobotDepthSensingSystem); never run here.
+export class DepthSensingSystem {
+  update(): void {}
+}
 
 // ---- Additions for Wave B (targets, game state, HUD, feedback) -------------
 //
@@ -333,3 +337,32 @@ export enum VisibilityState {
   Visible = 'visible',
   VisibleBlurred = 'visible-blurred',
 }
+
+// ---- Additions for Round 7 (wet-paint balls, VFX particles) ----------------
+//
+// Same contract as everything above: VfxSystem's pure exports (ParticlePool,
+// lifeScale, burstAxis, coneDirection, tiltUp, shapeCode) are under test, and
+// importing the module pulls these in at module scope.
+
+/** BallSpawnSystem's clearcoat ball material. Never constructed in tests. */
+export class MeshPhysicalMaterial {
+  constructor(_params?: unknown) {}
+}
+
+/** VfxSystem's particle geometry. */
+export class IcosahedronGeometry {
+  constructor(_radius?: number, _detail?: number) {}
+}
+
+/** VfxSystem wraps its pool's colour array in one of these. */
+export class InstancedBufferAttribute {
+  constructor(
+    public array: ArrayLike<number>,
+    public itemSize: number,
+  ) {}
+  setUsage(_usage: number) {
+    return this;
+  }
+}
+
+export const DynamicDrawUsage = 35048;

@@ -12,7 +12,9 @@ import {
   WebSubMode,
   WEB_BALL_COLOR,
 } from '../../src/types';
-import { reelDistance } from '../../src/systems/TargetSystem';
+import { reelDistance,
+  segmentPointDistSq,
+} from '../../src/systems/TargetSystem';
 import {
   createShotLoadout,
   resolveShot,
@@ -157,7 +159,7 @@ describe('reelDistance', () => {
 
   it('converges on the minimum under repeated hauls, and stops', () => {
     let d = WEB.tetherKillRadius + 3;
-    for (let i = 0; i < 200; i++) d = reelDistance(d, WEB.yankReelMeters, MIN);
+    for (let i = 0; i < 200; i++) d = reelDistance(d, WEB.reelQueueMax, MIN);
     expect(d).toBeCloseTo(MIN, 6);
   });
 
@@ -186,11 +188,11 @@ describe('ammoLabel', () => {
 
   it('lets webbing override the paint kind', () => {
     expect(ammoLabel(BallStyle.Web, WebSubMode.Splat, BallKind.Sticky)).toBe(
-      'WEB',
+      'GOO',
     );
   });
 
-  it('lets the sub-mode override the word WEB', () => {
+  it('lets the sub-mode override the word GOO', () => {
     expect(ammoLabel(BallStyle.Web, WebSubMode.Tether, BallKind.Sticky)).toBe(
       'TETHER',
     );
@@ -216,5 +218,23 @@ describe('ammoLabel', () => {
         }
       }
     }
+  });
+});
+
+describe('segmentPointDistSq (swept robot hit test)', () => {
+  it('is the plain point distance for a zero-length segment', () => {
+    expect(segmentPointDistSq(1, 2, 3, 1, 2, 3, 1, 2, 5)).toBeCloseTo(4);
+  });
+
+  it('catches a ball that stepped clean through the robot this frame', () => {
+    // 2.6 m in one frame, passing 5 cm from the robot centre: a point test at
+    // either end misses by metres; the swept test does not.
+    const d = segmentPointDistSq(0, 1, 0, 0, 1, -2.6, 0.05, 1, -1.3);
+    expect(Math.sqrt(d)).toBeCloseTo(0.05, 6);
+  });
+
+  it('clamps to the ends of the segment', () => {
+    expect(segmentPointDistSq(0, 0, 0, 1, 0, 0, -1, 0, 0)).toBeCloseTo(1);
+    expect(segmentPointDistSq(0, 0, 0, 1, 0, 0, 3, 0, 0)).toBeCloseTo(4);
   });
 });

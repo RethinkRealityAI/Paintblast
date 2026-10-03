@@ -4,8 +4,8 @@ import {
   createShooterFit,
   fitShooterScale,
   forwardSpeed,
+  gooStrandRgb,
   isThwipPose,
-  shouldYank,
   stepGestureGate,
   StrandState,
 } from '../../src/systems/WebShooterSystem';
@@ -353,45 +353,29 @@ describe('StrandState', () => {
   });
 });
 
-describe('shouldYank', () => {
-  const COLD = Number.POSITIVE_INFINITY;
-
-  it('fires on a hard pull away from the robot', () => {
-    expect(shouldYank(WEB.yankSpeed + 0.5, COLD, WEB)).toBe(true);
+describe('gooStrandRgb (round 9 GOO colour)', () => {
+  it('uses the sRGB paint colour for a flying strand', () => {
+    const out: [number, number, number] = [0, 0, 0];
+    expect(gooStrandRgb([1, 0.2, 0.4, 1], true, false, 0.35, out)).toEqual([1, 0.2, 0.4]);
   });
 
-  it('ignores a hand drifting under the threshold', () => {
-    expect(shouldYank(WEB.yankSpeed - 0.01, COLD, WEB)).toBe(false);
-    expect(shouldYank(0, COLD, WEB)).toBe(false);
+  it('lifts a tether line toward white', () => {
+    const out: [number, number, number] = [0, 0, 0];
+    gooStrandRgb([0, 0.5, 1, 1], true, true, 0.5, out);
+    expect(out[0]).toBeCloseTo(0.5);
+    expect(out[1]).toBeCloseTo(0.75);
+    expect(out[2]).toBeCloseTo(1);
   });
 
-  it('ignores a hand pushed TOWARD the robot', () => {
-    // The projection goes negative, which is how shoving your arm out at the
-    // thing on the end of the line avoids reeling it in.
-    expect(shouldYank(-5, COLD, WEB)).toBe(false);
+  it('falls back to white when the knob is off or no colour is loaded', () => {
+    const out: [number, number, number] = [0, 0, 0];
+    expect(gooStrandRgb([1, 0, 0, 1], false, false, 0.35, out)).toEqual([1, 1, 1]);
+    expect(gooStrandRgb(undefined, true, true, 0.35, out)).toEqual([1, 1, 1]);
   });
 
-  it('swallows a second yank inside the cooldown', () => {
-    expect(shouldYank(5, WEB.yankCooldownMs - 1, WEB)).toBe(false);
-    expect(shouldYank(5, WEB.yankCooldownMs, WEB)).toBe(true);
-  });
-
-  it('has no latch — a sustained haul keeps ratcheting', () => {
-    // Deliberately unlike stepGestureGate. Hand-over-hand pulling must not
-    // require the speed to fall back through zero between yanks.
-    let fired = 0;
-    let sinceMs = COLD;
-    for (let frame = 0; frame < 60; frame++) {
-      if (shouldYank(3, sinceMs, WEB)) {
-        fired++;
-        sinceMs = 0;
-      } else {
-        sinceMs += 1000 / 72;
-      }
-    }
-    // 60 frames at 72 Hz is ~833 ms; at a 250 ms floor that is three or four
-    // hauls, not sixty and not one.
-    expect(fired).toBeGreaterThan(2);
-    expect(fired).toBeLessThan(6);
+  it('clamps garbage input into 0..1', () => {
+    const out: [number, number, number] = [0, 0, 0];
+    gooStrandRgb([2, -1, Number.NaN, 1], true, false, 0, out);
+    expect(out).toEqual([1, 0, 1]);
   });
 });

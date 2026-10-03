@@ -1,5 +1,5 @@
 {
-  "name": "paintblast-mr",
+  "name": "splotopia",
   "version": "1.0.0",
   "description": "Mixed Reality paint ball throwing game built on IWSDK with hand tracking, physics, and agentic dev tools",
   "private": true,

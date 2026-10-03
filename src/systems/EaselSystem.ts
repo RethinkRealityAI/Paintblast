@@ -12,6 +12,7 @@ import {
   PhysicsShape,
   PhysicsShapeType,
   PhysicsState,
+  Pressed,
   Quaternion,
   SRGBColorSpace,
   TwoHandsGrabbable,
@@ -24,6 +25,7 @@ import type { Entity, Object3D } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
 import { EASEL } from '../config';
+import { smoothingAlpha } from '../wrist-frame';
 import {
   BallStyle,
   GameEvent,
@@ -110,6 +112,22 @@ export function orientationDims(
  * Marks the single easel entity. The numbers mirror what the system computed
  * so `ecs_query_entity` can inspect a live easel from the MCP tools.
  */
+/**
+ * Round 9: height of the board's centre for a head at `headY` metres —
+ * EASEL.boardBelowEyes under the eyes, clamped to
+ * [boardCentreMinHeight, boardCentreMaxHeight]. Seated (~1.2 m) and standing
+ * (~1.6 m) players both get the board at their sight line, with its bottom
+ * edge above the docked HUD's top edge in either orientation, so leaning in
+ * never pushes the HUD (0.95 m ahead of the head) through the board. Non-finite input falls back to EASEL.boardCentreHeight.
+ */
+export function easelCentreHeight(headY: number): number {
+  if (!Number.isFinite(headY)) return EASEL.boardCentreHeight;
+  return Math.min(
+    EASEL.boardCentreMaxHeight,
+    Math.max(EASEL.boardCentreMinHeight, headY - EASEL.boardBelowEyes),
+  );
+}
+
 export const Easel = createComponent('Easel', {
   /** Half the canvas board's width, metres. */
   halfWidth: { type: Types.Float32, default: EASEL.boardWidth / 2 },
@@ -220,6 +238,14 @@ export class EaselSystem extends createSystem({
   private stampCount = 0;
   private saveCount = 0;
 
+  /**
+   * Round 7 grab smoothing: the pose the easel is *drawn* at while (and just
+   * after) it is grabbed. @see smoothGrab
+   */
+  private grabShownPos!: Vector3;
+  private grabShownQ!: Quaternion;
+  private grabPrimed = false;
+
   /** Board + painting dimensions for the orientation currently on the stand. */
   private dims: EaselDims = orientationDims(false, EASEL);
   private portrait = false;
@@ -239,6 +265,8 @@ export class EaselSystem extends createSystem({
     this.measureBox = new Box3();
     this.measureSize = new Vector3();
     this.measureCenter = new Vector3();
+    this.grabShownPos = new Vector3();
+    this.grabShownQ = new Quaternion();
 
     this.createSurfaces();
 
@@ -253,12 +281,69 @@ export class EaselSystem extends createSystem({
     );
   }
 
-  update() {
+  update(delta: number) {
     // Cheapest possible gate first: outside Chill there is no easel to paint,
     // and this keeps the query lookup below (which allocates a Set iterator)
     // off the hot path during a round.
-    if (this.gamePhase.peek() !== GamePhase.Chill) return;
+    if (this.gamePhase.peek() !== GamePhase.Chill) {
+      this.grabPrimed = false;
+      return;
+    }
 
+    // Paint first, against this frame's raw pose — the one the physics
+    // collider was just moved to — then smooth what gets drawn.
+    this.paintImpacts();
+    this.smoothGrab(delta);
+  }
+
+  /**
+   * Round 7: a two-handed grab used to drag the easel with every tremor of
+   * both tracked hands, which on a 60 cm board reads as jitter. IWSDK's
+   * GrabSystem (priority -3) writes the raw grabbed pose, PhysicsSystem (-2)
+   * moves the kinematic collider to it, and then — here, before render — the
+   * pose that is *drawn* is low-passed toward it with time constant
+   * {@link EASEL.grabSmoothingSec}. The grab handle recomputes its target from
+   * the grab's start every frame, so overwriting the drawn pose never feeds
+   * back into it; and after release the physics body holds the raw pose while
+   * the drawn one glides the last centimetre onto it, rather than snapping.
+   */
+  private smoothGrab(delta: number): void {
+    const entity = this.currentEasel();
+    const object3D = entity?.object3D;
+    if (!entity || !object3D || !object3D.visible) {
+      this.grabPrimed = false;
+      return;
+    }
+
+    const grabbed = entity.hasComponent(Pressed);
+    if (!this.grabPrimed) {
+      if (!grabbed) return;
+      this.grabShownPos.copy(object3D.position);
+      this.grabShownQ.copy(object3D.quaternion);
+      this.grabPrimed = true;
+      return;
+    }
+
+    const alpha = smoothingAlpha(delta, EASEL.grabSmoothingSec);
+    this.grabShownPos.lerp(object3D.position, alpha);
+    this.grabShownQ.slerp(object3D.quaternion, alpha);
+
+    // Released and settled: hand the pose back to physics untouched.
+    if (
+      !grabbed &&
+      this.grabShownPos.distanceToSquared(object3D.position) < 1e-6 &&
+      this.grabShownQ.angleTo(object3D.quaternion) < 0.002
+    ) {
+      this.grabPrimed = false;
+      return;
+    }
+
+    object3D.position.copy(this.grabShownPos);
+    object3D.quaternion.copy(this.grabShownQ);
+  }
+
+  /** Stamp every ball that hit the canvas this frame onto the painting. */
+  private paintImpacts(): void {
     const events = this.events;
     const count = events.count;
     if (count === 0) return;
@@ -335,7 +420,7 @@ export class EaselSystem extends createSystem({
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
-        anchor.download = `paintblast-painting-${index}.png`;
+        anchor.download = `splotopia-painting-${index}.png`;
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
@@ -671,9 +756,11 @@ export class EaselSystem extends createSystem({
     }
     this.headForward.normalize();
 
+    // Round 9: within seated reach, and planted relative to the eyes (seated
+    // or standing) rather than at a fixed 1.2 m. @see easelCentreHeight
     object3D.position.set(
       this.headPosition.x + this.headForward.x * EASEL.spawnDistance,
-      EASEL.boardCentreHeight,
+      head ? easelCentreHeight(this.headPosition.y) : EASEL.boardCentreHeight,
       this.headPosition.z + this.headForward.z * EASEL.spawnDistance,
     );
 

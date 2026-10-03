@@ -509,35 +509,32 @@ describe('WEB', () => {
     expect('statusText' in WEB).toBe(false);
   });
 
-  it('wears a shooter small enough to sit on a real wrist', () => {
-    expect(WEB.shooterLengthMeters).toBeGreaterThan(0);
+  it('wears a shooter small enough to sit on a real forearm', () => {
+    expect(WEB.shooterLengthMeters).toBeGreaterThan(0.07);
     expect(WEB.shooterLengthMeters).toBeLessThan(0.2);
-    expect(WEB.shooterBandMeters).toBeGreaterThan(0);
-    // A band wider than a fist is not a band. Adult wrists run 5-7 cm across.
+    // Straps sized to a forearm: adult wrists run 5-7 cm across.
     expect(WEB.shooterBandMeters).toBeGreaterThan(0.05);
     expect(WEB.shooterBandMeters).toBeLessThan(0.11);
   });
 
-  it('leaves the length as a cap above the band it actually fits', () => {
-    // fitShooterScale fits the band and only falls back to the length when
-    // band-fitting would overshoot it. A cap under the target would mean the
-    // fallback fires every time and the band target never applies at all.
-    expect(WEB.shooterBandMeters).toBeLessThan(WEB.shooterLengthMeters);
-  });
-
-  it('grew after round 4 called the shooter too small', () => {
-    expect(WEB.shooterLengthMeters).toBeGreaterThan(0.07);
-  });
-
-  it('mounts the shooter on the palm side, back at the wrist', () => {
-    // The round-5 field fix, and both signs are the fix. +Y is out of the BACK
-    // of the hand (where round 4 put it, and where the field said it did not
-    // belong); +Z is back toward the elbow, where a cuff is actually worn.
+  it('mounts the gauntlet on the palm side, up the forearm from the wrist', () => {
+    // Round 7's aim frame: +Y is the back of the hand, +Z is up the arm.
     expect(WEB.shooterOffsetY).toBeLessThan(0);
     expect(WEB.shooterOffsetZ).toBeGreaterThan(0);
-    // Still on the wrist rather than floating off it.
+    // On the arm rather than floating off it.
     expect(Math.abs(WEB.shooterOffsetY)).toBeLessThan(WEB.shooterBandMeters);
-    expect(WEB.shooterOffsetZ).toBeLessThan(0.1);
+    expect(WEB.shooterOffsetZ).toBeLessThan(WEB.shooterLengthMeters);
+  });
+
+  it('builds the gauntlet along the aim, so no mount rotation is needed', () => {
+    // The round 4-6 ring cuff needed yaw 90 / roll 180 to be coaxed onto an
+    // axis the hand-tracking grip did not even have. The round-7 gauntlet is
+    // authored along -Z, the direction webs fly: any non-zero default here
+    // would turn it off the forearm again.
+    expect(WEB.shooterUseGlb).toBe(false);
+    expect(WEB.shooterYawDeg).toBe(0);
+    expect(WEB.shooterPitchDeg).toBe(0);
+    expect(WEB.shooterRollDeg).toBe(0);
   });
 
   it('keeps the mount angles inside one full turn', () => {
@@ -551,23 +548,39 @@ describe('WEB', () => {
     }
   });
 
-  it('yaws the band a quarter turn onto the forearm', () => {
-    // The shipped GLB is a cuff whose hole runs along its own X. At yaw 0 that
-    // hole points sideways across the wrist, which is the "parallel to the
-    // forearm / on top" the field report complained about.
-    expect(Math.abs(WEB.shooterYawDeg)).toBe(90);
+  it('puts the nozzle on the barrel axis, out in front', () => {
+    expect(WEB.muzzleLocal).toHaveLength(3);
+    // On the axis the webs travel along, so strand and shot leave the tip.
+    expect(WEB.muzzleLocal[0]).toBe(0);
+    expect(WEB.muzzleLocal[1]).toBe(0);
+    // Forward (-Z) of the device centre, past the body, but not out in space.
+    expect(WEB.muzzleLocal[2]).toBeLessThan(-WEB.shooterLengthMeters / 2);
+    expect(WEB.muzzleLocal[2]).toBeGreaterThan(-WEB.shooterLengthMeters);
   });
 
-  it('puts the nozzle on the band rather than out in space', () => {
-    expect(WEB.muzzleLocal).toHaveLength(3);
-    for (const axis of WEB.muzzleLocal) {
-      expect(Number.isFinite(axis)).toBe(true);
-      // Anywhere on or just inside the band, never further than its diameter.
-      expect(Math.abs(axis)).toBeLessThanOrEqual(WEB.shooterBandMeters);
-    }
-    // Underside and leading edge: the two things the field asked for.
-    expect(WEB.muzzleLocal[1]).toBeLessThan(0);
-    expect(WEB.muzzleLocal[2]).toBeLessThan(0);
+  it('aims hands along the OS ray by default, and smooths only a little', () => {
+    expect(['ray', 'hand']).toContain(WEB.handAimSource);
+    expect(WEB.handAimSource).toBe('ray');
+    expect(WEB.shooterSmoothingSec).toBeGreaterThanOrEqual(0);
+    // Longer than ~60 ms and the barrel visibly trails the arm.
+    expect(WEB.shooterSmoothingSec).toBeLessThan(0.06);
+    expect(WEB.controllerWristBack).toBeGreaterThan(0.03);
+    expect(WEB.controllerWristBack).toBeLessThan(0.12);
+  });
+
+  it('makes webs zip: faster and flatter than paint, never weightless', () => {
+    expect(WEB.webSpeedMult).toBeGreaterThan(1);
+    expect(WEB.webSpeedMult).toBeLessThan(2.5);
+    expect(WEB.webGravityFactor).toBeGreaterThan(0);
+    expect(WEB.webGravityFactor).toBeLessThan(1);
+  });
+
+  it('gives webs a wider, but still gentle, aim-assist cone than paint', () => {
+    expect(FIRE.aimAssistDeg).toBeGreaterThanOrEqual(0);
+    expect(WEB.aimAssistDeg).toBeGreaterThan(FIRE.aimAssistDeg);
+    // Past ~15 degrees it stops being assist and starts being autoaim.
+    expect(WEB.aimAssistDeg).toBeLessThan(15);
+    expect(FIRE.aimAssistMaxRange).toBeGreaterThan(TARGETS.ringMaxR);
   });
 
   it('clears the hand before the web exists', () => {
@@ -608,8 +621,15 @@ describe('WEB', () => {
     expect(WEB.thrustWindowSec).toBeLessThan(0.25);
   });
 
-  it('ships the joint-driven gesture switched on', () => {
-    expect(WEB.gestureEnabled).toBe(true);
+  it('ships the finger-curl FLICK gesture switched off (round 9)', () => {
+    // Reads as the rock sign and misfires; pinch/trigger and thrust still fire.
+    expect(WEB.gestureEnabled).toBe(false);
+  });
+
+  it('tints GOO strands with the paint colour by default', () => {
+    expect(WEB.gooUsesPaintColor).toBe(true);
+    expect(WEB.gooTetherLift).toBeGreaterThanOrEqual(0);
+    expect(WEB.gooTetherLift).toBeLessThanOrEqual(1);
   });
 
   it('pools enough strands to cover the balls in the air', () => {
@@ -630,13 +650,6 @@ describe('WEB', () => {
     expect(WEB.splatSizeMult).toBeGreaterThan(1);
   });
 
-  it('rolls the mount half a turn for the palm-up pose', () => {
-    // Round 5 mounted the cuff for a fists-down punch; the field report was
-    // that the pose people adopt is the Spider-Man one, forearm supinated with
-    // the underside of the wrist turned up toward their own face.
-    expect(Math.abs(WEB.shooterRollDeg)).toBe(180);
-  });
-
   it('pops a tether close enough to be in your face, not across the room', () => {
     expect(WEB.tetherKillRadius).toBeGreaterThan(0.3);
     expect(WEB.tetherKillRadius).toBeLessThan(1.5);
@@ -649,27 +662,52 @@ describe('WEB', () => {
     expect(WEB.tetherMaxSec).toBeLessThan(GAME.roundSec);
   });
 
-  it('needs a softer pull to yank than to thrust', () => {
-    // A yank is a tug on a line you can see; a thrust has to be hard enough
-    // that ordinary arm movement never trips it.
-    expect(WEB.yankSpeed).toBeGreaterThan(0.5);
-    expect(WEB.yankSpeed).toBeLessThan(WEB.thrustSpeed);
+  it('tells a release tap from a hold-to-reel', () => {
+    // Longer than a deliberate tap, far shorter than a reel anyone holds.
+    expect(WEB.releaseTapMs).toBeGreaterThan(120);
+    expect(WEB.releaseTapMs).toBeLessThan(500);
   });
 
-  it('ratchets the yank faster than it gates the gestures', () => {
-    // Repeated yanking is the intended verb here, unlike the thwip, so this
-    // cooldown only has to stop one continuous pull registering several times.
-    expect(WEB.yankCooldownMs).toBeGreaterThan(0);
-    expect(WEB.yankCooldownMs).toBeLessThan(WEB.gestureCooldownMs);
+  it('treats only an impossible palm jump as a reacquired hand', () => {
+    // A real hand at a hard 4 m/s covers ~6 cm in a 72 Hz frame; a dropout
+    // and reacquire jumps tens of centimetres.
+    expect(WEB.reacquireJumpMeters).toBeGreaterThan(4 / 72);
+    expect(WEB.reacquireJumpMeters).toBeLessThan(1);
   });
 
-  it('reels by hand faster than by holding, or nobody would ever yank', () => {
-    // One yank must beat one second of holding by enough to feel like a haul.
-    expect(WEB.yankReelMeters).toBeGreaterThan(0);
+  it('catches a tether on a brush, but not from across the room', () => {
+    expect(WEB.tetherLatchBonus).toBeGreaterThan(0);
+    expect(WEB.tetherLatchBonus).toBeLessThan(0.3);
+  });
+
+  it('ignores tracking jitter before the pull ratchet takes in line', () => {
+    // A still hand jitters at a few cm/s; a deliberate haul is well over 0.5.
+    expect(WEB.pullDeadband).toBeGreaterThan(0.05);
+    expect(WEB.pullDeadband).toBeLessThan(0.5);
+    expect(WEB.pullGain).toBeGreaterThan(1);
+    expect(WEB.pullGain).toBeLessThan(5);
+  });
+
+  it('glides the robot in faster than any single haul source queues line', () => {
+    // If the glide were slower than the hold-reel, the queue would grow
+    // without bound while a pinch is held and the robot would lag the line.
     expect(WEB.reelSpeed).toBeGreaterThan(0);
-    expect(WEB.yankReelMeters / (WEB.yankCooldownMs / 1000)).toBeGreaterThan(
-      WEB.reelSpeed,
-    );
+    expect(WEB.reelGlideSpeed).toBeGreaterThan(WEB.reelSpeed);
+    expect(WEB.reelQueueMax).toBeGreaterThan(0);
+    // A burst of pulling must settle in well under a second.
+    expect(WEB.reelQueueMax / WEB.reelGlideSpeed).toBeLessThan(0.5);
+  });
+
+  it('rate-limits the reel rumble to a ratchet, not a buzz', () => {
+    expect(WEB.reelFeedbackMs).toBeGreaterThan(1000 / 72);
+    expect(WEB.reelFeedbackMs).toBeLessThan(300);
+  });
+
+  it('struggles visibly but not violently on the line', () => {
+    expect(WEB.tetherStruggleRad).toBeGreaterThan(0);
+    expect(WEB.tetherStruggleRad).toBeLessThan(0.6);
+    expect(WEB.tetherStruggleHz).toBeGreaterThan(1);
+    expect(WEB.tetherStruggleHz).toBeLessThan(20);
   });
 
   it('sizes the selector pads for a fingertip on a wrist', () => {
@@ -682,11 +720,15 @@ describe('WEB', () => {
     );
   });
 
-  it('floats the selector clear of the cuff, on the palm side', () => {
-    // Same sign as shooterOffsetY (palm side), and further out, or the pads
-    // would be inside the model the player is trying to poke past.
-    expect(WEB.selectorOffsetY).toBeLessThan(WEB.shooterOffsetY);
-    expect(Math.abs(WEB.selectorOffsetY)).toBeLessThan(0.12);
+  it('floats the selector clear of the gauntlet, on the palm side', () => {
+    // In the holder frame (origin = device centre): negative is the palm
+    // side, and further out than the ~1.6 cm body or the pads sit inside it.
+    expect(WEB.selectorOffsetY).toBeLessThan(-0.016);
+    expect(Math.abs(WEB.selectorOffsetY)).toBeLessThan(0.06);
+    // On the device, not past either end of it.
+    expect(Math.abs(WEB.selectorOffsetZ)).toBeLessThan(
+      WEB.shooterLengthMeters / 2,
+    );
   });
 
   it('lights the selected pad without blowing out the other one', () => {
@@ -800,7 +842,7 @@ describe('AUDIO', () => {
   });
 
   it('declares the two round-4 web cues', () => {
-    expect(AUDIO.thwip).toBe('/audio/thwip.mp3');
+    expect(AUDIO.flick).toBe('/audio/flick.mp3');
     expect(AUDIO.webHit).toBe('/audio/web-hit.mp3');
   });
 
@@ -812,8 +854,8 @@ describe('AUDIO', () => {
     );
   });
 
-  it('makes the thwip carry, since it is the whole point of web mode', () => {
-    expect(AUDIO_VOLUME.thwip).toBeGreaterThan(AUDIO_VOLUME.fire);
+  it('makes the GOO flick carry, since it is the whole point of the mode', () => {
+    expect(AUDIO_VOLUME.flick).toBeGreaterThan(AUDIO_VOLUME.fire);
   });
 
   it('gives every cue a gain, and never a silent or clipping one', () => {

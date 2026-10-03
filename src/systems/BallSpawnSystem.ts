@@ -5,6 +5,7 @@ import {
   Mesh,
   SphereGeometry,
   MeshStandardMaterial,
+  MeshPhysicalMaterial,
   Color,
   Vector3,
   Quaternion,
@@ -13,30 +14,56 @@ import {
   Hovered,
   InputComponent,
   Pressed,
-  OneHandGrabbable,
   PanelUI,
+  PanelDocument,
   PhysicsBody,
   PhysicsShape,
   PhysicsManipulation,
   PhysicsState,
   PhysicsShapeType,
-  DepthOccludable,
+  SRGBColorSpace,
 } from '@iwsdk/core';
 import type { Entity, Material, Object3D } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
-import { BALLS, BALL_KIND_CONFIG, CHILL, FIRE, PALETTE, WEB } from '../config';
 import {
+  BALLS,
+  BALL_KIND_CONFIG,
+  BLASTER,
+  CHILL,
+  FIRE,
+  PALETTE,
+  RENDER,
+  WEB,
+} from '../config';
+import { pickAssistedAim } from '../wrist-frame';
+import type { AimAssistConfig } from '../wrist-frame';
+import { signal } from '@preact/signals-core';
+import {
+  AimTargets,
+  BlasterMode,
+  syncBlasterMode,
   BallKind,
   BallStyle,
   GameEvent,
   GameEventBuffer,
   GamePhase,
+  GauntletMuzzles,
   WEB_BALL_COLOR,
   WebSubMode,
   nextWebSubMode,
   packFiredData,
+  TutorialStep,
 } from '../types';
+import { Easel } from './EaselSystem';
+
+const DEG_TO_RAD = Math.PI / 180;
+
+/**
+ * Havok's world gravity, m/s^2 — IWSDK's PhysicsSystem default. Aim assist
+ * solves the ballistic arc with it, scaled by each style's gravity factor.
+ */
+const GRAVITY = 9.81;
 
 /** Values of Ball.flightState. Drives which per-frame checks BallFlightSystem runs. */
 export const BallFlightState = {
@@ -147,6 +174,16 @@ export const WebModePad = createComponent('WebModePad', {
   mode: { type: Types.Int8, default: WebSubMode.Splat },
 });
 
+/**
+ * One of the palette's three launcher pads — HAND / BLASTER / WEB (round 8).
+ * Built in main.ts's `seedWristPalette`; pressed, proximity-selected and
+ * relit here with the dabs and chips, through the same paths.
+ */
+export const BlasterModePad = createComponent('BlasterModePad', {
+  /** @see BlasterMode */
+  mode: { type: Types.Int8, default: BlasterMode.Paint },
+});
+
 /** Scale applied to the currently selected paint dab / ammo chip. */
 export const SELECTED_SLOT_SCALE = 1.3;
 
@@ -242,6 +279,53 @@ export function canFireInPhase(
   );
 }
 
+/** How the trigger/pinch path fires this frame. Caller-owned. */
+export interface FireGate {
+  /** True: fire while held (getSelecting). False: once per press (getSelectStart). */
+  level: boolean;
+  /** Minimum milliseconds between shots from one hand. */
+  cooldownMs: number;
+}
+
+/** A default FireGate to hand to {@link resolveFireGate}. */
+export function createFireGate(): FireGate {
+  return { level: false, cooldownMs: 0 };
+}
+
+/**
+ * Decide how the trigger/pinch fires (round 8).
+ *
+ * - **BLASTER mode** auto-fires: hold to keep shooting at
+ *   `autoFireCooldownMs`, in every phase where firing is allowed at all.
+ * - **Chill** sprays on hold at `sprayCooldownMs`, whatever the mode.
+ * - Both at once: the shorter cooldown wins.
+ * - Otherwise one ball per press at `cooldownMs` (HAND and WEB — a held
+ *   pinch on a tethered hand reels instead, see WebShooterSystem).
+ *
+ * Pure apart from writing `out`; exported for tests.
+ */
+export function resolveFireGate(
+  mode: BlasterMode,
+  chilling: boolean,
+  cooldownMs: number,
+  sprayCooldownMs: number,
+  autoFireCooldownMs: number,
+  out: FireGate,
+): FireGate {
+  const auto = mode === BlasterMode.Paint;
+  out.level = chilling || auto;
+  if (chilling && auto) {
+    out.cooldownMs = Math.min(sprayCooldownMs, autoFireCooldownMs);
+  } else if (chilling) {
+    out.cooldownMs = sprayCooldownMs;
+  } else if (auto) {
+    out.cooldownMs = autoFireCooldownMs;
+  } else {
+    out.cooldownMs = cooldownMs;
+  }
+  return out;
+}
+
 /**
  * Paint one chip as selected or not: the swell, plus an emissive lift in the
  * chip's own identity colour.
@@ -301,7 +385,9 @@ function paintChipSelection(
  * WebShooterSystem hides when paint is loaded. Walks a chain three or four deep
  * on a squeeze-down edge.
  */
-function visibleInWorld(object3D: Object3D | null | undefined): boolean {
+export function visibleInWorld(
+  object3D: Object3D | null | undefined,
+): boolean {
   let node: Object3D | null | undefined = object3D;
   if (!node) return false;
   while (node) {
@@ -309,6 +395,90 @@ function visibleInWorld(object3D: Object3D | null | undefined): boolean {
     node = node.parent;
   }
   return true;
+}
+
+/** How a visible UI panel swallows trigger pulls. @see panelBlockMode */
+export const PanelBlockMode = {
+  /** Anywhere on the panel's visible (laid-out) rectangle. */
+  Rect: 0,
+  /** Only over one of its visible buttons. */
+  ButtonsOnly: 1,
+} as const;
+export type PanelBlockMode = typeof PanelBlockMode[keyof typeof PanelBlockMode];
+
+/**
+ * Round 9: which part of a visible panel blocks a shot in `phase`.
+ *
+ * In Countdown and Playing the HUD is docked low in front of the player
+ * (HUD.playOffset) and is a scoreboard, not a menu: blocking its whole
+ * rectangle silently ate every shot at a low robot (Duster Duke stands at
+ * 0.4 m, 2 m out). There only a ray over a real button (CLEAR PAINT) is a
+ * click. Everywhere else the panel is a menu, and pointing anywhere on it
+ * still takes precedence over shooting.
+ */
+export function panelBlockMode(
+  phase: GamePhase,
+  tutorialActive = false,
+): PanelBlockMode {
+  // The tutorial docks its card low in front like the scoreboard, and its
+  // first step is "fire at the ring" — the card's rectangle must not eat that
+  // shot. Its SKIP button is a btn-, so it still blocks.
+  return tutorialActive ||
+    phase === GamePhase.Playing ||
+    phase === GamePhase.Countdown
+    ? PanelBlockMode.ButtonsOnly
+    : PanelBlockMode.Rect;
+}
+
+/**
+ * Does a world-space ray (origin o, unit direction d) cross the rectangle
+ * |x| <= halfW, |y| <= halfH of a local z = 0 plane within `maxT` metres?
+ * `inv` is the column-major inverse of that plane's world matrix (any
+ * affine scale is fine: the ray parameter survives an affine map, so `t`
+ * stays in world metres). Pure; exported for tests.
+ */
+export function rayHitsLocalRect(
+  inv: ArrayLike<number>,
+  ox: number,
+  oy: number,
+  oz: number,
+  dx: number,
+  dy: number,
+  dz: number,
+  halfW: number,
+  halfH: number,
+  maxT: number,
+): boolean {
+  const m = inv;
+  const lox = m[0] * ox + m[4] * oy + m[8] * oz + m[12];
+  const loy = m[1] * ox + m[5] * oy + m[9] * oz + m[13];
+  const loz = m[2] * ox + m[6] * oy + m[10] * oz + m[14];
+  const ldx = m[0] * dx + m[4] * dy + m[8] * dz;
+  const ldy = m[1] * dx + m[5] * dy + m[9] * dz;
+  const ldz = m[2] * dx + m[6] * dy + m[10] * dz;
+  if (Math.abs(ldz) < 1e-9) return false;
+  const t = -loz / ldz;
+  if (!(t >= 0) || t > maxT) return false;
+  return (
+    Math.abs(lox + ldx * t) <= halfW && Math.abs(loy + ldy * t) <= halfH
+  );
+}
+
+/**
+ * The bits of a uikit Component this file reads, typed locally so the
+ * firing code does not depend on uikit's types. A uikit component's
+ * matrixWorld maps a unit square centred on its origin onto its laid-out
+ * rectangle (uikit's own raycast uses exactly that panel matrix).
+ */
+interface UiComponentLike extends Object3D {
+  size?: { peek(): unknown };
+  isVisible?: { peek(): boolean };
+  properties?: { signal?: { id?: { peek?(): unknown; value?: unknown } } };
+}
+
+/** The document IWSDK's PanelUISystem attaches (UIKitDocument), as read here. */
+interface PanelDocumentLike {
+  rootElement?: UiComponentLike;
 }
 
 /**
@@ -350,6 +520,8 @@ export class BallSpawnSystem extends createSystem({
   // landed it.
   pads: { required: [WebModePad] },
   pressedPads: { required: [WebModePad, Pressed] },
+  modePads: { required: [BlasterModePad] },
+  pressedModePads: { required: [BlasterModePad, Pressed] },
   // Anything under a pointer that is not a ball or part of the palette blocks
   // the trigger, so clicking UI never also fires.
   //
@@ -365,13 +537,16 @@ export class BallSpawnSystem extends createSystem({
   // it would lock BOTH triggers for the whole session.
   hoveredUI: {
     required: [Interactable, Hovered],
-    excluded: [Ball, PaintDab, KindChip, WebModePad],
+    excluded: [Ball, PaintDab, KindChip, WebModePad, BlasterModePad],
   },
   // PanelUI panels run their own pointer pipeline and never receive the
   // Hovered tag, so pointing at the HUD is tested geometrically per shot
   // (ray vs panel rectangle) instead — see isPointingAtPanel().
   panels: { required: [PanelUI] },
   balls: { required: [Ball] },
+  // Round 9: a pinch that grabs the easel (TwoHandsGrabbable with
+  // useHandPinchForGrab) must not also spray paint in Chill.
+  pressedEasel: { required: [Easel, Pressed] },
 }) {
   private sharedGeometry!: SphereGeometry;
   private materialCache!: Map<string, MeshStandardMaterial>;
@@ -383,11 +558,19 @@ export class BallSpawnSystem extends createSystem({
   private scratchPanelMatrix!: Matrix4;
   private scratchGripPosition!: Vector3;
   private scratchElementPosition!: Vector3;
+  /** Round 9: each panel document's buttons, found once. @see panelButtons */
+  private readonly buttonCache = new WeakMap<object, UiComponentLike[]>();
 
   private activeKind!: Signal<BallKind>;
   private activeStyle!: Signal<BallStyle>;
   private activeColor!: Signal<readonly [number, number, number, number]>;
   private webSubMode!: Signal<WebSubMode>;
+  /** Round 8: HAND / BLASTER / WEB, kept in sync with activeStyle here. */
+  private blasterMode!: Signal<BlasterMode>;
+  /** PauseClock's flag; optional so a test world without it never pauses. */
+  private pausedSignal?: Signal<boolean>;
+  /** The paint mode (Hand or Paint) to return to when leaving Web. */
+  private lastPaintMode: BlasterMode = BlasterMode.Paint;
   /**
    * Bitmask of hands currently holding a tether: bit 0 left, bit 1 right.
    * Written by TargetSystem, read here only to keep a reeling squeeze from
@@ -399,12 +582,38 @@ export class BallSpawnSystem extends createSystem({
   private events!: GameEventBuffer;
   /** Scratch for {@link resolveShot} — one shot's worth, reused every shot. */
   private loadout!: ShotLoadout;
+  /** Live robot positions, for aim assist. Written by TargetSystem. */
+  private aimTargets?: AimTargets;
+  /**
+   * Aim-assist settings for paint and for webbing, built once: speed and
+   * gravity differ by style, and a fresh object per shot is exactly the kind
+   * of allocation this file never makes.
+   */
+  private paintAssist!: AimAssistConfig;
+  private webAssist!: AimAssistConfig;
+  /** Scratch for {@link pickAssistedAim}: candidate and chosen directions. */
+  private assistScratch!: Float32Array;
+  private assistOut!: Float32Array;
+  /**
+   * Per hand, 1 while the current pinch (or trigger) press was spent selecting
+   * something on the palette (round 7). Cleared when the press ends. Without
+   * it a hand-tracking pinch on a chip also fired a ball at the player's own
+   * wrist — and in Chill, sprayed for as long as the pinch was held.
+   */
+  private pressConsumed!: Uint8Array;
 
   // Per-hand cooldown timestamps (performance.now() ms) and the entity indices
   // needed to move the "selected" highlights, kept as scalars so the system
   // never holds entity references.
   private lastFireLeftMs = 0;
   private lastFireRightMs = 0;
+  /** Scratch for {@link resolveFireGate}, written once per frame. */
+  private readonly fireGate: FireGate = createFireGate();
+  /**
+   * Where each gauntlet launches from (round 8), written by GauntletSystem.
+   * Bound on first use: GauntletSystem creates it in its own init().
+   */
+  private gauntletMuzzles?: GauntletMuzzles;
   private selectedDabIndex = -1;
   private previousDabIndex = -1;
 
@@ -425,10 +634,30 @@ export class BallSpawnSystem extends createSystem({
       readonly [number, number, number, number]
     >;
     this.webSubMode = this.globals.webSubMode as Signal<WebSubMode>;
+    this.blasterMode =
+      (this.globals.blasterMode as Signal<BlasterMode> | undefined) ??
+      signal<BlasterMode>(BlasterMode.Paint);
     this.tetheredHands = this.globals.tetheredHands as Signal<number>;
+    this.pausedSignal = this.globals.paused as Signal<boolean> | undefined;
     this.gamePhase = this.globals.gamePhase as Signal<GamePhase>;
     this.events = this.globals.gameEvents as GameEventBuffer;
     this.loadout = createShotLoadout();
+    this.aimTargets = this.globals.aimTargets as AimTargets | undefined;
+    this.pressConsumed = new Uint8Array(2);
+    this.assistScratch = new Float32Array(3);
+    this.assistOut = new Float32Array(3);
+    this.paintAssist = {
+      speed: FIRE.speed,
+      gravity: GRAVITY,
+      maxAngleRad: FIRE.aimAssistDeg * DEG_TO_RAD,
+      maxRange: FIRE.aimAssistMaxRange,
+    };
+    this.webAssist = {
+      speed: FIRE.speed * WEB.webSpeedMult,
+      gravity: GRAVITY * WEB.webGravityFactor,
+      maxAngleRad: WEB.aimAssistDeg * DEG_TO_RAD,
+      maxRange: FIRE.aimAssistMaxRange,
+    };
 
     // main.ts seeds activeColor from INITIAL_PALETTE_SELECTION and pre-scales
     // the first dab, and dabs are created in PALETTE_DAB_ORDER — so the first
@@ -448,12 +677,41 @@ export class BallSpawnSystem extends createSystem({
       this.queries.chips.subscribe('qualify', () => this.applyChipHighlight()),
       this.queries.pads.subscribe('qualify', () => this.applyPadHighlight()),
       this.queries.pressedDabs.subscribe('qualify', (dab) => {
+        this.consumeActivePinches();
         this.selectColor(dab);
       }),
       this.queries.pressedChips.subscribe('qualify', (chip) => {
+        this.consumeActivePinches();
         this.selectChip(chip);
       }),
+      this.queries.modePads.subscribe('qualify', () =>
+        this.applyModePadHighlight(),
+      ),
+      this.queries.pressedModePads.subscribe('qualify', (pad) => {
+        this.consumeActivePinches();
+        this.selectBlasterMode(
+          (pad.getValue(BlasterModePad, 'mode') ??
+            BlasterMode.Paint) as BlasterMode,
+        );
+      }),
+      // The two axes stay in sync whoever writes either: the palette's WEB
+      // chip, the HUD's WEB MODE button and a dab all write activeStyle; the
+      // mode pads and the Armory write blasterMode. @see syncBlasterMode
+      this.activeStyle.subscribe((style) => {
+        const next = syncBlasterMode(
+          this.blasterMode.peek(),
+          style === BallStyle.Web,
+          this.lastPaintMode,
+        );
+        if (next !== this.blasterMode.peek()) this.blasterMode.value = next;
+      }),
+      this.blasterMode.subscribe((mode) => {
+        if (mode !== BlasterMode.Web) this.lastPaintMode = mode;
+        this.loadStyle(mode === BlasterMode.Web ? BallStyle.Web : BallStyle.Paint);
+        this.applyModePadHighlight();
+      }),
       this.queries.pressedPads.subscribe('qualify', (pad) => {
+        this.consumeActivePinches();
         this.selectSubMode(
           (pad.getValue(WebModePad, 'mode') ?? WebSubMode.Splat) as WebSubMode,
         );
@@ -468,10 +726,19 @@ export class BallSpawnSystem extends createSystem({
       // shooters were plainly on the player's wrists.
       this.activeStyle.subscribe(() => this.applyChipHighlight()),
       this.activeKind.subscribe(() => this.applyChipHighlight()),
+      // Round 9: the pinch that grabs the easel is spent, exactly like a
+      // pinch on a dab — Chill's spray is level-triggered, so without this
+      // every grab painted a stripe while you moved the easel.
+      this.queries.pressedEasel.subscribe('qualify', () => {
+        this.consumeActivePinches();
+      }),
     );
   }
 
   update() {
+    // A press spent on the palette stays spent until it is released.
+    this.releaseConsumedPresses();
+
     // Palette selection by squeeze works in EVERY phase, and deliberately does
     // not go through the pointer pipeline: near the wrist palette the touch
     // pointer's 15 cm hover sphere outranks the grab pointer (MultiPointer
@@ -480,6 +747,17 @@ export class BallSpawnSystem extends createSystem({
     // frame cannot be outranked by anything.
     this.trySelectByProximity('left');
     this.trySelectByProximity('right');
+    // Round 7: the same guarantee for a tracked hand's pinch, measured at the
+    // fingertip — and that pinch is then spent, so it never also fires.
+    // Right hand only: the palette and the selector pads both ride the LEFT
+    // arm, and the left hand's own fingertip sits a few centimetres from its
+    // dabs — so a left pinch (firing, or gripping the easel) would otherwise
+    // change ammo and eat the press.
+    this.trySelectByPinch('right');
+    // Round 9: while the easel is held, a fresh pinch from either tracked
+    // hand is the second hand joining the two-handed grab (the Pressed tag is
+    // already on, so the qualify above does not fire again): spend it too.
+    if (this.queries.pressedEasel.entities.size > 0) this.consumeNewPinches();
 
     const phase = this.gamePhase.peek();
     const chilling = phase === GamePhase.Chill;
@@ -487,6 +765,11 @@ export class BallSpawnSystem extends createSystem({
     // the trigger out of here whenever the (now deleted) Web phase was running,
     // because WebShooterSystem also claimed it and one pull threw two balls.
     if (!canFireInPhase(phase, FIRE.sandboxFireInIdle)) return;
+    // Paused (Quest menu, headset off): never fire. BLASTER auto-fire is
+    // level-triggered, and GauntletSystem leaves its muzzles at the last
+    // (stale) pose while paused — a trigger reported held across a blur
+    // would otherwise keep spraying from where the arm used to be.
+    if (this.pausedSignal?.peek()) return;
 
     // The controller shortcut for the wrist selector. Checked before the UI
     // gate on purpose: pointing at the menu is a reason not to *shoot*, never a
@@ -497,8 +780,17 @@ export class BallSpawnSystem extends createSystem({
     if (this.queries.hoveredUI.entities.size > 0) return;
 
     const nowMs = performance.now();
-    this.tryFire('left', nowMs, chilling);
-    this.tryFire('right', nowMs, chilling);
+    // Round 8: BLASTER mode holds-to-auto-fire; Chill sprays. @see resolveFireGate
+    resolveFireGate(
+      this.blasterMode.peek(),
+      chilling,
+      FIRE.cooldownMs,
+      CHILL.sprayCooldownMs,
+      BLASTER.autoFireCooldownMs,
+      this.fireGate,
+    );
+    this.tryFire('left', nowMs, this.fireGate);
+    this.tryFire('right', nowMs, this.fireGate);
   }
 
   /**
@@ -523,19 +815,99 @@ export class BallSpawnSystem extends createSystem({
     const grip = this.player.gripSpaces[side];
     if (!grip) return;
     grip.getWorldPosition(this.scratchGripPosition);
+    this.selectNearest(this.scratchGripPosition, PALETTE.grabSelectRadius);
+  }
 
-    const radiusSq = PALETTE.grabSelectRadius * PALETTE.grabSelectRadius;
+  /**
+   * Pinch-to-select at the fingertip, for tracked hands (round 7).
+   *
+   * Hands have no squeeze button, so {@link trySelectByProximity} never ran for
+   * them: a hand player's only routes were a precise fingertip poke, or a pinch
+   * that had to win the pointer-priority fight described there — and when it
+   * lost, the same pinch fired a paintball at their own wrist. This is the
+   * squeeze path's guarantee, measured from the index fingertip (which meets
+   * the thumb in a pinch) with the tighter {@link PALETTE.pinchSelectRadius},
+   * and a pinch that selects something is marked spent so {@link tryFire}
+   * ignores it until it is released.
+   *
+   * Not on a hand that holds a tether: its pinch reels (WebShooterSystem).
+   */
+  private trySelectByPinch(side: 'left' | 'right'): void {
+    if (!this.input.isPrimary('hand', side)) return;
+    const gamepad = this.input.gamepads[side];
+    if (!gamepad?.getSelectStart()) return;
+    const hand = side === 'right' ? 1 : 0;
+    if (this.tetheredHands.peek() & (hand === 1 ? 2 : 1)) return;
+
+    const tip = this.player.indexTipSpaces?.[side];
+    if (!tip) return;
+    tip.getWorldPosition(this.scratchGripPosition);
+    if (this.selectNearest(this.scratchGripPosition, PALETTE.pinchSelectRadius)) {
+      this.pressConsumed[hand] = 1;
+    }
+  }
+
+  /**
+   * A palette element was just pressed through the pointer pipeline (a poke,
+   * a ray-pinch, the touch sphere): spend the pinch of every tracked hand that
+   * is mid-pinch right now, so the same pinch cannot also fire this frame. The
+   * pipeline runs at priority -4, well before {@link tryFire} at 10 — which is
+   * how round 7's first cut, which only guarded its own fingertip path, still
+   * let a pinch on a chip shoot the player's wrist.
+   */
+  private consumeActivePinches(): void {
+    for (let hand = 0; hand < 2; hand++) {
+      const side = hand === 1 ? 'right' : 'left';
+      if (!this.input.isPrimary('hand', side)) continue;
+      if (this.input.gamepads[side]?.getSelecting()) {
+        this.pressConsumed[hand] = 1;
+      }
+    }
+  }
+
+  /** Spend any tracked hand's pinch that started this frame. */
+  private consumeNewPinches(): void {
+    for (let hand = 0; hand < 2; hand++) {
+      const side = hand === 1 ? 'right' : 'left';
+      if (!this.input.isPrimary('hand', side)) continue;
+      if (this.input.gamepads[side]?.getSelectStart()) {
+        this.pressConsumed[hand] = 1;
+      }
+    }
+  }
+
+  /** Un-spend each hand's press once its trigger or pinch has come up. */
+  private releaseConsumedPresses(): void {
+    for (let hand = 0; hand < 2; hand++) {
+      if (!this.pressConsumed[hand]) continue;
+      const gamepad = this.input.gamepads[hand === 1 ? 'right' : 'left'];
+      if (!gamepad?.getSelecting()) this.pressConsumed[hand] = 0;
+    }
+  }
+
+  /**
+   * Select the nearest dab, chip or (visible) sub-mode pad within `radius` of
+   * `point`. Eleven squared-distance checks, on a press edge only.
+   *
+   * @returns true when something was selected.
+   */
+  private selectNearest(point: Vector3, radius: number): boolean {
+    const radiusSq = radius * radius;
     let bestDab: Entity | undefined;
     let bestChip: Entity | undefined;
     let bestPad: Entity | undefined;
     let bestDistSq = radiusSq;
 
+    // Round 9: dabs and chips get the same visibility test as the pads. The
+    // palette hides by `visible = false` + scaling its root to 1e-4, which
+    // collapses every element onto the root's origin — still a world position
+    // a squeeze or pinch near the wrist could "select" while it is hidden.
     for (const dab of this.queries.dabs.entities) {
       const object3D = dab.object3D;
-      if (!object3D) continue;
+      if (!object3D || !visibleInWorld(object3D)) continue;
       object3D.getWorldPosition(this.scratchElementPosition);
       const distSq = this.scratchElementPosition.distanceToSquared(
-        this.scratchGripPosition,
+        point,
       );
       if (distSq < bestDistSq) {
         bestDistSq = distSq;
@@ -546,10 +918,10 @@ export class BallSpawnSystem extends createSystem({
     }
     for (const chip of this.queries.chips.entities) {
       const object3D = chip.object3D;
-      if (!object3D) continue;
+      if (!object3D || !visibleInWorld(object3D)) continue;
       object3D.getWorldPosition(this.scratchElementPosition);
       const distSq = this.scratchElementPosition.distanceToSquared(
-        this.scratchGripPosition,
+        point,
       );
       if (distSq < bestDistSq) {
         bestDistSq = distSq;
@@ -568,7 +940,7 @@ export class BallSpawnSystem extends createSystem({
       if (!object3D || !visibleInWorld(object3D)) continue;
       object3D.getWorldPosition(this.scratchElementPosition);
       const distSq = this.scratchElementPosition.distanceToSquared(
-        this.scratchGripPosition,
+        point,
       );
       if (distSq < bestDistSq) {
         bestDistSq = distSq;
@@ -578,13 +950,35 @@ export class BallSpawnSystem extends createSystem({
       }
     }
 
+    let bestModePad: Entity | undefined;
+    for (const pad of this.queries.modePads.entities) {
+      const object3D = pad.object3D;
+      if (!object3D || !visibleInWorld(object3D)) continue;
+      object3D.getWorldPosition(this.scratchElementPosition);
+      const distSq = this.scratchElementPosition.distanceToSquared(point);
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        bestModePad = pad;
+      }
+    }
+    if (bestModePad) {
+      this.selectBlasterMode(
+        (bestModePad.getValue(BlasterModePad, 'mode') ??
+          BlasterMode.Paint) as BlasterMode,
+      );
+      return true;
+    }
+
     if (bestDab) this.selectColor(bestDab);
     else if (bestChip) this.selectChip(bestChip);
     else if (bestPad) {
       this.selectSubMode(
         (bestPad.getValue(WebModePad, 'mode') ?? WebSubMode.Splat) as WebSubMode,
       );
+    } else {
+      return false;
     }
+    return true;
   }
 
   /**
@@ -669,16 +1063,17 @@ export class BallSpawnSystem extends createSystem({
       bounceCount: 0,
       flightState: BallFlightState.Flying,
     });
-    ball.addComponent(Interactable);
-    ball.addComponent(OneHandGrabbable, {
-      rotate: false,
-      translate: true,
-    });
+    // Round 9: balls are deliberately NOT Interactable / OneHandGrabbable any
+    // more. Grabbing one was undocumented, a pinch on a resting ball also
+    // fired, and a hand throw has no speed cap — past 14 cm per 72 Hz step it
+    // tunnels walls (CLAUDE.md gotcha 22).
     ball.addComponent(PhysicsBody, {
       state: PhysicsState.Dynamic,
       linearDamping: kindConfig.linearDamping,
       angularDamping: 0.05,
-      gravityFactor: 1.0,
+      // Webbing flies flatter than paint (round 7) — see WEB.webGravityFactor.
+      // Aim assist's ballistic solve reads the same factor, so the two agree.
+      gravityFactor: style === BallStyle.Web ? WEB.webGravityFactor : 1.0,
     });
     ball.addComponent(PhysicsShape, {
       shape: PhysicsShapeType.Sphere,
@@ -687,10 +1082,9 @@ export class BallSpawnSystem extends createSystem({
       restitution: kindConfig.restitution,
       friction: 0.3,
     });
-    // DepthSensingSystem reads DepthOccludable to hide fragments behind
-    // real-world depth in AR (feature-detected — silently no-ops on devices
-    // that don't support depth-sensing).
-    ball.addComponent(DepthOccludable);
+    // No DepthOccludable: round 9 occludes the robots only. Balls share one
+    // material per colour, and the occlusion patch forces `transparent` on
+    // every material it touches.
 
     return ball;
   }
@@ -699,27 +1093,35 @@ export class BallSpawnSystem extends createSystem({
    * Fire one ball from `side`'s pointing ray, if that hand asked to shoot this
    * frame and its cooldown has elapsed.
    *
-   * `spraying` switches the trigger from edge-triggered to level-triggered:
-   * every phase but Chill wants one ball per pull (getSelectStart), while Chill
-   * wants a held trigger to keep painting (getSelecting) on a much shorter
-   * cooldown. Both helpers cover the controller trigger AND the hand-tracking
-   * pinch, so spray works in either input mode.
+   * `gate.level` switches the trigger from edge-triggered to level-triggered:
+   * one ball per pull (getSelectStart), or a held trigger that keeps firing
+   * (getSelecting) — Chill's spray and, since round 8, BLASTER mode's
+   * auto-fire. Both helpers cover the controller trigger AND the hand-tracking
+   * pinch, so holding works in either input mode.
    */
   private tryFire(
     side: 'left' | 'right',
     nowMs: number,
-    spraying: boolean,
+    gate: FireGate,
   ): void {
     const gamepad = this.input.gamepads[side];
     if (!gamepad) return;
-    const wants = spraying ? gamepad.getSelecting() : gamepad.getSelectStart();
+    const wants = gate.level ? gamepad.getSelecting() : gamepad.getSelectStart();
     if (!wants) return;
+
+    const hand = side === 'right' ? 1 : 0;
+    // This press already selected something on the palette (round 7).
+    if (this.pressConsumed[hand]) return;
+    // This hand is holding a tether: its press reels the line in instead
+    // (WebShooterSystem). Firing would also have broken the very line the
+    // player is hauling — every ball from a hand lets go of its tether.
+    if (this.tetheredHands.peek() & (hand === 1 ? 2 : 1)) return;
 
     // This hand is clicking the HUD, not shooting. Checked per hand so a
     // left click on the panel never silences the right trigger.
     if (this.isPointingAtPanel(this.player.raySpaces[side])) return;
 
-    const cooldownMs = spraying ? CHILL.sprayCooldownMs : FIRE.cooldownMs;
+    const cooldownMs = gate.cooldownMs;
     const lastMs = side === 'left' ? this.lastFireLeftMs : this.lastFireRightMs;
     if (nowMs - lastMs < cooldownMs) return;
     if (side === 'left') {
@@ -786,57 +1188,163 @@ export class BallSpawnSystem extends createSystem({
   }
 
   /**
-   * True when `raySpace`'s pointing ray crosses a PanelUI's bounding rectangle
-   * within arm-plus reach. The rectangle is the panel's maxWidth × maxHeight in
-   * its own plane — slightly generous versus the laid-out size, which errs on
-   * the side of "clicking the menu never shoots".
+   * True when `raySpace`'s pointing ray is clicking a UI panel, so its
+   * trigger pull must not also shoot.
+   *
+   * Round 9 rewrote the test (it used to be the panel's full PanelUI
+   * maxWidth x maxHeight box, always):
+   *
+   * - A panel whose object3D is hidden in world (IntroSystem hides the HUD
+   *   during the logo intro) never blocks.
+   * - The rectangle is the panel's real laid-out root component, not the
+   *   generous maxWidth x maxHeight box — uikit gives every component a
+   *   matrixWorld that maps a unit square onto its visible rect.
+   * - In Countdown / Playing ({@link panelBlockMode}) only a visible button
+   *   (`FIRE.uiInteractiveIdPrefix`) blocks: the docked scoreboard sat right
+   *   across the line to low robots and silently ate those shots.
    *
    * The query it walks covers every PanelUI in the world, so this never has to
-   * know which panels exist. Public since round 4, when WebShooterSystem owned
-   * a second trigger path that needed the same answer; round 5 gave the trigger
-   * back to this system alone, but the accessor is cheap to keep and the HUD
-   * rule is the sort of thing a second caller will want again.
+   * know which panels exist. Public since round 4.
    */
   isPointingAtPanel(raySpace: Object3D): boolean {
     raySpace.getWorldPosition(this.scratchPosition);
     raySpace.getWorldQuaternion(this.scratchQuaternion);
     this.scratchDirection.set(0, 0, -1).applyQuaternion(this.scratchQuaternion);
+    const step = this.globals.tutorialStep as Signal<number> | undefined;
+    const mode = panelBlockMode(
+      this.gamePhase.peek(),
+      (step?.peek() ?? TutorialStep.Off) !== TutorialStep.Off,
+    );
 
     for (const panel of this.queries.panels.entities) {
       const object3D = panel.object3D;
-      if (!object3D) continue;
+      if (!object3D || !visibleInWorld(object3D)) continue;
 
-      // Follower repositions the panel every frame; refresh before inverting.
+      const document = panel.hasComponent(PanelDocument)
+        ? (panel.getValue(PanelDocument, 'document') as
+            | PanelDocumentLike
+            | undefined)
+        : undefined;
+      const root = document?.rootElement;
+
+      if (document && root) {
+        if (mode === PanelBlockMode.ButtonsOnly) {
+          for (const button of this.panelButtons(document, root)) {
+            if (this.rayHitsComponent(button, FIRE.uiButtonMarginMeters)) {
+              return true;
+            }
+          }
+        } else if (this.rayHitsComponent(root, 0)) {
+          return true;
+        }
+        continue;
+      }
+
+      // No document yet (still loading): the old maxWidth x maxHeight box,
+      // menus only — a scoreboard with nothing on it cannot be clicked.
+      if (mode !== PanelBlockMode.Rect) continue;
       object3D.updateWorldMatrix(true, false);
       this.scratchPanelMatrix.copy(object3D.matrixWorld).invert();
-
-      // Ray into panel-local space, where the panel is the z = 0 plane.
-      const o = this.scratchPosition;
-      const d = this.scratchDirection;
-      const m = this.scratchPanelMatrix.elements;
-      const ox = m[0] * o.x + m[4] * o.y + m[8] * o.z + m[12];
-      const oy = m[1] * o.x + m[5] * o.y + m[9] * o.z + m[13];
-      const oz = m[2] * o.x + m[6] * o.y + m[10] * o.z + m[14];
-      const dx = m[0] * d.x + m[4] * d.y + m[8] * d.z;
-      const dy = m[1] * d.x + m[5] * d.y + m[9] * d.z;
-      const dz = m[2] * d.x + m[6] * d.y + m[10] * d.z;
-
-      if (Math.abs(dz) < 1e-6) continue;
-      const t = -oz / dz;
-      if (t < 0 || t > FIRE.uiBlockMaxDistance) continue;
-
       const halfW = (panel.getValue(PanelUI, 'maxWidth') ?? 0) / 2;
       const halfH = (panel.getValue(PanelUI, 'maxHeight') ?? 0) / 2;
-      const hx = ox + dx * t;
-      const hy = oy + dy * t;
-      if (Math.abs(hx) <= halfW && Math.abs(hy) <= halfH) {
-        return true;
-      }
+      if (this.rayHitsMatrixRect(halfW, halfH)) return true;
     }
     return false;
   }
 
+  /** Buttons of a panel document, found once per document and cached. */
+  private panelButtons(
+    document: PanelDocumentLike,
+    root: UiComponentLike,
+  ): readonly UiComponentLike[] {
+    const cached = this.buttonCache.get(document);
+    if (cached) return cached;
+    const prefix = FIRE.uiInteractiveIdPrefix;
+    const found: UiComponentLike[] = [];
+    root.traverse((node) => {
+      const idSignal = (node as UiComponentLike).properties?.signal?.id;
+      if (!idSignal) return;
+      const id = idSignal.peek ? idSignal.peek() : idSignal.value;
+      if (typeof id === 'string' && id.startsWith(prefix)) {
+        found.push(node as UiComponentLike);
+      }
+    });
+    // An empty list may just mean the document is not indexed yet; only a
+    // real answer is worth remembering.
+    if (found.length > 0) this.buttonCache.set(document, found);
+    return found;
+  }
+
+  /**
+   * Does this frame's ray (scratchPosition / scratchDirection) cross a uikit
+   * component's visible rectangle, grown by `marginMeters` on every side?
+   * Skips components that are hidden (`display: none`, clipped) or not laid
+   * out yet.
+   */
+  private rayHitsComponent(
+    component: UiComponentLike,
+    marginMeters: number,
+  ): boolean {
+    if (component.isVisible && !component.isVisible.peek()) return false;
+    if (component.size && component.size.peek() == null) return false;
+    component.updateWorldMatrix(true, false);
+    const e = component.matrixWorld.elements;
+    // World size of the unit square: the lengths of the X and Y columns.
+    const sx = Math.hypot(e[0], e[1], e[2]);
+    const sy = Math.hypot(e[4], e[5], e[6]);
+    if (!(sx > 1e-6) || !(sy > 1e-6)) return false;
+    this.scratchPanelMatrix.copy(component.matrixWorld).invert();
+    return this.rayHitsMatrixRect(
+      0.5 + marginMeters / sx,
+      0.5 + marginMeters / sy,
+    );
+  }
+
+  /** The ray against a rect in scratchPanelMatrix's (inverse) local frame. */
+  private rayHitsMatrixRect(halfW: number, halfH: number): boolean {
+    const o = this.scratchPosition;
+    const d = this.scratchDirection;
+    return rayHitsLocalRect(
+      this.scratchPanelMatrix.elements,
+      o.x,
+      o.y,
+      o.z,
+      d.x,
+      d.y,
+      d.z,
+      halfW,
+      halfH,
+      FIRE.uiBlockMaxDistance,
+    );
+  }
+
   private fireFrom(side: 'left' | 'right', raySpace: Object3D): void {
+    // Round 8: with a gauntlet out (BLASTER or WEB), the shot leaves the
+    // barrel the player can see, along its shown aim — the same origin and
+    // direction the gestures use. HAND mode (or a hand GauntletSystem could
+    // not pose this frame) keeps the bare-hand ray, as since round 1.
+    const muzzles = (this.gauntletMuzzles ??= this.globals.gauntletMuzzles as
+      | GauntletMuzzles
+      | undefined);
+    const hand = side === 'right' ? 1 : 0;
+    if (
+      muzzles &&
+      muzzles.valid[hand] === 1 &&
+      this.blasterMode.peek() !== BlasterMode.Hand
+    ) {
+      const b = hand * 3;
+      this.launch(
+        side,
+        muzzles.origin[b],
+        muzzles.origin[b + 1],
+        muzzles.origin[b + 2],
+        muzzles.direction[b],
+        muzzles.direction[b + 1],
+        muzzles.direction[b + 2],
+      );
+      return;
+    }
+
     raySpace.getWorldPosition(this.scratchPosition);
     raySpace.getWorldQuaternion(this.scratchQuaternion);
     // XR ray spaces point along their LOCAL -Z; Object3D.getWorldDirection
@@ -888,6 +1396,36 @@ export class BallSpawnSystem extends createSystem({
       this.webSubMode.peek(),
     );
 
+    // Round 7: webbing zips — faster and flatter than paint — and both get a
+    // gentle aim assist toward live robots during a round.
+    const web = loadout.style === BallStyle.Web;
+    const speed = web ? FIRE.speed * WEB.webSpeedMult : FIRE.speed;
+    let aimX = dirX;
+    let aimY = dirY;
+    let aimZ = dirZ;
+    const targets = this.aimTargets;
+    if (targets && this.gamePhase.peek() === GamePhase.Playing) {
+      const slot = pickAssistedAim(
+        x,
+        y,
+        z,
+        dirX,
+        dirY,
+        dirZ,
+        targets.positions,
+        targets.active,
+        targets.capacity,
+        web ? this.webAssist : this.paintAssist,
+        this.assistScratch,
+        this.assistOut,
+      );
+      if (slot >= 0) {
+        aimX = this.assistOut[0];
+        aimY = this.assistOut[1];
+        aimZ = this.assistOut[2];
+      }
+    }
+
     // The live-ball cap is spawnBall's job now, not this call site's.
     const hand = side === 'right' ? 1 : 0;
     const ball = this.spawnBall(
@@ -901,7 +1439,7 @@ export class BallSpawnSystem extends createSystem({
       loadout.subStyle,
     );
     ball.addComponent(PhysicsManipulation, {
-      linearVelocity: [dirX * FIRE.speed, dirY * FIRE.speed, dirZ * FIRE.speed],
+      linearVelocity: [aimX * speed, aimY * speed, aimZ * speed],
     });
 
     // BallFired is the one event whose `data` is not just the ball kind:
@@ -1039,6 +1577,27 @@ export class BallSpawnSystem extends createSystem({
   }
 
   /**
+   * Load a launcher mode from a pad or the Armory. Writes only on a change
+   * (the activeStyle sync rides the subscription) and always clicks, like the
+   * other palette presses.
+   */
+  selectBlasterMode(mode: BlasterMode): void {
+    if (this.blasterMode.peek() !== mode) this.blasterMode.value = mode;
+    this.events.emit(GameEvent.AmmoSelected, 0, 0, 0, this.activeKind.peek());
+  }
+
+  /** Relight the three mode pads from `blasterMode`. Derived, like the chips. */
+  private applyModePadHighlight(): void {
+    const mode = this.blasterMode.peek();
+    for (const pad of this.queries.modePads.entities) {
+      paintChipSelection(
+        pad.object3D,
+        (pad.getValue(BlasterModePad, 'mode') ?? -1) === mode,
+      );
+    }
+  }
+
+  /**
    * Relight the two sub-mode pads from `webSubMode`.
    *
    * Same derived-not-remembered rule as the chip row, and for the same reason:
@@ -1060,9 +1619,23 @@ export class BallSpawnSystem extends createSystem({
   }
 
   /**
-   * One MeshStandardMaterial per palette colour, created on first use. Four
-   * entries in practice; sharing them is what keeps 20 live balls to a handful
-   * of draw-call state changes.
+   * One material per palette colour, created on first use. Five entries in
+   * practice (four dabs + webbing); sharing them is what keeps 20 live balls
+   * to a handful of draw-call state changes — and why balls are destroy()ed,
+   * never dispose()d.
+   *
+   * Round 7 made them read as wet paint: a low-roughness base under a
+   * clearcoat glaze (MeshPhysicalMaterial), so each ball carries a sharp
+   * highlight from the room IBL over a still-saturated colour. Every ball
+   * material sets the same feature flags (clearcoat on, nothing else), so all
+   * colours share ONE shader program — compiled once, on the first ball drawn.
+   * RENDER.ballClearcoat = 0 falls back to MeshStandardMaterial, whose program
+   * the palette dabs have already compiled.
+   *
+   * Webbing is identified by colour: WEB_BALL_COLOR is the only white that
+   * ever reaches here (resolveShot substitutes it for every web shot, and no
+   * palette dab is white). It gets a satin pearl instead — softer base, cooler
+   * white, a faint self-light so it never greys out in a dim room.
    */
   private getMaterial(
     color: readonly [number, number, number, number],
@@ -1070,11 +1643,46 @@ export class BallSpawnSystem extends createSystem({
     const key = `${color[0]},${color[1]},${color[2]}`;
     let material = this.materialCache.get(key);
     if (!material) {
-      material = new MeshStandardMaterial({
-        color: new Color(color[0], color[1], color[2]),
-        roughness: 0.4,
-        metalness: 0.0,
-      });
+      const web =
+        color[0] === WEB_BALL_COLOR[0] &&
+        color[1] === WEB_BALL_COLOR[1] &&
+        color[2] === WEB_BALL_COLOR[2];
+      const base = web
+        ? new Color(
+            RENDER.webBallColor[0],
+            RENDER.webBallColor[1],
+            RENDER.webBallColor[2],
+          )
+        : // sRGB in, like the HUD swatch — see srgbToLinear in types.ts.
+          new Color().setRGB(color[0], color[1], color[2], SRGBColorSpace);
+      const roughness = web ? RENDER.webBallRoughness : RENDER.ballRoughness;
+
+      if (RENDER.ballClearcoat > 0) {
+        material = new MeshPhysicalMaterial({
+          color: base,
+          roughness,
+          metalness: 0,
+          clearcoat: RENDER.ballClearcoat,
+          clearcoatRoughness: web
+            ? RENDER.webBallClearcoatRoughness
+            : RENDER.ballClearcoatRoughness,
+        });
+      } else {
+        material = new MeshStandardMaterial({
+          color: base,
+          roughness,
+          metalness: 0,
+        });
+      }
+      // Emissive is a plain uniform on both material types (no shader
+      // variant), so the pearl's self-light costs nothing.
+      if (web) {
+        material.emissive.setRGB(
+          RENDER.webBallEmissive[0],
+          RENDER.webBallEmissive[1],
+          RENDER.webBallEmissive[2],
+        );
+      }
       this.materialCache.set(key, material);
     }
     return material;

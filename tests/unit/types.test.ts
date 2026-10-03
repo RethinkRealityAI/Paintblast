@@ -22,6 +22,11 @@ import {
   unpackImpactKind,
   unpackImpactRgb,
   unpackImpactStyle,
+  srgbToLinear,
+  syncBlasterMode,
+  BlasterMode,
+  BLASTER_MODE_ORDER,
+  BLASTER_MODE_LABELS,
 } from '../../src/types';
 
 describe('BallKind', () => {
@@ -175,7 +180,9 @@ describe('INITIAL_HUD_STATE', () => {
   it('starts at score 0 and points at both ways in', () => {
     expect(INITIAL_HUD_STATE.score).toBe(0);
     expect(INITIAL_HUD_STATE.timer).toMatch(/^\d+:\d{2}$/);
-    expect(INITIAL_HUD_STATE.status).toContain('START');
+    // Round 9: names the button that exists (PLAY), not a stale START.
+    expect(INITIAL_HUD_STATE.status).toContain('PLAY');
+    expect(INITIAL_HUD_STATE.status).not.toContain('START');
     expect(INITIAL_HUD_STATE.status).toContain('CHILL');
   });
 
@@ -313,5 +320,64 @@ describe('BallFired data packing', () => {
     expect(packFiredData(BallKind.Splash, 0, BallStyle.Paint)).toBe(
       BallKind.Splash,
     );
+  });
+});
+
+describe('srgbToLinear', () => {
+  it('pins black and white', () => {
+    expect(srgbToLinear(0)).toBe(0);
+    expect(srgbToLinear(1)).toBeCloseTo(1, 10);
+  });
+
+  it('matches the sRGB transfer curve on both branches', () => {
+    expect(srgbToLinear(0.04)).toBeCloseTo(0.04 / 12.92, 8);
+    // Mid-grey 0.5 sRGB is ~0.214 linear.
+    expect(srgbToLinear(0.5)).toBeCloseTo(0.2140, 3);
+  });
+
+  it('darkens every palette channel that is not 0 or 1', () => {
+    // The round-7 pastel bug in one line: treated as linear, these rendered
+    // brighter (washed out) than the HUD swatch that shows them as sRGB.
+    for (const colour of PALETTE_COLORS) {
+      for (let c = 0; c < 3; c++) {
+        const v = colour[c];
+        if (v > 0 && v < 1) expect(srgbToLinear(v)).toBeLessThan(v);
+      }
+    }
+  });
+});
+
+describe('syncBlasterMode', () => {
+  it('web style always means web mode', () => {
+    expect(syncBlasterMode(BlasterMode.Hand, true, BlasterMode.Hand)).toBe(
+      BlasterMode.Web,
+    );
+  });
+
+  it('leaving web returns to the remembered paint mode', () => {
+    expect(syncBlasterMode(BlasterMode.Web, false, BlasterMode.Hand)).toBe(
+      BlasterMode.Hand,
+    );
+    expect(syncBlasterMode(BlasterMode.Web, false, BlasterMode.Paint)).toBe(
+      BlasterMode.Paint,
+    );
+  });
+
+  it('never returns to web as a paint mode', () => {
+    expect(syncBlasterMode(BlasterMode.Web, false, BlasterMode.Web)).toBe(
+      BlasterMode.Paint,
+    );
+  });
+
+  it('leaves a paint mode alone while style stays paint', () => {
+    expect(syncBlasterMode(BlasterMode.Hand, false, BlasterMode.Paint)).toBe(
+      BlasterMode.Hand,
+    );
+  });
+
+  it('has an ASCII label per mode, in pad order', () => {
+    for (const mode of BLASTER_MODE_ORDER) {
+      expect(/^[A-Z]+$/.test(BLASTER_MODE_LABELS[mode])).toBe(true);
+    }
   });
 });

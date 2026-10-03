@@ -1,4 +1,4 @@
-# PaintBlast MR — Claude Code Configuration
+# Splotopia — Claude Code Configuration
 
 **START EVERY SESSION by reading [docs/STATE.md](docs/STATE.md).** It is the
 living state of the platform: feature inventory, architecture map, asset
@@ -9,7 +9,7 @@ Production: **https://paintblast-mr.netlify.app** (Netlify `paintblast-mr`,
 linked folder). Player/tuning docs: [GAME_GUIDE.md](GAME_GUIDE.md). Historical
 specs: `docs/superpowers/specs/`.
 
-## Hard-won gotchas (verified against source across 6 rounds — do not relearn)
+## Hard-won gotchas (verified against source across 7 rounds — do not relearn)
 
 **elics / ECS**
 1. `entity.getValue()/setValue()` **THROW** on Vec2/Vec3/Vec4/Color fields — always `getVectorView()`.
@@ -27,7 +27,7 @@ specs: `docs/superpowers/specs/`.
 **Scene understanding / Quest**
 10. **Guardian is NOT scene data.** Walls come from Space Setup; the OS never auto-prompts a WebXR app. Offer `initiateRoomCapture()` only user-initiated (≥2-3 s after session start, once per session).
 11. The global room mesh reaches `XRMesh` with an **empty semanticLabel** — detect via `isBounded3D === false`. Furniture labels are the WebXR registry vocabulary, not Meta's native enums (`CHAIR` arrives as `couch`).
-12. The census log `[PaintBlast] room colliders: …` prints what the headset actually delivered — first thing to ask for in any collision report.
+12. The census log `[Splotopia] room colliders: …` prints what the headset actually delivered — first thing to ask for in any collision report.
 
 **Input**
 13. PanelUI entities need `Interactable` or XR ray clicks never reach their buttons; panels never receive `Hovered` (shot-blocking is geometric — `isPointingAtPanel`).
@@ -35,17 +35,26 @@ specs: `docs/superpowers/specs/`.
 15. Hand joints: `this.input.visualAdapters.hand[side].jointTransforms` — 16 floats/joint, column-major, grip-space; tips at indices 9/14/19/24.
 16. WebXR grip frames are **right-handed on both hands** — left-side mounts mirror X, yaw and roll; pitch unchanged.
 17. `features.grabbing` must stay `{ useHandPinchForGrab: true }` — the boolean shorthand silently kills hand-pinch grabbing.
+18. **A tracked hand's grip −Z points at the THUMB, not forward** (spec: −Z along a held rod toward the thumb, X ⟂ back of hand, +Y up the arm). Never mount or aim off raw grip −Z — use `WristPose` (`src/wrist-pose.ts`): wrist joint frame for hands (−Z distal, +Y dorsal, same on both hands), target ray + mirrored grip X for controllers.
+19. `jointTransforms` are **grip-relative**; world = grip world × joint. The emulator does not mirror the right hand's grip offset, so trust joints, not the hand grip's axes.
+20. `World.create` never registers `DepthSensingSystem` — `DepthOccludable` is inert until you register it, and its occlusion shader ignores `instanceMatrix` (instanced splats would test at the field origin).
+21. IWSDK 0.3.1 **never hides** grip / ray / index-tip spaces — a dropped hand just freezes them. Detect tracking with `isPrimary('hand'|'controller', side)` (`isTracked` in `wrist-pose.ts`), never `space.visible`.
+22. Anything that flies must cover less than `ROOM.wallThicknessMeters + 2 * BALLS.radius` (14 cm) per 72 Hz step or it tunnels walls (no CCD) — webs are capped by `WEB.webSpeedMult`, and a test pins it.
+23. Palette colour tuples are **sRGB**: build colours with `setRGB(r, g, b, SRGBColorSpace)` (or `srgbToLinear` for raw instance buffers), never `new Color(r, g, b)`. With `scene.environment` set, three overwrites per-material `envMapIntensity` with `scene.environmentIntensity`.
 
 **UI (UIKitML / uikit)**
-18. ASCII only in panel text — the bundled MSDF font lacks `· — × …`.
-19. Text via `setProperties({ text })`; show/hide via `display`; hover with `pointerenter/leave` (`pointerover/out` flicker); there is **no** `backgroundOpacity` — alpha rides in `rgba()` strings; no gradients.
-20. Panel resize goes through `PanelUI.maxWidth/maxHeight` (PanelUISystem cancels object3D scale). Docked follower uses behavior `'face-target'` — `pivot-y` **discards Y offsets**.
-21. Edit `ui/hud.uikitml` only; `public/ui/hud.json` is generated (dev server and build both recompile it).
+24. ASCII only in panel text — the bundled MSDF font lacks `· — × …`.
+25. Text via `setProperties({ text })`; show/hide via `display`; hover with `pointerenter/leave` (`pointerover/out` flicker); there is **no** `backgroundOpacity` — alpha rides in `rgba()` strings; no gradients.
+26. Panel resize goes through `PanelUI.maxWidth/maxHeight` (PanelUISystem cancels object3D scale). Docked follower uses behavior `'face-target'` — `pivot-y` **discards Y offsets**.
+27. Edit `ui/hud.uikitml` only; `public/ui/hud.json` is generated (dev server and build both recompile it).
+28. Headless SwiftShader renders **no uikit panel or glyph** (`smoothstep(e, e, x)` returns 0, and uikit clips with `smoothstep(-fwidth, fwidth, d)`) — `scripts/headless-verify.mjs` injects `scripts/swiftshader-smoothstep-patch.js`; any new Playwright harness must too.
+29. IWSDK's pointer cursor eases with `lerp(a, b, 30 * delta)` (`xr-input/dist/pointer/cursor-visual.js`), which diverges once frames exceed ~66 ms — a screen-filling white disc in headless runs is that, not game art. Harmless at 72 Hz; the harness hides it via `material.visible`.
+30. IWER grants the `depth-sensing` feature but implements **no depth API** (`getDepthInformation`), so the stock `DepthSensingSystem` throws every frame and aborts the whole world update (no round ever starts) — register `RobotDepthSensingSystem` (TargetSystem.ts), which checks the API, catches, and self-disables per session.
 
 ## Build / test / troubleshoot workflow
 
 1. `npx tsc --noEmit` first — always, before any runtime testing.
-2. `npm test` — Vitest; pure-logic tests only (334 as of R6). New mechanics get pure exported helpers + tests (see `detectImpact`, `ringSpawnPosition`, `isThwipPose` for the pattern). `tests/__mocks__/iwsdk-core.ts` grows stubs as imports demand.
+2. `npm test` — Vitest; pure-logic tests only (763 as of R9). New mechanics get pure exported helpers + tests (see `detectImpact`, `ringSpawnPosition`, `isThwipPose` for the pattern). `tests/__mocks__/iwsdk-core.ts` grows stubs as imports demand.
 3. **Emulator drive** (the proof, per the owner's verify-before-shipping rule):
    check `xr_get_session_status` FIRST. If it fails: the dev server may be down
    or port-shifted — Vite wants **8083**; during agent sessions the MCP relay
@@ -62,6 +71,12 @@ specs: `docs/superpowers/specs/`.
    ~5 cm behind/below the device origin in IWER); ammo state via footer
    screenshots; splat counts via `ecs_query_entity` on the SplatterField
    (paint + web mirrors); `ecs_toggle_system` to isolate suspects.
+   **No MCP relay (cloud sessions)?** `npx vite --config vite.verify.config.ts`
+   (port 8090, no mkcert — its binary download is blocked by the proxy) +
+   `scripts/headless-verify.mjs`. Scripted IWER poses only stick after
+   `IWER_DEVICE.controlMode = 'programmatic'` (the DevUI rig overwrites them
+   otherwise); dev builds expose `window.__PB_WORLD` / `__PB_THREE`. Headless
+   SwiftShader runs ~5 fps: trust poses and screenshots, not timing.
 5. Runtime debugging: console via `browser_get_console_logs` with `count` only
    (no level filter); the collider census line; `ecs_snapshot`/`ecs_diff`
    around an action.

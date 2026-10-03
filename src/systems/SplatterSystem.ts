@@ -11,6 +11,7 @@ import {
   Quaternion,
   Matrix4,
   DoubleSide,
+  SRGBColorSpace,
 } from '@iwsdk/core';
 
 import { SPLAT, WEB } from '../config';
@@ -346,7 +347,13 @@ export class SplatterSystem extends createSystem({
     this.scratchMatrix.compose(this.scratchPosition, this.scratchQuaternion, this.scratchScale);
     mesh.setMatrixAt(slot, this.scratchMatrix);
 
-    this.scratchColor.setRGB(colorRgb[0], colorRgb[1], colorRgb[2]);
+    // Palette colours are sRGB (round 7) — see srgbToLinear in types.ts.
+    this.scratchColor.setRGB(
+      colorRgb[0],
+      colorRgb[1],
+      colorRgb[2],
+      SRGBColorSpace,
+    );
     mesh.setColorAt(slot, this.scratchColor);
 
     mesh.count = pool.liveCount;

@@ -8,9 +8,17 @@ import {
 import type { Entity } from '@iwsdk/core';
 import type { Signal } from '@preact/signals-core';
 
-import { AUDIO, AUDIO_SPATIAL, AUDIO_VOLUME, CHILL, HAPTICS } from '../config';
+import {
+  AUDIO,
+  AUDIO_SPATIAL,
+  AUDIO_VOLUME,
+  BLASTER,
+  CHILL,
+  HAPTICS,
+} from '../config';
 import {
   BallStyle,
+  BlasterMode,
   GameEvent,
   GameEventBuffer,
   GamePhase,
@@ -124,8 +132,8 @@ export class FeedbackSystem extends createSystem({}) {
     // Non-positional, like the paint trigger it stands in for: the shooter is
     // strapped to your own wrist, so spatialising it buys nothing.
     this.thwipCue = this.createCue(
-      AUDIO.thwip,
-      AUDIO_VOLUME.thwip,
+      AUDIO.flick,
+      AUDIO_VOLUME.flick,
       false,
       PlaybackMode.Restart,
     );
@@ -193,7 +201,7 @@ export class FeedbackSystem extends createSystem({}) {
           const data = events.dataAt(i);
           const side = unpackFiredHand(data);
           if (unpackFiredStyle(data) === BallStyle.Web) {
-            this.playCue(this.thwipCue, AUDIO_VOLUME.thwip);
+            this.playCue(this.thwipCue, AUDIO_VOLUME.flick);
             this.pulse(side, HAPTICS.thwipIntensity, HAPTICS.thwipMs);
           } else {
             this.playCue(this.fireCue, AUDIO_VOLUME.fire);
@@ -265,6 +273,34 @@ export class FeedbackSystem extends createSystem({}) {
 
         case GameEvent.UiClick:
           this.playCue(this.uiClickCue, AUDIO_VOLUME.uiClick);
+          break;
+
+        // Round 8: the gauntlets deploy or stow. No new audio: deploying
+        // hardware gets the chime (a "locked on"), stowing back to bare hands
+        // the softer UI click — both at their own BLASTER volume so neither
+        // reads as a combo or a button. Both arms buzz: both gauntlets moved.
+        case GameEvent.BlasterModeChanged:
+          if (events.dataAt(i) === BlasterMode.Hand) {
+            this.playCue(this.uiClickCue, BLASTER.modeSwitchVolume);
+          } else {
+            this.playCue(this.chimeCue, BLASTER.modeSwitchVolume);
+          }
+          this.pulseBoth(
+            BLASTER.modeSwitchHapticIntensity,
+            BLASTER.modeSwitchHapticMs,
+          );
+          break;
+
+        // Round 8 Neatniks. The deflected ball still lands (BallImpact
+        // carries the splat); this adds the shield's own tick at the blade so
+        // the player hears *why* it did not count.
+        case GameEvent.ShieldDeflected:
+          this.playCueAt(this.uiClickCue, i, AUDIO_VOLUME.shieldPing);
+          break;
+
+        case GameEvent.BossEntered:
+          this.playCue(this.countdownCue, AUDIO_VOLUME.bossEnter);
+          this.pulseBoth(HAPTICS.hitIntensity, HAPTICS.hitMs);
           break;
 
         default:
