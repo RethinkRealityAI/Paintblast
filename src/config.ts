@@ -48,6 +48,20 @@ export const FIRE = {
    */
   uiBlockMaxDistance: 3,
   /**
+   * Round 9: in Countdown / Playing the docked HUD sits low in front of you, so
+   * shots at low robots (Duster Duke stands at 0.4 m) cross its rectangle. In
+   * those phases only a ray over one of the panel's visible BUTTONS swallows
+   * the shot — elements whose `id` starts with this prefix (uikitml
+   * convention: every <button> is `btn-...`). Menus (Idle, GameOver, Chill)
+   * still block over the whole visible panel. A hidden panel never blocks.
+   */
+  uiInteractiveIdPrefix: 'btn-',
+  /**
+   * Metres of slop around a button when testing "is this ray clicking it".
+   * A little generous so a click on a button edge never also fires.
+   */
+  uiButtonMarginMeters: 0.01,
+  /**
    * Aim assist on paint, degrees (round 7). A shot within this cone of a live
    * robot is bent onto the ballistic arc that hits it — judged against the
    * corrected arc, so a player who has learned the drop is already inside it.
@@ -750,8 +764,8 @@ export const ROOM = {
    * own radius and invisible in passthrough, which is what sets the ceiling on
    * this number: past ~0.12 the paint visibly floats.
    *
-   * Only **vertical** planes are thickened. Floors and ceilings are left on
-   * `Auto`: a floor already has FloorGuardSystem's half-metre slab a
+   * Only **vertical** planes and (round 9) ceilings are thickened. Floors are
+   * left on `Auto`: a floor already has FloorGuardSystem's half-metre slab a
    * millimetre underneath it catching everything that tunnels, and thickening
    * it would lift every floor splat 3 cm off the carpet for no gain.
    */
@@ -774,6 +788,14 @@ export const ROOM = {
   spawnAttempts: 4,
   /** Longest wall probe, metres. Past this a direction counts as wide open. */
   spawnRayMaxDist: 15,
+  /**
+   * Round 9: a horizontal plane at least this high (metres above the floor),
+   * or one labelled `ceiling`, is treated as a ceiling and given the same
+   * thickened box ({@link ROOM.wallThicknessMeters}) walls get, so high lobs
+   * stop tunnelling through the 1 mm plane. Floors and table tops stay on
+   * `Auto` (FloorGuard covers the floor). Above any standing head on purpose.
+   */
+  ceilingMinHeightMeters: 1.9,
 
   /**
    * Seconds of immersive session before an empty scene counts as "unscanned".
@@ -881,8 +903,27 @@ export const CHILL = {
  * that SAVE PAINTING can hand back as a PNG.
  */
 export const EASEL = {
-  /** Metres in front of the head the easel is planted on entering Chill. */
-  spawnDistance: 1.4,
+  /**
+   * Metres in front of the head the easel is planted on entering Chill.
+   * Round 9: 0.7 (was 1.4, out of reach seated). 0.7 puts the board at a
+   * comfortable seated arm's reach for grabbing, and the docked HUD
+   * (HUD.playOffset, 0.95 m out and 0.52 m down) stays behind and below it.
+   */
+  spawnDistance: 0.7,
+  /**
+   * Round 9: the board's centre is planted this far below the eyes (0 = at
+   * eye height), for a seated (~1.2 m) and a standing (~1.6 m) player alike.
+   * The limit is the docked HUD: it rides 0.95 m ahead of the head and its
+   * top edge is ~0.35 m below the eyes, so if the player leans in to paint it
+   * swings into the easel's depth. The board's bottom edge must stay above
+   * that top edge in BOTH orientations (portrait is 0.62 m tall: 0 leaves
+   * ~4 cm, landscape ~11 cm). Raise past ~0.03 only if the HUD moves down.
+   */
+  boardBelowEyes: 0,
+  /** Lowest the board centre is ever planted, metres (floor-seated players). */
+  boardCentreMinHeight: 0.85,
+  /** Highest the board centre is ever planted, metres (tall standing players). */
+  boardCentreMaxHeight: 1.8,
   /** Canvas board width, metres, in landscape. */
   boardWidth: 0.62,
   /** Canvas board height, metres. 4:3 against the width, matching the pixels. */
@@ -896,7 +937,10 @@ export const EASEL = {
   portraitBoardHeight: 0.62,
   /** Canvas board thickness, metres. Also the physics box depth. */
   boardDepth: 0.02,
-  /** Height of the board's centre above the floor, metres. */
+  /**
+   * Height of the board's centre above the floor, metres — the fallback when
+   * no head pose is available. Normally {@link EASEL.boardBelowEyes} decides.
+   */
   boardCentreHeight: 1.2,
   /** Degrees the easel leans back, like a real A-frame. */
   tiltDeg: 12,
@@ -1534,6 +1578,20 @@ export const RENDER = {
    * a glow creeping over the whole body.
    */
   robotRimPower: 2.5,
+  /**
+   * Round 9: real-world depth occlusion for the Splotbots ONLY — a robot
+   * behind your real couch is hidden by it (Peekaboo actually hides). Uses
+   * IWSDK's DepthSensingSystem + DepthOccludable; the `depth-sensing` session
+   * feature is requested as OPTIONAL, so a device without depth just shows
+   * robots unoccluded (no failure). Never applied to the instanced splats or
+   * balls (gotcha 20: the occlusion shader ignores instanceMatrix). false
+   * skips the system entirely.
+   */
+  depthOcclusion: true,
+  /** Depth data path requested from the browser (Quest supports GPU). */
+  depthUsage: 'gpu-optimized' as 'gpu-optimized' | 'cpu-optimized',
+  /** Depth data format requested from the browser. */
+  depthFormat: 'float32' as 'float32' | 'luminance-alpha',
 } as const;
 
 /** Particle silhouette for one VFX burst. @see VfxBurstConfig.shape */
@@ -2027,6 +2085,18 @@ export const SPLOTBOTS = {
   lanes: 5,
   /** Seconds between two spawns when several slots are free at once. */
   spawnStaggerSec: 0.45,
+  /**
+   * Round 9: rest beat at every wave boundary (after the first wave), seconds.
+   * No new robots spawn for this long once a wave starts, so arms get a
+   * breather (comfort / gorilla arm). Robots already up stay up. 0 disables.
+   */
+  waveBreatherSec: 3,
+  /**
+   * Round 9: seconds a robot let off a tether (tap or timeout) takes to drift
+   * back out to at least ROOM.spawnMinDist from your head, instead of
+   * hovering in your face. Duster Duke uses boss.returnSec instead.
+   */
+  releaseReturnSec: 1.0,
 
   /**
    * Wave composition by round time. Each wave starts `startSec` seconds into
@@ -2118,6 +2188,11 @@ export const SPLOTBOTS = {
     peekAbove: 0.18,
     /** Metres behind the furniture's far face the hiding spot sits. */
     behindMargin: 0.22,
+    /**
+     * Round 9: two Peekaboos never hide closer than this, metres. A second
+     * one slides sideways along the furniture, or picks another piece.
+     */
+    minSpacing: 0.3,
     /** Furniture whose top is lower than this (metres) is ignored (rugs). */
     furnitureMinTop: 0.35,
     /** Furniture whose top is higher than this is ignored (wardrobes). */
