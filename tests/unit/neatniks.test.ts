@@ -76,7 +76,8 @@ describe('Neatnik config', () => {
       expect(duke.points).toBeGreaterThan(archetypeConfig(a).points);
       expect(duke.heightMeters).toBeGreaterThan(archetypeConfig(a).heightMeters);
     }
-    expect(duke.hp).toBe(6);
+    // Round 10: 11 (was 6) - a patrolling boss with an HP bar.
+    expect(duke.hp).toBeGreaterThanOrEqual(10);
     // A tether haul must not be able to one-shot a fresh boss.
     expect(NEATNIKS.boss.tetherDamage).toBeLessThan(duke.hp);
   });

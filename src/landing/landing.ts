@@ -45,7 +45,7 @@ export const NEATNIKS = [
     role: 'Shield',
     accent: '#ffd23f',
     blurb:
-      'Holds a rubber blade that always turns to face you. Bank a bouncy shot off the wall, or hook it and haul it in.',
+      'Holds a rubber blade that always turns to face you. Hit the blade three times to shatter it, or flank it for a quick splat.',
   },
   {
     id: 'peekaboo',

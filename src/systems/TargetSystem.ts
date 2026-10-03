@@ -1,12 +1,17 @@
 import {
   AssetManager,
   Box3,
+  BoxGeometry,
   DepthOccludable,
   DepthSensingSystem,
   Group,
+  Mesh,
+  MeshBasicMaterial,
   PhysicsBody,
   PhysicsManipulation,
+  Quaternion,
   Raycaster,
+  SRGBColorSpace,
   Vector3,
   XRMesh,
   XRPlane,
@@ -18,7 +23,6 @@ import type {
   Entity,
   Intersection,
   Material,
-  Mesh,
   MeshStandardMaterial,
   Object3D,
 } from '@iwsdk/core';
@@ -788,6 +792,236 @@ export function dropOffset(
   return dropHeight * (1 - u * u);
 }
 
+// ---- Round 10: pacing director ----------------------------------------------
+
+/** The knobs the spawn director's pacing reads. @see directorCap */
+export interface DirectorTuning {
+  /** Seconds after a pop before a refill (NEATNIKS.refillDelaySec). */
+  readonly refillDelaySec: number;
+  /** Seconds between two spawns (NEATNIKS.spawnStaggerSec). */
+  readonly spawnStaggerSec: number;
+  /** Seconds after the last bot pops before the next is due (NEATNIKS.emptyRefillSec). */
+  readonly emptyRefillSec: number;
+  /** NEATNIKS.waveBreatherSec. */
+  readonly waveBreatherSec: number;
+  /** NEATNIKS.breatherKeepAlive. */
+  readonly breatherKeepAlive: number;
+  /** TARGETS.maxConcurrent. */
+  readonly maxConcurrent: number;
+  /** NEATNIKS.boss.enterAtSecLeft. */
+  readonly bossEnterAtSecLeft: number;
+  /** NEATNIKS.boss.companionsMax. */
+  readonly bossCompanionsMax: number;
+}
+
+/** The shipped tuning, gathered from config for the system and the tests. */
+export const DIRECTOR_TUNING: DirectorTuning = {
+  refillDelaySec: NEATNIKS.refillDelaySec,
+  spawnStaggerSec: NEATNIKS.spawnStaggerSec,
+  emptyRefillSec: NEATNIKS.emptyRefillSec,
+  waveBreatherSec: NEATNIKS.waveBreatherSec,
+  breatherKeepAlive: NEATNIKS.breatherKeepAlive,
+  maxConcurrent: TARGETS.maxConcurrent,
+  bossEnterAtSecLeft: NEATNIKS.boss.enterAtSecLeft,
+  bossCompanionsMax: NEATNIKS.boss.companionsMax,
+};
+
+/**
+ * Round 10: how many robots the director keeps up right now.
+ *
+ * - Boss phase (`timeLeft <= bossEnterAtSecLeft`): the boss's companions
+ *   plus the Duke himself, so small bots keep spawning while he is up.
+ * - Otherwise the running wave's `maxAlive` - but inside a wave's opening
+ *   breather only `breatherKeepAlive` (a thinned arena, never an empty one;
+ *   round 9's breather stopped spawns outright for 3 s).
+ *
+ * Always capped by `maxConcurrent`.
+ */
+export function directorCap(
+  elapsedSec: number,
+  timeLeftSec: number,
+  waves: ReadonlyArray<NeatnikWave>,
+  dukeAlive: number,
+  t: DirectorTuning,
+): number {
+  const inBoss = t.bossEnterAtSecLeft > 0 && timeLeftSec <= t.bossEnterAtSecLeft;
+  let cap: number;
+  if (inBoss) {
+    cap = t.bossCompanionsMax + dukeAlive;
+  } else {
+    const wave = waves[waveIndexAt(elapsedSec, waves)];
+    cap = wave ? wave.maxAlive : 0;
+    if (inWaveBreather(elapsedSec, waves, t.waveBreatherSec)) {
+      cap = Math.min(cap, Math.max(1, t.breatherKeepAlive));
+    }
+  }
+  return Math.max(0, Math.min(cap, t.maxConcurrent));
+}
+
+/**
+ * Round 10: may the director spawn this frame?
+ *
+ * Below the cap, a spawn waits for `nextSpawnAt` (the stagger after the last
+ * spawn, pushed out by `refillDelaySec` after each pop). An EMPTY arena
+ * ignores that and only waits `emptyRefillSec` after the last pop, which is
+ * what bounds the dead time with zero bots on screen.
+ */
+export function directorReady(
+  nowSec: number,
+  alive: number,
+  cap: number,
+  nextSpawnAt: number,
+  lastPopAt: number,
+  emptyRefillSec: number,
+): boolean {
+  if (alive >= cap) return false;
+  if (alive <= 0) return nowSec >= lastPopAt + Math.max(0, emptyRefillSec);
+  return nowSec >= nextSpawnAt;
+}
+
+// ---- Round 10: Duster Duke's patrol -----------------------------------------
+
+/**
+ * Angular offsets (radians, relative to the arc centre) of `count` patrol
+ * points spread evenly across `arcDeg`. One point stands in the middle;
+ * none stands outside +/- arcDeg/2. Writes into `out`, returns the count used.
+ */
+export function patrolOffsets(
+  count: number,
+  arcDeg: number,
+  out: Float32Array,
+): number {
+  const n = Math.max(1, Math.min(out.length, Math.floor(count)));
+  const half = (Math.max(0, Math.min(360, arcDeg)) * DEG_TO_RAD) / 2;
+  if (n === 1) {
+    out[0] = 0;
+    return 1;
+  }
+  for (let i = 0; i < n; i++) out[i] = -half + (2 * half * i) / (n - 1);
+  return n;
+}
+
+/**
+ * Weight (0..1) of the HUD keep-clear radius at an angular offset from the
+ * arc centre: 1 inside +/- `avoidRad`, fading linearly to 0 over a further
+ * `avoidRad / 2`.
+ */
+export function hudBandWeight(offsetRad: number, avoidRad: number): number {
+  if (!(avoidRad > 0)) return 0;
+  const a = Math.abs(offsetRad);
+  if (a <= avoidRad) return 1;
+  const blend = avoidRad * 0.5;
+  return a >= avoidRad + blend ? 0 : 1 - (a - avoidRad) / blend;
+}
+
+/**
+ * One point along a patrol leg, in polar coordinates around the player:
+ * angle and radius ease (in-out sine) from (a0, r0) to (a1, r1), and inside
+ * the HUD band ({@link hudBandWeight}) the radius bulges out toward
+ * `clearR`, so a Duke strafing past the middle walks behind the docked HUD
+ * strip rather than through it. Polar (not a straight chord) so a leg never
+ * cuts in closer than its endpoints. Writes [angle, radius] into `out`.
+ */
+export function patrolPathPoint(
+  a0: number,
+  r0: number,
+  a1: number,
+  r1: number,
+  u: number,
+  avoidRad: number,
+  clearR: number,
+  out: Float32Array,
+): void {
+  const k = easeInOutSine(u);
+  const a = a0 + (a1 - a0) * k;
+  let r = r0 + (r1 - r0) * k;
+  const w = hudBandWeight(a, avoidRad);
+  if (w > 0 && clearR > r) r += (clearR - r) * w;
+  out[0] = a;
+  out[1] = r;
+}
+
+/** Rough length of a patrol leg, metres (arc + radial change). */
+export function patrolLegLength(
+  a0: number,
+  r0: number,
+  a1: number,
+  r1: number,
+): number {
+  return Math.abs(a1 - a0) * Math.max(r0, r1) + Math.abs(r1 - r0);
+}
+
+/** A different patrol point from `current`, uniform over the rest. */
+export function nextPatrolIndex(
+  current: number,
+  count: number,
+  rand: number,
+): number {
+  const n = Math.floor(count);
+  if (n <= 1) return 0;
+  const pick = Math.min(n - 2, Math.floor(clamp01(rand) * (n - 1)));
+  return pick >= current ? pick + 1 : pick;
+}
+
+// ---- Round 10: HP pips --------------------------------------------------------
+
+/** What one HP pip shows. */
+export const PipLook = { Off: 0, On: 1, Flash: 2 } as const;
+export type PipLook = typeof PipLook[keyof typeof PipLook];
+
+/**
+ * Look of pip `index` in a row whose bot has `remaining` of its points left.
+ * Lit pips flash while `flashing`; so does the pip just lost (index ==
+ * remaining), so the hit reads as a pip blinking out.
+ */
+export function pipLook(
+  index: number,
+  remaining: number,
+  flashing: boolean,
+): PipLook {
+  if (index < remaining) return flashing ? PipLook.Flash : PipLook.On;
+  if (flashing && index === remaining) return PipLook.Flash;
+  return PipLook.Off;
+}
+
+/** Centre x of pip `index` in a row of `count`, centred on 0. */
+export function pipX(
+  index: number,
+  count: number,
+  width: number,
+  gap: number,
+): number {
+  return (index - (count - 1) / 2) * (width + gap);
+}
+
+/**
+ * Round 10: one blocked frontal shot against a shield with `shieldHp` left.
+ * @returns the shield HP after the block (never below 0). A shield already at
+ *   0 does not block at all - see {@link shieldStillUp}.
+ */
+export function chipShield(shieldHp: number): number {
+  return shieldHp > 0 ? shieldHp - 1 : 0;
+}
+
+/** Does a Squeegee with `shieldHp` left still have a shield to block with? */
+export function shieldStillUp(shieldHp: number): boolean {
+  return shieldHp > 0;
+}
+
+/**
+ * Round 10: a Mopsy's sideways strafe offset, metres, at `clockSec`: a slow
+ * sine of `amplitude` at `hz` with the bot's own `phase`.
+ */
+export function strafeOffset(
+  clockSec: number,
+  phase: number,
+  amplitude: number,
+  hz: number,
+): number {
+  if (!(amplitude > 0) || !(hz > 0)) return 0;
+  return Math.sin(clockSec * TAU * hz + phase) * amplitude;
+}
+
 // ---------------------------------------------------------------------------
 // The system
 // ---------------------------------------------------------------------------
@@ -796,6 +1030,19 @@ export function dropOffset(
 const DEFLECT_CAPACITY = 8;
 /** Furniture candidates examined per Peekaboo spawn. */
 const MAX_HIDE_CANDIDATES = 12;
+/** Round 10: most patrol points Duster Duke can use (NEATNIKS.boss.patrolPoints). */
+const MAX_PATROL_POINTS = 6;
+/** Round 10: archetypes the director falls back through when a pool is busy. */
+const FALLBACK_ORDER: readonly number[] = [
+  Neatnik.Mopsy,
+  Neatnik.Squeegee,
+  Neatnik.Peekaboo,
+];
+
+/** Round 10: does this archetype wear an HP pip bar? */
+export function wearsHpBar(archetype: number): boolean {
+  return archetype === Neatnik.Squeegee || archetypeConfig(archetype).hp > 1;
+}
 
 /**
  * Round 9: IWSDK's DepthSensingSystem, made safe to register on any runtime.
@@ -953,6 +1200,46 @@ export class TargetSystem extends createSystem({
   private shieldFlashUntil!: Float64Array;
   /** [0] = the director's next allowed spawn. An array so it shifts too. */
   private nextSpawnAt!: Float64Array;
+  /** Round 10: [0] = when the last robot popped (empty-arena refill clock). */
+  private lastPopAt!: Float64Array;
+  /** Round 10: HP pips (body row) flash until; shield row likewise. */
+  private barFlashUntil!: Float64Array;
+  private shieldBarFlashUntil!: Float64Array;
+
+  // ---- Round 10: Squeegee shield HP, Mopsy strafe, Duke patrol ----
+  /** Blocked shots the Squeegee's shield can still take (0 = shattered). */
+  private slotShieldHp!: Int8Array;
+  /** Unit floor-plane strafe direction (across the line of sight), xz per slot. */
+  private slotStrafeDir!: Float32Array;
+  /** Last frame's strafe offset; the strafe is applied as a delta. */
+  private slotStrafePrev!: Float32Array;
+  /** Patrol points per slot (Duke): count, current target index. */
+  private patrolCount!: Int8Array;
+  private patrolIdx!: Int8Array;
+  /** Patrol point angle offsets (from the arc centre) and radii. */
+  private patrolA!: Float32Array;
+  private patrolR!: Float32Array;
+  /** Current leg [a0, r0, a1, r1] per slot. */
+  private patrolLeg!: Float32Array;
+  /** Head xz the patrol is laid out around, per slot. */
+  private patrolCentre!: Float32Array;
+  /** Room-clamped HUD keep-clear radius, per slot. */
+  private patrolClearR!: Float32Array;
+  private patrolMoveDur!: Float32Array;
+  /** Absolute seconds; shifted across pauses like every other deadline. */
+  private patrolMoveStart!: Float64Array;
+  private patrolPauseUntil!: Float64Array;
+  private patrolScratch!: Float32Array;
+
+  // ---- Round 10: HP pip bars (built with the pool, only for wearsHpBar) ----
+  private readonly barObjects: (Object3D | null)[] = [];
+  private readonly barShieldRows: (Object3D | null)[] = [];
+  private readonly barBodyPips: Mesh[][] = [];
+  private readonly barShieldPips: Mesh[][] = [];
+  private pipGeometry: BoxGeometry | null = null;
+  /** [body on, shield on, off, flash], shared by every bar. */
+  private pipMaterials: MeshBasicMaterial[] = [];
+  private headQuat!: Quaternion;
 
   /** Hand holding a tether on this slot: 0 left, 1 right, -1 free. */
   private slotTetherHand!: Int8Array;
@@ -1032,6 +1319,24 @@ export class TargetSystem extends createSystem({
     this.returnStartedAt = new Float64Array(size);
     this.shieldFlashUntil = new Float64Array(size);
     this.nextSpawnAt = new Float64Array(1);
+    this.lastPopAt = new Float64Array(1);
+    this.barFlashUntil = new Float64Array(size);
+    this.shieldBarFlashUntil = new Float64Array(size);
+    this.slotShieldHp = new Int8Array(size);
+    this.slotStrafeDir = new Float32Array(size * 2);
+    this.slotStrafePrev = new Float32Array(size);
+    this.patrolCount = new Int8Array(size);
+    this.patrolIdx = new Int8Array(size);
+    this.patrolA = new Float32Array(size * MAX_PATROL_POINTS);
+    this.patrolR = new Float32Array(size * MAX_PATROL_POINTS);
+    this.patrolLeg = new Float32Array(size * 4);
+    this.patrolCentre = new Float32Array(size * 2);
+    this.patrolClearR = new Float32Array(size);
+    this.patrolMoveDur = new Float32Array(size);
+    this.patrolMoveStart = new Float64Array(size);
+    this.patrolPauseUntil = new Float64Array(size);
+    this.patrolScratch = new Float32Array(MAX_PATROL_POINTS);
+    this.headQuat = new Quaternion();
     this.slotTetherHand = new Int8Array(size).fill(-1);
     this.slotWorldPos = new Float32Array(size * 3);
 
@@ -1125,6 +1430,7 @@ export class TargetSystem extends createSystem({
     this.directSpawns(nowSec);
     this.testBallOverlaps(nowSec, delta);
     this.publishAimTargets();
+    this.updateHpBars(nowSec);
 
     if (this.targetsAlive.peek() !== this.aliveCount) {
       this.targetsAlive.value = this.aliveCount;
@@ -1199,6 +1505,11 @@ export class TargetSystem extends createSystem({
     shiftTimestamps(this.shieldFlashUntil, pausedSec);
     shiftTimestamps(this.nextSpawnAt, pausedSec);
     shiftTimestamps(this.deflectUntil, pausedSec);
+    shiftTimestamps(this.lastPopAt, pausedSec);
+    shiftTimestamps(this.barFlashUntil, pausedSec);
+    shiftTimestamps(this.shieldBarFlashUntil, pausedSec);
+    shiftTimestamps(this.patrolMoveStart, pausedSec);
+    shiftTimestamps(this.patrolPauseUntil, pausedSec);
 
     const bobOmega = TARGETS.bobHz * TAU;
     for (let slot = 0; slot < this.slotBobPhase.length; slot++) {
@@ -1223,6 +1534,60 @@ export class TargetSystem extends createSystem({
     if (!this.roundActive) return -1;
     this.player.head.getWorldPosition(this.headScratch);
     return this.spawnArchetype(archetype, performance.now() / 1000);
+  }
+
+  /**
+   * Round 10 dev / harness hook: one frontal shot blocked by this Squeegee's
+   * shield, through the same chip / shatter path a real ball takes (minus
+   * the ball). @returns the shield HP left, or -1 when there is no shield.
+   */
+  debugShieldHit(slot: number): number {
+    if (slot < 0 || slot >= this.slots.length) return -1;
+    if (this.slotState[slot] !== TargetSlotState.Active) return -1;
+    if (!shieldStillUp(this.slotShieldHp[slot])) return -1;
+    const base = slot * 3;
+    this.chipShieldAt(
+      slot,
+      this.slotWorldPos[base],
+      this.slotWorldPos[base + 1],
+      this.slotWorldPos[base + 2],
+      performance.now() / 1000,
+    );
+    return this.slotShieldHp[slot];
+  }
+
+  /** Round 10 dev / harness hook: one ordinary hit on a live slot. */
+  debugHit(slot: number): number {
+    if (slot < 0 || slot >= this.slots.length) return -1;
+    if (this.slotState[slot] !== TargetSlotState.Active) return -1;
+    this.registerHit(slot, slot * 3, performance.now() / 1000);
+    return this.slotHp[slot];
+  }
+
+  /** Round 10 dev / harness: a snapshot of one slot (allocates; never per frame). */
+  debugSlot(slot: number): {
+    state: number;
+    archetype: number;
+    hp: number;
+    shieldHp: number;
+    hittable: boolean;
+    pos: number[];
+    patrolIdx: number;
+  } {
+    const base = slot * 3;
+    return {
+      state: this.slotState[slot],
+      archetype: this.slotArchetype[slot],
+      hp: this.slotHp[slot],
+      shieldHp: this.slotShieldHp[slot],
+      hittable: this.slotHittable[slot] === 1,
+      pos: [
+        this.slotWorldPos[base],
+        this.slotWorldPos[base + 1],
+        this.slotWorldPos[base + 2],
+      ],
+      patrolIdx: this.patrolIdx[slot],
+    };
   }
 
   // ---- The tether API ------------------------------------------------------
@@ -1262,9 +1627,11 @@ export class TargetSystem extends createSystem({
 
     this.slotTetherHand[slot] = hand;
     this.slots[slot]?.setValue(Target, 'tetheredBy', hand);
-    // A Duke being hauled is no longer walking home (nor is a drifting bot).
+    // A Duke being hauled is no longer walking home (nor is a drifting bot),
+    // nor patrolling: his current leg's target stays his home to walk back to.
     this.returnStartedAt[slot] = 0;
     this.slotDriftHome[slot] = 0;
+    this.patrolMoveStart[slot] = 0;
     this.publishTetheredHands();
     return true;
   }
@@ -1357,6 +1724,7 @@ export class TargetSystem extends createSystem({
       this.slots[slot]?.setValue(Target, 'hp', hp);
       this.hitStartedAt[slot] = nowSec;
       this.hitFlashUntil[slot] = nowSec + TARGETS.hitFlashSec * 2;
+      this.barFlashUntil[slot] = nowSec + NEATNIKS.hpBar.flashSec * 2;
       this.events.emit(
         GameEvent.TargetHit,
         this.slotWorldPos[base],
@@ -1364,7 +1732,7 @@ export class TargetSystem extends createSystem({
         this.slotWorldPos[base + 2],
         hp,
       );
-      // Stomp back to where he landed.
+      // Stomp back to his patrol (the point his last leg was heading for).
       this.startWalkHome(slot, base, nowSec);
       return;
     }
@@ -1459,10 +1827,133 @@ export class TargetSystem extends createSystem({
       this.slotMaterials.push([]);
       this.slotFlash.push({ value: new Vector3() });
       this.slotState[slot] = TargetSlotState.Empty;
+      this.buildHpBar(slot);
     }
 
     this.refreshArt();
     return true;
+  }
+
+  /**
+   * Round 10: a floating HP pip bar for a multi-hit slot (see
+   * {@link wearsHpBar}); everyone else gets nulls. Its own transform entity,
+   * not a child of the robot: kept off the robot's DepthOccludable material
+   * patching (the pip materials are shared across bars) and off the rig's
+   * squash. Positioned and billboarded every frame by {@link updateHpBars}.
+   */
+  private buildHpBar(slot: number): void {
+    const arch = this.slotArchetype[slot];
+    if (!wearsHpBar(arch)) {
+      this.barObjects.push(null);
+      this.barShieldRows.push(null);
+      this.barBodyPips.push([]);
+      this.barShieldPips.push([]);
+      return;
+    }
+    const hb = NEATNIKS.hpBar;
+    if (!this.pipGeometry) {
+      this.pipGeometry = new BoxGeometry(hb.pipWidth, hb.pipHeight, hb.pipDepth);
+      const colors = [hb.bodyColor, hb.shieldColor, hb.offColor, hb.flashColor];
+      for (const c of colors) {
+        const material = new MeshBasicMaterial();
+        // Gotcha 23: palette tuples are sRGB.
+        material.color.setRGB(c[0], c[1], c[2], SRGBColorSpace);
+        material.toneMapped = false;
+        this.pipMaterials.push(material);
+      }
+    }
+    const group = new Group();
+    group.name = `NeatnikHp_${slot}`;
+    group.visible = false;
+    const makeRow = (count: number, y: number, into: Mesh[]): Group => {
+      const row = new Group();
+      row.position.set(0, y, 0);
+      for (let i = 0; i < count; i++) {
+        const pip = new Mesh(this.pipGeometry!, this.pipMaterials[2]);
+        pip.position.set(pipX(i, count, hb.pipWidth, hb.pipGap), 0, 0);
+        pip.renderOrder = 3;
+        row.add(pip);
+        into.push(pip);
+      }
+      group.add(row);
+      return row;
+    };
+    const body: Mesh[] = [];
+    const shield: Mesh[] = [];
+    makeRow(archetypeConfig(arch).hp, 0, body);
+    const shieldRow =
+      arch === Neatnik.Squeegee
+        ? makeRow(NEATNIKS.shield.hp, hb.rowGap, shield)
+        : null;
+    this.world.createTransformEntity(group, {
+      parent: this.world.sceneEntity,
+      persistent: true,
+    });
+    this.barObjects.push(group);
+    this.barShieldRows.push(shieldRow);
+    this.barBodyPips.push(body);
+    this.barShieldPips.push(shield);
+  }
+
+  /**
+   * Round 10: float each live multi-hit bot's pips over its head, facing the
+   * player (billboard to the head), with lit / spent / flashing pips. Shared
+   * materials, so a frame only swaps material references - no allocation.
+   */
+  private updateHpBars(nowSec: number): void {
+    if (this.barObjects.length === 0) return;
+    const hb = NEATNIKS.hpBar;
+    const mats = this.pipMaterials;
+    let headQuatRead = false;
+    for (let slot = 0; slot < this.barObjects.length; slot++) {
+      const bar = this.barObjects[slot];
+      if (!bar) continue;
+      const live = this.slotState[slot] === TargetSlotState.Active;
+      bar.visible = live;
+      if (!live) continue;
+      if (!headQuatRead) {
+        this.player.head.getWorldQuaternion(this.headQuat);
+        headQuatRead = true;
+      }
+      const base = slot * 3;
+      const cfg = archetypeConfig(this.slotArchetype[slot]);
+      bar.position.set(
+        this.slotWorldPos[base],
+        this.slotWorldPos[base + 1] + cfg.heightMeters * 0.5 + hb.above,
+        this.slotWorldPos[base + 2],
+      );
+      bar.quaternion.copy(this.headQuat);
+
+      const bodyLeft = this.barFlashUntil[slot] - nowSec;
+      const shieldLeft = this.shieldBarFlashUntil[slot] - nowSec;
+      const bodyFlash = bodyLeft > 0;
+      const shieldFlash = shieldLeft > 0;
+      const punchK = Math.max(
+        bodyFlash ? bodyLeft / hb.flashSec : 0,
+        shieldFlash ? shieldLeft / hb.flashSec : 0,
+      );
+      bar.scale.setScalar(1 + hb.flashPunch * Math.min(1, punchK));
+
+      const body = this.barBodyPips[slot];
+      const hp = this.slotHp[slot];
+      for (let i = 0; i < body.length; i++) {
+        const look = pipLook(i, hp, bodyFlash);
+        body[i].material =
+          look === PipLook.On ? mats[0] : look === PipLook.Flash ? mats[3] : mats[2];
+      }
+      const row = this.barShieldRows[slot];
+      if (row) {
+        const shieldHp = this.slotShieldHp[slot];
+        // A shattered shield's row blinks out with the burst, then goes.
+        row.visible = shieldHp > 0 || shieldFlash;
+        const pips = this.barShieldPips[slot];
+        for (let i = 0; i < pips.length; i++) {
+          const look = pipLook(i, shieldHp, shieldFlash);
+          pips[i].material =
+            look === PipLook.On ? mats[1] : look === PipLook.Flash ? mats[3] : mats[2];
+        }
+      }
+    }
   }
 
   /** The asset key a slot of this archetype should wear right now, or ''. */
@@ -1604,6 +2095,7 @@ export class TargetSystem extends createSystem({
     this.bossSpawned = false;
     this.roundClock = 0;
     this.nextSpawnAt[0] = performance.now() / 1000;
+    this.lastPopAt[0] = 0;
     this.targetsAlive.value = 0;
   }
 
@@ -1625,7 +2117,13 @@ export class TargetSystem extends createSystem({
 
   /**
    * Keep the round populated: bring the boss on at his cue, then top the
-   * current wave up to its robot count, one spawn per `spawnStaggerSec`.
+   * arena up to the current cap, one spawn per `spawnStaggerSec`.
+   *
+   * Round 10 pacing (owner: "waiting a few seconds after I beat a round"):
+   * refills wait `refillDelaySec` after a pop (was 1.5 s), an empty arena
+   * refills `emptyRefillSec` after its last pop whatever the stagger, and a
+   * wave breather only thins the arena to `breatherKeepAlive` (was 3 s of no
+   * spawns at all). @see directorCap @see directorReady
    */
   private directSpawns(nowSec: number): void {
     const timeLeft = this.roundTimeLeft();
@@ -1639,25 +2137,39 @@ export class TargetSystem extends createSystem({
 
     const waves = NEATNIKS.waves;
     const elapsed = GAME.roundSec - timeLeft;
-    // Round 9: a short rest beat as each new wave opens (comfort). Robots
-    // already up stay up; only new spawns wait. The boss above is exempt.
-    if (inWaveBreather(elapsed, waves, NEATNIKS.waveBreatherSec)) return;
+    const cap = directorCap(
+      elapsed,
+      timeLeft,
+      waves,
+      this.countActive(Neatnik.DusterDuke),
+      DIRECTOR_TUNING,
+    );
+    if (
+      !directorReady(
+        nowSec,
+        this.aliveCount,
+        cap,
+        this.nextSpawnAt[0],
+        this.lastPopAt[0],
+        DIRECTOR_TUNING.emptyRefillSec,
+      )
+    ) {
+      return;
+    }
     const wave = waves[waveIndexAt(elapsed, waves)];
     if (!wave) return;
     const inBoss = boss.enterAtSecLeft > 0 && timeLeft <= boss.enterAtSecLeft;
-    let cap = inBoss
-      ? boss.companionsMax + this.countActive(Neatnik.DusterDuke)
-      : wave.maxAlive;
-    cap = Math.min(cap, TARGETS.maxConcurrent);
-    if (this.aliveCount >= cap) return;
-    if (nowSec < this.nextSpawnAt[0]) return;
-
-    const arch = pickWeighted(wave.weights, Math.random());
-    if (
-      this.spawnArchetype(arch, nowSec) < 0 &&
-      arch !== Neatnik.Mopsy
-    ) {
-      this.spawnArchetype(Neatnik.Mopsy, nowSec);
+    const arch = pickWeighted(
+      inBoss ? boss.companionWeights : wave.weights,
+      Math.random(),
+    );
+    // A busy pool (all its slots up or cooling down) falls back to any
+    // other small bot, Mopsys first, so a refill is never skipped.
+    if (this.spawnArchetype(arch, nowSec) < 0) {
+      for (let k = 0; k < FALLBACK_ORDER.length; k++) {
+        const other = FALLBACK_ORDER[k];
+        if (other !== arch && this.spawnArchetype(other, nowSec) >= 0) break;
+      }
     }
     this.nextSpawnAt[0] = nowSec + NEATNIKS.spawnStaggerSec;
   }
@@ -1702,28 +2214,20 @@ export class TargetSystem extends createSystem({
     switch (archetype) {
       case Neatnik.DusterDuke: {
         const boss = NEATNIKS.boss;
-        this.spawnDirection.set(
-          Math.cos(this.spawnArcCenter),
-          0,
-          Math.sin(this.spawnArcCenter),
-        );
-        const wall = this.probeWall(this.spawnDirection);
-        const dist = Math.max(
-          ROOM.spawnMinDist,
-          clampSpawnDistance(
-            boss.distance,
-            wall,
-            ROOM.spawnWallMargin,
-            ROOM.spawnMinDist,
-          ),
-        );
-        const x = head.x + this.spawnDirection.x * dist;
-        const z = head.z + this.spawnDirection.z * dist;
+        // Round 10: lay out his patrol, then land on its middle point.
+        const landing = this.layOutPatrol(slot);
+        this.patrolPointInto(slot, landing, this.pairScratch);
+        const x = this.pairScratch[0];
+        const z = this.pairScratch[1];
         this.startSlot(slot, x, boss.standHeight, z, nowSec);
         const base = slot * 3;
         this.slotHome[base] = x;
         this.slotHome[base + 1] = boss.standHeight;
         this.slotHome[base + 2] = z;
+        this.patrolIdx[slot] = landing;
+        this.patrolMoveStart[slot] = 0;
+        this.patrolPauseUntil[slot] =
+          nowSec + boss.dropSec + boss.patrolPauseSec;
         this.entranceStartedAt[slot] = nowSec;
         // The drop *is* the entrance: skip the pop-in.
         this.spawnStartedAt[slot] = nowSec - NEATNIKS.anim.spawnSec;
@@ -1766,6 +2270,127 @@ export class TargetSystem extends createSystem({
     }
     this.events.emit(GameEvent.BotSpawned, this.slotWorldPos[slot * 3], this.slotWorldPos[slot * 3 + 1], this.slotWorldPos[slot * 3 + 2], packPopData(slot, archetype, 0)); // R9: first-encounter coaching (CoachSystem)
     return slot;
+  }
+
+  /**
+   * Round 10: Duster Duke's patrol points for this slot, around the head
+   * (expects `headScratch`): `patrolPoints` spread over `patrolArcDeg` of the
+   * seated arc at `boss.distance`, pushed out to `hudClearDist` in the band
+   * straight ahead where the docked HUD sits, each room-clamped and never
+   * nearer than ROOM.spawnMinDist. @returns the landing (middle) index.
+   */
+  private layOutPatrol(slot: number): number {
+    const boss = NEATNIKS.boss;
+    const head = this.headScratch;
+    const n = patrolOffsets(
+      boss.patrolPoints,
+      Math.min(boss.patrolArcDeg, TARGETS.spawnArcDeg),
+      this.patrolScratch,
+    );
+    const avoidRad = boss.hudAvoidDeg * DEG_TO_RAD;
+    const base = slot * MAX_PATROL_POINTS;
+    this.patrolCentre[slot * 2] = head.x;
+    this.patrolCentre[slot * 2 + 1] = head.z;
+    for (let i = 0; i < n; i++) {
+      const a = this.patrolScratch[i];
+      const w = hudBandWeight(a, avoidRad);
+      const want = boss.distance + Math.max(0, boss.hudClearDist - boss.distance) * w;
+      this.patrolA[base + i] = a;
+      this.patrolR[base + i] = this.roomClampedRadius(a, want);
+    }
+    this.patrolCount[slot] = n;
+    this.patrolClearR[slot] = this.roomClampedRadius(0, boss.hudClearDist);
+    return Math.floor(n / 2);
+  }
+
+  /** `want` metres along arc offset `a`, pulled in front of real walls. */
+  private roomClampedRadius(a: number, want: number): number {
+    const heading = this.spawnArcCenter + a;
+    this.spawnDirection.set(Math.cos(heading), 0, Math.sin(heading));
+    const wall = this.probeWall(this.spawnDirection);
+    const used = clampSpawnDistance(
+      want,
+      wall,
+      ROOM.spawnWallMargin,
+      ROOM.spawnMinDist,
+    );
+    return Math.max(ROOM.spawnMinDist, used);
+  }
+
+  /** World [x, z] of patrol point `index` of a slot, into `out`. */
+  private patrolPointInto(slot: number, index: number, out: Float32Array): void {
+    this.polarInto(
+      slot,
+      this.patrolA[slot * MAX_PATROL_POINTS + index],
+      this.patrolR[slot * MAX_PATROL_POINTS + index],
+      out,
+    );
+  }
+
+  /** World [x, z] of (arc offset, radius) around a slot's patrol centre. */
+  private polarInto(slot: number, a: number, r: number, out: Float32Array): void {
+    const heading = this.spawnArcCenter + a;
+    out[0] = this.patrolCentre[slot * 2] + Math.cos(heading) * r;
+    out[1] = this.patrolCentre[slot * 2 + 1] + Math.sin(heading) * r;
+  }
+
+  /**
+   * Round 10: one frame of the Duke's patrol (landed, not hauled, not
+   * walking home): stomp in place for a pause, then strafe to another point
+   * along {@link patrolPathPoint}'s HUD-dodging polar path.
+   */
+  private patrolStep(slot: number, nowSec: number, holder: Object3D): void {
+    const boss = NEATNIKS.boss;
+    const count = this.patrolCount[slot];
+    if (count <= 1) return;
+    const leg = slot * 4;
+    const started = this.patrolMoveStart[slot];
+    if (started > 0) {
+      const u = (nowSec - started) / Math.max(0.05, this.patrolMoveDur[slot]);
+      patrolPathPoint(
+        this.patrolLeg[leg],
+        this.patrolLeg[leg + 1],
+        this.patrolLeg[leg + 2],
+        this.patrolLeg[leg + 3],
+        clamp01(u),
+        boss.hudAvoidDeg * DEG_TO_RAD,
+        this.patrolClearR[slot],
+        this.poseScratch,
+      );
+      this.polarInto(slot, this.poseScratch[0], this.poseScratch[1], this.pairScratch);
+      holder.position.x = this.pairScratch[0];
+      holder.position.z = this.pairScratch[1];
+      if (u >= 1) {
+        this.patrolMoveStart[slot] = 0;
+        this.patrolPauseUntil[slot] =
+          nowSec + boss.patrolPauseSec + Math.random() * boss.patrolPauseJitterSec;
+      }
+      return;
+    }
+    if (nowSec < this.patrolPauseUntil[slot]) return;
+
+    const from = this.patrolIdx[slot];
+    const to = nextPatrolIndex(from, count, Math.random());
+    const pb = slot * MAX_PATROL_POINTS;
+    const a0 = this.patrolA[pb + from];
+    const r0 = this.patrolR[pb + from];
+    const a1 = this.patrolA[pb + to];
+    const r1 = this.patrolR[pb + to];
+    this.patrolLeg[leg] = a0;
+    this.patrolLeg[leg + 1] = r0;
+    this.patrolLeg[leg + 2] = a1;
+    this.patrolLeg[leg + 3] = r1;
+    const length = patrolLegLength(a0, r0, a1, r1);
+    this.patrolMoveDur[slot] = Math.max(0.4, length / Math.max(0.05, boss.patrolSpeed));
+    this.patrolMoveStart[slot] = nowSec;
+    this.patrolIdx[slot] = to;
+    // His home is wherever this leg is heading: a haul mid-leg walks him
+    // back there, onto his patrol.
+    const base = slot * 3;
+    this.patrolPointInto(slot, to, this.pairScratch);
+    this.slotHome[base] = this.pairScratch[0];
+    this.slotHome[base + 1] = boss.standHeight;
+    this.slotHome[base + 2] = this.pairScratch[1];
   }
 
   /** The least crowded lane of the arc right now. */
@@ -1823,6 +2448,30 @@ export class TargetSystem extends createSystem({
     this.returnStartedAt[slot] = 0;
     this.slotDriftHome[slot] = 0;
     this.shieldFlashUntil[slot] = 0;
+    this.barFlashUntil[slot] = 0;
+    this.shieldBarFlashUntil[slot] = 0;
+    this.slotShieldHp[slot] =
+      this.slotArchetype[slot] === Neatnik.Squeegee ? NEATNIKS.shield.hp : 0;
+    this.patrolMoveStart[slot] = 0;
+    // Round 10: strafe across the line of sight (perpendicular to head->bot).
+    let sx = -(z - this.headScratch.z);
+    let sz = x - this.headScratch.x;
+    const sl = Math.sqrt(sx * sx + sz * sz);
+    if (sl > 1e-6) {
+      sx /= sl;
+      sz /= sl;
+    } else {
+      sx = 1;
+      sz = 0;
+    }
+    this.slotStrafeDir[slot * 2] = sx;
+    this.slotStrafeDir[slot * 2 + 1] = sz;
+    this.slotStrafePrev[slot] = strafeOffset(
+      this.animClock,
+      this.slotBobPhase[slot],
+      NEATNIKS.mopsyDrift.amplitude,
+      NEATNIKS.mopsyDrift.hz,
+    );
     entity.setValue(Target, 'hp', cfg.hp);
     this.aliveCount++;
 
@@ -2088,6 +2737,13 @@ export class TargetSystem extends createSystem({
     this.entranceStartedAt[slot] = 0;
     this.returnStartedAt[slot] = 0;
     this.shieldFlashUntil[slot] = 0;
+    this.barFlashUntil[slot] = 0;
+    this.shieldBarFlashUntil[slot] = 0;
+    this.slotShieldHp[slot] = 0;
+    this.patrolMoveStart[slot] = 0;
+    this.patrolPauseUntil[slot] = 0;
+    const bar = this.barObjects[slot];
+    if (bar) bar.visible = false;
   }
 
   // ---- Animation -----------------------------------------------------------
@@ -2141,15 +2797,31 @@ export class TargetSystem extends createSystem({
       const bob = Math.sin(nowSec * bobOmega + phase) * cfg.bobAmplitude;
       let y = this.slotBaseY[slot] + bob;
       switch (arch) {
-        case Neatnik.Mopsy:
+        case Neatnik.Mopsy: {
           // Skirt sway: the body breathes as the fringe swings.
           squash *= 1 + 0.04 * Math.sin(clock * TAU * cfg.swayHz * 2 + phase);
+          // Round 10: a gentle strafe, applied as a delta so it composes with
+          // the release drift and the tether (no jump when either ends).
+          const off = strafeOffset(
+            clock,
+            phase,
+            NEATNIKS.mopsyDrift.amplitude,
+            NEATNIKS.mopsyDrift.hz,
+          );
+          if (!(this.returnStartedAt[slot] > 0)) {
+            const d = off - this.slotStrafePrev[slot];
+            holder.position.x += d * this.slotStrafeDir[slot * 2];
+            holder.position.z += d * this.slotStrafeDir[slot * 2 + 1];
+          }
+          this.slotStrafePrev[slot] = off;
           break;
+        }
 
         case Neatnik.Squeegee: {
           // Guard stance: leaning in behind the blade; recoils on a ping.
           const shield = NEATNIKS.shield;
-          tiltX += NEATNIKS.shield.guardTiltRad;
+          // Round 10: the guard stance drops once the shield has shattered.
+          if (shieldStillUp(this.slotShieldHp[slot])) tiltX += shield.guardTiltRad;
           const flashLeft = this.shieldFlashUntil[slot] - nowSec;
           if (flashLeft > 0) {
             const k = flashLeft / shield.flashSec;
@@ -2189,8 +2861,10 @@ export class TargetSystem extends createSystem({
             // Stretched by the fall.
             squash *= 1 + 0.15 * (tE / boss.dropSec);
           } else {
-            // Stomping home after a haul, if he was hauled.
-            this.walkHome(slot, nowSec);
+            // Stomping home after a haul, if he was hauled; otherwise on
+            // patrol (round 10).
+            if (this.returnStartedAt[slot] > 0) this.walkHome(slot, nowSec);
+            else this.patrolStep(slot, nowSec, holder);
             // Footsteps: a hop per step, a squat on each landing.
             const step = Math.abs(Math.sin(clock * Math.PI * boss.stompHz + phase));
             y = this.slotBaseY[slot] + step * boss.stompLift;
@@ -2216,6 +2890,15 @@ export class TargetSystem extends createSystem({
       // on the rig so it composes with the facing yaw).
       tiltZ +=
         Math.sin(nowSec * WEB.tetherStruggleHz * TAU) * WEB.tetherStruggleRad;
+      // Keep the Mopsy strafe phase current so release does not jump.
+      if (arch === Neatnik.Mopsy) {
+        this.slotStrafePrev[slot] = strafeOffset(
+          clock,
+          phase,
+          NEATNIKS.mopsyDrift.amplitude,
+          NEATNIKS.mopsyDrift.hz,
+        );
+      }
     }
     this.slotLift[slot] = lift;
     this.slotHittable[slot] = hittable ? 1 : 0;
@@ -2262,6 +2945,12 @@ export class TargetSystem extends createSystem({
     this.slotReturnFrom[base + 2] = this.slotWorldPos[base + 2];
     this.returnStartedAt[slot] = nowSec;
     this.slotDriftHome[slot] = 0;
+    if (this.slotArchetype[slot] === Neatnik.DusterDuke) {
+      // Round 10: back on his patrol point, he catches his breath first.
+      this.patrolMoveStart[slot] = 0;
+      this.patrolPauseUntil[slot] =
+        nowSec + NEATNIKS.boss.returnSec + NEATNIKS.boss.patrolPauseSec;
+    }
   }
 
   /**
@@ -2326,7 +3015,9 @@ export class TargetSystem extends createSystem({
     const white = hitK * NEATNIKS.anim.hitFlashIntensity;
     const shieldLeft = this.shieldFlashUntil[slot] - nowSec;
     const cyan =
-      shieldLeft > 0 ? (shieldLeft / NEATNIKS.shield.flashSec) * 1.4 : 0;
+      shieldLeft > 0
+        ? Math.min(2, shieldLeft / NEATNIKS.shield.flashSec) * 1.4
+        : 0;
     flash.value.set(white + 0.25 * cyan, white + 0.9 * cyan, white + 1.2 * cyan);
   }
 
@@ -2443,6 +3134,21 @@ export class TargetSystem extends createSystem({
           !this.isTethered(slot) &&
           this.shieldStops(ball, slot, vx, vz)
         ) {
+          // Round 10: every blocked shot chips the shield; the one that
+          // breaks it shatters the blade and is absorbed (paint spray only).
+          if (
+            this.chipShieldAt(
+              slot,
+              this.ballScratch.x,
+              this.ballScratch.y,
+              this.ballScratch.z,
+              nowSec,
+            )
+          ) {
+            this.emitBladeImpact(ball);
+            ball.destroy();
+            break;
+          }
           if (!this.deflect(ball, slot, vx, vy, vz, nowSec)) {
             // Could not re-launch it (velocity already pending): it dies on
             // the blade, still harmlessly.
@@ -2463,6 +3169,31 @@ export class TargetSystem extends createSystem({
     }
   }
 
+  /**
+   * Round 10: one blocked shot against a Squeegee's shield. Chips a pip
+   * (flashing the shield row); the last pip shatters it - ShieldBroken (cue
+   * + cyan burst), a big cyan flash and a recoil squash - after which
+   * {@link shieldStops} lets everything through. @returns true on shatter.
+   */
+  private chipShieldAt(
+    slot: number,
+    x: number,
+    y: number,
+    z: number,
+    nowSec: number,
+  ): boolean {
+    const left = chipShield(this.slotShieldHp[slot]);
+    this.slotShieldHp[slot] = left;
+    this.shieldBarFlashUntil[slot] = nowSec + NEATNIKS.hpBar.flashSec;
+    if (left > 0) return false;
+    const shield = NEATNIKS.shield;
+    this.shieldFlashUntil[slot] = nowSec + shield.shatterFlashSec;
+    this.shieldBarFlashUntil[slot] = nowSec + shield.shatterFlashSec;
+    this.hitStartedAt[slot] = nowSec;
+    this.events.emit(GameEvent.ShieldBroken, x, y, z, slot);
+    return true;
+  }
+
   /** Is this ball one the Squeegee's blade turns away? */
   private shieldStops(
     ball: Entity,
@@ -2470,6 +3201,7 @@ export class TargetSystem extends createSystem({
     vx: number,
     vz: number,
   ): boolean {
+    if (!shieldStillUp(this.slotShieldHp[slot])) return false;
     const yaw = this.slots[slot].object3D?.rotation.y ?? this.slotYaw[slot];
     if (!shieldBlocks(Math.sin(yaw), Math.cos(yaw), vx, vz, NEATNIKS.shield.coneDeg)) {
       return false;
@@ -2502,24 +3234,14 @@ export class TargetSystem extends createSystem({
     nowSec: number,
   ): boolean {
     this.shieldFlashUntil[slot] = nowSec + NEATNIKS.shield.flashSec;
-    const x = this.ballScratch.x;
-    const y = this.ballScratch.y;
-    const z = this.ballScratch.z;
-    this.events.emit(GameEvent.ShieldDeflected, x, y, z, slot);
-    const color = ball.getVectorView(Ball, 'color');
     this.events.emit(
-      GameEvent.BallImpact,
-      x,
-      y,
-      z,
-      packImpactData(
-        (ball.getValue(Ball, 'kind') ?? BallKind.Normal) as BallKind,
-        color[0],
-        color[1],
-        color[2],
-        (ball.getValue(Ball, 'style') ?? BallStyle.Paint) as BallStyle,
-      ),
+      GameEvent.ShieldDeflected,
+      this.ballScratch.x,
+      this.ballScratch.y,
+      this.ballScratch.z,
+      slot,
     );
+    this.emitBladeImpact(ball);
 
     if (ball.hasComponent(PhysicsManipulation) || !ball.hasComponent(PhysicsBody)) {
       return false;
@@ -2572,6 +3294,24 @@ export class TargetSystem extends createSystem({
     this.deflectVel[r * 3 + 2] = out[2];
     this.deflectPending[r] = 1;
     return true;
+  }
+
+  /** The paint ping at the blade: a BallImpact at `ballScratch`. */
+  private emitBladeImpact(ball: Entity): void {
+    const color = ball.getVectorView(Ball, 'color');
+    this.events.emit(
+      GameEvent.BallImpact,
+      this.ballScratch.x,
+      this.ballScratch.y,
+      this.ballScratch.z,
+      packImpactData(
+        (ball.getValue(Ball, 'kind') ?? BallKind.Normal) as BallKind,
+        color[0],
+        color[1],
+        color[2],
+        (ball.getValue(Ball, 'style') ?? BallStyle.Paint) as BallStyle,
+      ),
+    );
   }
 
   /**
@@ -2661,6 +3401,7 @@ export class TargetSystem extends createSystem({
     this.slots[slot].setValue(Target, 'hp', hp);
     this.hitFlashUntil[slot] = nowSec + TARGETS.hitFlashSec;
     this.hitStartedAt[slot] = nowSec;
+    this.barFlashUntil[slot] = nowSec + NEATNIKS.hpBar.flashSec;
 
     // data = hit points the robot has left (0 on the killing blow).
     this.events.emit(GameEvent.TargetHit, x, y, z, hp);
@@ -2681,10 +3422,12 @@ export class TargetSystem extends createSystem({
     this.slotHittable[slot] = 0;
     this.popStartedAt[slot] = nowSec;
     this.aliveCount = Math.max(0, this.aliveCount - 1);
+    // Round 10: refill quickly (was TARGETS.respawnDelaySec, 1.5 s).
     this.nextSpawnAt[0] = Math.max(
       this.nextSpawnAt[0],
-      nowSec + TARGETS.respawnDelaySec,
+      nowSec + NEATNIKS.refillDelaySec,
     );
+    this.lastPopAt[0] = nowSec;
     const arch = this.slotArchetype[slot];
     this.events.emit(
       GameEvent.TargetPopped,

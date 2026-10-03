@@ -436,6 +436,18 @@ export const GameEvent = {
    * ({@link TutorialStep}). Emitted by TutorialSystem for any cue that wants it.
    */
   TutorialStepDone: 23,
+
+  // ---- Neatniks round 10 ----------------------------------------------------
+  //
+  // Numbered from 30 so parallel round-10 streams adding events (24+) cannot
+  // collide with this one in a merge.
+  /**
+   * A Squeegee's shield took its last blocked shot (NEATNIKS.shield.hp) and
+   * shattered; the bot is now hittable from any angle. Position = where the
+   * shot met the blade, `data` = pool slot. FeedbackSystem: a crunch + both
+   * hands buzz; VfxSystem: a cyan burst.
+   */
+  ShieldBroken: 30,
 } as const;
 
 export type GameEvent = typeof GameEvent[keyof typeof GameEvent];
