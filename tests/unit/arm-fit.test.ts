@@ -354,6 +354,23 @@ describe('forearm IK', () => {
     expect(Array.from(axis)).toEqual([0, 0, -1]);
   });
 
+  it('the dead zone trusts the wrist for small disagreements, the IK for big bends', () => {
+    const axis = new Float32Array(3);
+    const dz0 = (15 * Math.PI) / 180;
+    const dz1 = (40 * Math.PI) / 180;
+    // 7 degrees apart: inside the dead zone -> the hand axis.
+    const a7 = (7 * Math.PI) / 180;
+    blendForearmAxis(0, 0, -1, 0, Math.sin(a7), -Math.cos(a7), 0.6, 1, axis, dz0, dz1);
+    expect(axis[1]).toBeCloseTo(0, 9);
+    // 60 degrees apart: past it -> the full weight.
+    const a60 = Math.PI / 3;
+    blendForearmAxis(0, 0, -1, 0, Math.sin(a60), -Math.cos(a60), 0.6, 1, axis, dz0, dz1);
+    const full = new Float32Array(3);
+    blendForearmAxis(0, 0, -1, 0, Math.sin(a60), -Math.cos(a60), 0.6, 1, full);
+    expect(axis[1]).toBeCloseTo(full[1], 9);
+    expect(ARMFIT.forearmIkDeadzoneDeg[0]).toBeLessThan(ARMFIT.forearmIkDeadzoneDeg[1]);
+  });
+
   it('the default bend cap is within the wrist range of motion', () => {
     expect(ARMFIT.wristMaxBendDeg).toBeGreaterThan(20);
     expect(ARMFIT.wristMaxBendDeg).toBeLessThanOrEqual(70);

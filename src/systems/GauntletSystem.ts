@@ -10,7 +10,6 @@ import {
   Color,
   CylinderGeometry,
   Group,
-  IcosahedronGeometry,
   LatheGeometry,
   Mesh,
   MeshBasicMaterial,
@@ -706,6 +705,11 @@ export function solveElbow(
  * toward the IK forearm axis `f` by `weight`, then held within `maxRad` of
  * `h` (the wrist only bends so far, and a wrong elbow guess must not tear the
  * sleeve off the arm). Both inputs unit; writes a unit vector to `out[0..2]`.
+ *
+ * With a dead zone (`deadNearRad` < `deadFarRad`), the weight fades in with
+ * the angle between the two axes (smoothstep): small disagreements — the
+ * elbow guess's own error, a little ulnar deviation — trust the tracked
+ * wrist; only a clearly bent wrist hands the sleeve to the forearm estimate.
  */
 export function blendForearmAxis(
   hx: number, hy: number, hz: number,
@@ -713,8 +717,15 @@ export function blendForearmAxis(
   weight: number,
   maxRad: number,
   out: Float32Array | number[],
+  deadNearRad = 0,
+  deadFarRad = 0,
 ): void {
-  const w = Math.min(1, Math.max(0, Number.isFinite(weight) ? weight : 0));
+  let w = Math.min(1, Math.max(0, Number.isFinite(weight) ? weight : 0));
+  if (deadFarRad > deadNearRad) {
+    const between = Math.acos(Math.min(1, Math.max(-1, hx * fx + hy * fy + hz * fz)));
+    const u = Math.min(1, Math.max(0, (between - deadNearRad) / (deadFarRad - deadNearRad)));
+    w *= u * u * (3 - 2 * u);
+  }
   let vx = hx * (1 - w) + fx * w;
   let vy = hy * (1 - w) + fy * w;
   let vz = hz * (1 - w) + fz * w;
@@ -785,14 +796,11 @@ export function clampQuatAngle(
 
 /** Which piece of a gauntlet an entity is. */
 export const GauntletPart = {
-  /** Forearm sleeve root (forearm frame): the armour tube, pad mount, menu gem. */
+  /** Forearm sleeve root (forearm frame): the armour tube, menu-gem mount. */
   Forearm: 0,
   /** Back-of-hand plate, wrist frame. */
   Plate: 1,
-  /**
-   * Legacy pad mount under the sleeve (round-8 `spinneretEntity`, parent of
-   * WebShooterSystem's SPLAT/TETHER pads). Rides the GOO deploy.
-   */
+  /** Retired in round 10 (the under-wrist spinneret / pad mount). Id kept stable. */
   Spinneret: 2,
   /** Round 10: the swivel turret on top of the sleeve (aim frame): barrel or goo launcher. */
   Turret: 3,
@@ -883,7 +891,8 @@ interface HandAdapterLike {
  *
  * Priority 9: after WristPaletteSystem (8), before WebShooterSystem (10) and
  * BallSpawnSystem (11). Registered before WebShooterSystem in main.ts, because
- * WebShooterSystem.init() parents its selector pads to `spinneretEntity(0)`.
+ * WebShooterSystem reads this frame's palm/aim/nozzle. WristMenuSystem (8)
+ * reads the gem anchor (previous frame).
  *
  * ### Allocation
  *
@@ -976,7 +985,6 @@ export class GauntletSystem extends createSystem({
   private readonly sleeveEntities: Array<Entity | undefined> = [undefined, undefined];
   private readonly turretEntities: Array<Entity | undefined> = [undefined, undefined];
   private readonly plateEntities: Array<Entity | undefined> = [undefined, undefined];
-  private readonly spinneretEntities: Array<Entity | undefined> = [undefined, undefined];
   private readonly bracers: Object3D[] = [];
   private readonly plateFits: Object3D[] = [];
   private readonly paintModules: Object3D[] = [];
@@ -1221,15 +1229,6 @@ export class GauntletSystem extends createSystem({
     }
     this.nozzleInto(hand, out);
     return out.addScaledVector(this.dir, WEB.muzzleOffset);
-  }
-
-  /**
-   * The legacy pad mount under this arm's sleeve (round 8's spinneret entity,
-   * still the parent of WebShooterSystem's SPLAT/TETHER pads). It rides the
-   * GOO deploy; the GOO launcher itself moved to the turret in round 10.
-   */
-  spinneretEntity(hand: number): Entity | undefined {
-    return this.spinneretEntities[hand];
   }
 
   /**
@@ -1564,6 +1563,8 @@ export class GauntletSystem extends createSystem({
           ARMFIT.forearmIkWeight,
           ARMFIT.wristMaxBendDeg * DEG_TO_RAD,
           this.axis,
+          ARMFIT.forearmIkDeadzoneDeg[0] * DEG_TO_RAD,
+          ARMFIT.forearmIkDeadzoneDeg[1] * DEG_TO_RAD,
         );
         ax = this.axis[0];
         ay = this.axis[1];
@@ -1837,15 +1838,6 @@ export class GauntletSystem extends createSystem({
         );
         wm.rotation.x = wr * BLASTER.recoilPitchDeg * 0.6 * DEG_TO_RAD;
       }
-      // Legacy pad mount under the sleeve, riding the GOO deploy.
-      const pads = this.spinneretEntities[hand]?.object3D;
-      if (pads) {
-        pads.visible = web > 0.001;
-        const s = 0.15 + 0.85 * ew;
-        pads.scale.set(s, s, s);
-        this.outerSectionAt(0.06, this.section);
-        pads.position.set(0, -this.section.b * fs[1] + 0.026, 0.06 * fs[2]);
-      }
 
       const flash = this.flashes[hand];
       if (flash) {
@@ -2037,14 +2029,6 @@ export class GauntletSystem extends createSystem({
       sleeve.add(band);
       this.gemBand = band;
     }
-
-    // Legacy pad mount: its own entity so WebShooterSystem's pads (entities)
-    // can be parented into it and ride the GOO deploy.
-    const pads = new Group();
-    pads.name = hand === 0 ? 'GooPadMountLeft' : 'GooPadMountRight';
-    this.spinneretEntities[hand] = this.world
-      .createTransformEntity(pads, { parent: sleeveEntity, persistent: true })
-      .addComponent(Gauntlet, { side: hand, part: GauntletPart.Spinneret });
 
     // ---- Turret (aim frame, pinned to the top of the sleeve) ----------------
     const turret = new Group();
@@ -2519,9 +2503,9 @@ export class GauntletSystem extends createSystem({
   }
 
   /**
-   * The menu gem (left arm, round 10): a faceted glowing crystal in a chrome
-   * bezel, built along +Y (the parent turns +Y onto the sleeve's outward
-   * normal at the gem). The wrist-menu agent pokes this.
+   * The menu-gem MOUNT (left arm, round 10): a chrome bezel socket, built
+   * along +Y (the parent turns +Y onto the sleeve's outward normal at the
+   * gem). WristMenuSystem seats its summon gem in it.
    */
   private buildGem(): Object3D {
     const group = new Group();
@@ -2530,10 +2514,17 @@ export class GauntletSystem extends createSystem({
     const bezel = new CylinderGeometry(r * 1.25, r * 1.4, r * 0.55, 20);
     bezel.translate(0, r * 0.1, 0);
     group.add(new Mesh(bezel, this.chromeMat));
-    const crystal = new IcosahedronGeometry(r, 0);
-    crystal.scale(1, 0.7, 1);
-    crystal.translate(0, r * 0.62, 0);
-    group.add(new Mesh(crystal, this.gemMat));
+    // Socket only: WristMenuSystem draws the glowing gem itself and seats it
+    // here (menuGemInto + the normal x MENU.gemRadius). A dark recess and a
+    // glow ring mark the mount even before the menu's gem pops in.
+    const recess = new CircleGeometry(r * 1.05, 20);
+    recess.rotateX(-Math.PI / 2);
+    recess.translate(0, r * 0.38, 0);
+    group.add(new Mesh(recess, this.boreMat));
+    const ring = new TorusGeometry(r * 1.1, r * 0.12, 5, 24);
+    ring.rotateX(Math.PI / 2);
+    ring.translate(0, r * 0.4, 0);
+    group.add(new Mesh(ring, this.gemMat));
     return group;
   }
 

@@ -47,6 +47,7 @@ import {
 import type { FlagStorage } from '../types';
 import { smoothingAlpha } from '../wrist-frame';
 import { WristPose, isTracked } from '../wrist-pose';
+import { GauntletSystem } from './GauntletSystem';
 import {
   MENU_ROW_CAPTIONS,
   MENU_SUBMODE_LABELS,
@@ -1207,8 +1208,31 @@ export class WristMenuSystem extends createSystem({
 
   private primedGem = false;
 
-  /** The gem's world position from the left WristPose, into gemPos. */
+  private gauntlet?: GauntletSystem | null;
+
+  /**
+   * The gem's world position, into gemPos. Round 10: when the gauntlet's left
+   * arm is posed, the gem sits on GauntletSystem's menu-gem mount on the left
+   * sleeve (sized to the player's arm, clear of the turret in every mode),
+   * lifted off it by the gem's radius along the sleeve's surface normal.
+   * Otherwise it falls back to the fixed offset from this system's own
+   * WristPose. (GauntletSystem runs at priority 9, so this is its previous
+   * frame's anchor: one frame behind, smoothed like the sleeve it rides.)
+   */
   private computeGem(): void {
+    if (this.gauntlet === undefined) {
+      try {
+        this.gauntlet = this.world.getSystem(GauntletSystem) ?? null;
+      } catch {
+        this.gauntlet = null;
+      }
+    }
+    const g = this.gauntlet;
+    if (g && g.menuGemInto(this.gemPos) && g.menuGemNormalInto(this.offset)) {
+      this.gemPos.addScaledVector(this.offset, MENU.gemRadius);
+      this.primedGem = true;
+      return;
+    }
     const o = this.wrist.isHand ? MENU.gemOffsetHand : MENU.gemOffsetController;
     this.offset.set(o[0], o[1], o[2]).applyQuaternion(this.wrist.wristQ);
     this.gemPos.copy(this.wrist.anchor).add(this.offset);

@@ -256,8 +256,8 @@ function cam(from, to) {
  * narrow it; NOSIZES=1 skips the hand-size pass.
  */
 async function runGauntletSuite() {
-  if (process.env.ALIGN) {
-    await page.evaluate(async () => {
+  if (process.env.ALIGN || process.env.IKW) {
+    await page.evaluate(async ({ align, ikw }) => {
       // The same URL (HMR stamp included) the app imported, or this would be
       // a second, unrelated instance of the config module.
       const url =
@@ -266,8 +266,10 @@ async function runGauntletSuite() {
           .map((e) => e.name)
           .find((n) => /\/src\/config\.ts/.test(n)) ?? '/src/config.ts';
       const m = await import(url);
-      m.WEB.handAimSource = 'hand';
-    });
+      if (align) m.WEB.handAimSource = 'hand';
+      // IKW=0.35 overrides ARMFIT.forearmIkWeight (round 10 diagnostics).
+      if (ikw !== null) m.ARMFIT.forearmIkWeight = ikw;
+    }, { align: !!process.env.ALIGN, ikw: process.env.IKW ? Number(process.env.IKW) : null });
   }
   const g = (fn, arg) => page.evaluate(fn, arg);
   const setMode = (m) => g((m) => { window.__PB_WORLD.globals.blasterMode.value = m; }, m);

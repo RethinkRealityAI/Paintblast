@@ -1956,10 +1956,20 @@ export const ARMFIT = {
   // ---- Forearm axis (sleeve pose) ---------------------------------------------
   /**
    * How much the sleeve's axis follows the IK-estimated forearm (elbow to
-   * wrist) rather than the hand's own wrist-joint axis, 0..1. The hand axis
-   * bends with the wrist; the forearm does not. 0 = pure wrist frame.
+   * wrist) rather than the hand's own wrist-joint axis, 0..1, once the two
+   * disagree by more than `forearmIkDeadzoneDeg[1]`. The hand axis bends with
+   * the wrist; the forearm does not. 0 = pure wrist frame.
    */
-  forearmIkWeight: 0.35,
+  forearmIkWeight: 0.6,
+  /**
+   * Degrees of hand-vs-forearm disagreement over which that weight fades in
+   * (smoothstep from 0 at the first value to full at the second). Below ~15
+   * degrees the elbow guess is no better than the tracked wrist (headless:
+   * a 7-degree IK disagreement pushed a straight-ahead forearm proxy through
+   * the sleeve at 0.35 flat weight); a clearly bent wrist (the web-shooter
+   * pose, a flexed wrist) is where the forearm estimate earns its keep.
+   */
+  forearmIkDeadzoneDeg: [15, 40] as [number, number],
   /**
    * The sleeve axis never leaves the hand axis by more than this (degrees):
    * roughly the wrist's comfortable flexion/extension range, and a cap on how
