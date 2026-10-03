@@ -14,14 +14,13 @@ import {
   Hovered,
   InputComponent,
   Pressed,
-  OneHandGrabbable,
   PanelUI,
+  PanelDocument,
   PhysicsBody,
   PhysicsShape,
   PhysicsManipulation,
   PhysicsState,
   PhysicsShapeType,
-  DepthOccludable,
   SRGBColorSpace,
 } from '@iwsdk/core';
 import type { Entity, Material, Object3D } from '@iwsdk/core';
@@ -55,6 +54,7 @@ import {
   nextWebSubMode,
   packFiredData,
 } from '../types';
+import { Easel } from './EaselSystem';
 
 const DEG_TO_RAD = Math.PI / 180;
 
@@ -384,7 +384,9 @@ function paintChipSelection(
  * WebShooterSystem hides when paint is loaded. Walks a chain three or four deep
  * on a squeeze-down edge.
  */
-function visibleInWorld(object3D: Object3D | null | undefined): boolean {
+export function visibleInWorld(
+  object3D: Object3D | null | undefined,
+): boolean {
   let node: Object3D | null | undefined = object3D;
   if (!node) return false;
   while (node) {
@@ -392,6 +394,82 @@ function visibleInWorld(object3D: Object3D | null | undefined): boolean {
     node = node.parent;
   }
   return true;
+}
+
+/** How a visible UI panel swallows trigger pulls. @see panelBlockMode */
+export const PanelBlockMode = {
+  /** Anywhere on the panel's visible (laid-out) rectangle. */
+  Rect: 0,
+  /** Only over one of its visible buttons. */
+  ButtonsOnly: 1,
+} as const;
+export type PanelBlockMode = typeof PanelBlockMode[keyof typeof PanelBlockMode];
+
+/**
+ * Round 9: which part of a visible panel blocks a shot in `phase`.
+ *
+ * In Countdown and Playing the HUD is docked low in front of the player
+ * (HUD.playOffset) and is a scoreboard, not a menu: blocking its whole
+ * rectangle silently ate every shot at a low robot (Duster Duke stands at
+ * 0.4 m, 2 m out). There only a ray over a real button (CLEAR PAINT) is a
+ * click. Everywhere else the panel is a menu, and pointing anywhere on it
+ * still takes precedence over shooting.
+ */
+export function panelBlockMode(phase: GamePhase): PanelBlockMode {
+  return phase === GamePhase.Playing || phase === GamePhase.Countdown
+    ? PanelBlockMode.ButtonsOnly
+    : PanelBlockMode.Rect;
+}
+
+/**
+ * Does a world-space ray (origin o, unit direction d) cross the rectangle
+ * |x| <= halfW, |y| <= halfH of a local z = 0 plane within `maxT` metres?
+ * `inv` is the column-major inverse of that plane's world matrix (any
+ * affine scale is fine: the ray parameter survives an affine map, so `t`
+ * stays in world metres). Pure; exported for tests.
+ */
+export function rayHitsLocalRect(
+  inv: ArrayLike<number>,
+  ox: number,
+  oy: number,
+  oz: number,
+  dx: number,
+  dy: number,
+  dz: number,
+  halfW: number,
+  halfH: number,
+  maxT: number,
+): boolean {
+  const m = inv;
+  const lox = m[0] * ox + m[4] * oy + m[8] * oz + m[12];
+  const loy = m[1] * ox + m[5] * oy + m[9] * oz + m[13];
+  const loz = m[2] * ox + m[6] * oy + m[10] * oz + m[14];
+  const ldx = m[0] * dx + m[4] * dy + m[8] * dz;
+  const ldy = m[1] * dx + m[5] * dy + m[9] * dz;
+  const ldz = m[2] * dx + m[6] * dy + m[10] * dz;
+  if (Math.abs(ldz) < 1e-9) return false;
+  const t = -loz / ldz;
+  if (!(t >= 0) || t > maxT) return false;
+  return (
+    Math.abs(lox + ldx * t) <= halfW && Math.abs(loy + ldy * t) <= halfH
+  );
+}
+
+/**
+ * The bits of a uikit Component this file reads, typed locally so the
+ * firing code does not depend on uikit's types. A uikit component's
+ * matrixWorld maps a unit square centred on its origin onto its laid-out
+ * rectangle (uikit's own raycast uses exactly that panel matrix).
+ */
+interface UiComponentLike extends Object3D {
+  size?: { peek(): unknown };
+  isVisible?: { peek(): boolean };
+  properties?: { signal?: { id?: { peek?(): unknown; value?: unknown } } };
+}
+
+/** The document IWSDK's PanelUISystem attaches (UIKitDocument), as read here. */
+interface PanelDocumentLike {
+  rootElement?: UiComponentLike;
 }
 
 /**
@@ -457,6 +535,9 @@ export class BallSpawnSystem extends createSystem({
   // (ray vs panel rectangle) instead — see isPointingAtPanel().
   panels: { required: [PanelUI] },
   balls: { required: [Ball] },
+  // Round 9: a pinch that grabs the easel (TwoHandsGrabbable with
+  // useHandPinchForGrab) must not also spray paint in Chill.
+  pressedEasel: { required: [Easel, Pressed] },
 }) {
   private sharedGeometry!: SphereGeometry;
   private materialCache!: Map<string, MeshStandardMaterial>;
@@ -468,6 +549,8 @@ export class BallSpawnSystem extends createSystem({
   private scratchPanelMatrix!: Matrix4;
   private scratchGripPosition!: Vector3;
   private scratchElementPosition!: Vector3;
+  /** Round 9: each panel document's buttons, found once. @see panelButtons */
+  private readonly buttonCache = new WeakMap<object, UiComponentLike[]>();
 
   private activeKind!: Signal<BallKind>;
   private activeStyle!: Signal<BallStyle>;
@@ -634,6 +717,12 @@ export class BallSpawnSystem extends createSystem({
       // shooters were plainly on the player's wrists.
       this.activeStyle.subscribe(() => this.applyChipHighlight()),
       this.activeKind.subscribe(() => this.applyChipHighlight()),
+      // Round 9: the pinch that grabs the easel is spent, exactly like a
+      // pinch on a dab — Chill's spray is level-triggered, so without this
+      // every grab painted a stripe while you moved the easel.
+      this.queries.pressedEasel.subscribe('qualify', () => {
+        this.consumeActivePinches();
+      }),
     );
   }
 
@@ -656,6 +745,10 @@ export class BallSpawnSystem extends createSystem({
     // dabs — so a left pinch (firing, or gripping the easel) would otherwise
     // change ammo and eat the press.
     this.trySelectByPinch('right');
+    // Round 9: while the easel is held, a fresh pinch from either tracked
+    // hand is the second hand joining the two-handed grab (the Pressed tag is
+    // already on, so the qualify above does not fire again): spend it too.
+    if (this.queries.pressedEasel.entities.size > 0) this.consumeNewPinches();
 
     const phase = this.gamePhase.peek();
     const chilling = phase === GamePhase.Chill;
@@ -763,6 +856,17 @@ export class BallSpawnSystem extends createSystem({
     }
   }
 
+  /** Spend any tracked hand's pinch that started this frame. */
+  private consumeNewPinches(): void {
+    for (let hand = 0; hand < 2; hand++) {
+      const side = hand === 1 ? 'right' : 'left';
+      if (!this.input.isPrimary('hand', side)) continue;
+      if (this.input.gamepads[side]?.getSelectStart()) {
+        this.pressConsumed[hand] = 1;
+      }
+    }
+  }
+
   /** Un-spend each hand's press once its trigger or pinch has come up. */
   private releaseConsumedPresses(): void {
     for (let hand = 0; hand < 2; hand++) {
@@ -785,9 +889,13 @@ export class BallSpawnSystem extends createSystem({
     let bestPad: Entity | undefined;
     let bestDistSq = radiusSq;
 
+    // Round 9: dabs and chips get the same visibility test as the pads. The
+    // palette hides by `visible = false` + scaling its root to 1e-4, which
+    // collapses every element onto the root's origin — still a world position
+    // a squeeze or pinch near the wrist could "select" while it is hidden.
     for (const dab of this.queries.dabs.entities) {
       const object3D = dab.object3D;
-      if (!object3D) continue;
+      if (!object3D || !visibleInWorld(object3D)) continue;
       object3D.getWorldPosition(this.scratchElementPosition);
       const distSq = this.scratchElementPosition.distanceToSquared(
         point,
@@ -801,7 +909,7 @@ export class BallSpawnSystem extends createSystem({
     }
     for (const chip of this.queries.chips.entities) {
       const object3D = chip.object3D;
-      if (!object3D) continue;
+      if (!object3D || !visibleInWorld(object3D)) continue;
       object3D.getWorldPosition(this.scratchElementPosition);
       const distSq = this.scratchElementPosition.distanceToSquared(
         point,
@@ -946,11 +1054,10 @@ export class BallSpawnSystem extends createSystem({
       bounceCount: 0,
       flightState: BallFlightState.Flying,
     });
-    ball.addComponent(Interactable);
-    ball.addComponent(OneHandGrabbable, {
-      rotate: false,
-      translate: true,
-    });
+    // Round 9: balls are deliberately NOT Interactable / OneHandGrabbable any
+    // more. Grabbing one was undocumented, a pinch on a resting ball also
+    // fired, and a hand throw has no speed cap — past 14 cm per 72 Hz step it
+    // tunnels walls (CLAUDE.md gotcha 22).
     ball.addComponent(PhysicsBody, {
       state: PhysicsState.Dynamic,
       linearDamping: kindConfig.linearDamping,
@@ -966,10 +1073,9 @@ export class BallSpawnSystem extends createSystem({
       restitution: kindConfig.restitution,
       friction: 0.3,
     });
-    // DepthSensingSystem reads DepthOccludable to hide fragments behind
-    // real-world depth in AR (feature-detected — silently no-ops on devices
-    // that don't support depth-sensing).
-    ball.addComponent(DepthOccludable);
+    // No DepthOccludable: round 9 occludes the robots only. Balls share one
+    // material per colour, and the occlusion patch forces `transparent` on
+    // every material it touches.
 
     return ball;
   }
@@ -1073,54 +1179,130 @@ export class BallSpawnSystem extends createSystem({
   }
 
   /**
-   * True when `raySpace`'s pointing ray crosses a PanelUI's bounding rectangle
-   * within arm-plus reach. The rectangle is the panel's maxWidth × maxHeight in
-   * its own plane — slightly generous versus the laid-out size, which errs on
-   * the side of "clicking the menu never shoots".
+   * True when `raySpace`'s pointing ray is clicking a UI panel, so its
+   * trigger pull must not also shoot.
+   *
+   * Round 9 rewrote the test (it used to be the panel's full PanelUI
+   * maxWidth x maxHeight box, always):
+   *
+   * - A panel whose object3D is hidden in world (IntroSystem hides the HUD
+   *   during the logo intro) never blocks.
+   * - The rectangle is the panel's real laid-out root component, not the
+   *   generous maxWidth x maxHeight box — uikit gives every component a
+   *   matrixWorld that maps a unit square onto its visible rect.
+   * - In Countdown / Playing ({@link panelBlockMode}) only a visible button
+   *   (`FIRE.uiInteractiveIdPrefix`) blocks: the docked scoreboard sat right
+   *   across the line to low robots and silently ate those shots.
    *
    * The query it walks covers every PanelUI in the world, so this never has to
-   * know which panels exist. Public since round 4, when WebShooterSystem owned
-   * a second trigger path that needed the same answer; round 5 gave the trigger
-   * back to this system alone, but the accessor is cheap to keep and the HUD
-   * rule is the sort of thing a second caller will want again.
+   * know which panels exist. Public since round 4.
    */
   isPointingAtPanel(raySpace: Object3D): boolean {
     raySpace.getWorldPosition(this.scratchPosition);
     raySpace.getWorldQuaternion(this.scratchQuaternion);
     this.scratchDirection.set(0, 0, -1).applyQuaternion(this.scratchQuaternion);
+    const mode = panelBlockMode(this.gamePhase.peek());
 
     for (const panel of this.queries.panels.entities) {
       const object3D = panel.object3D;
-      if (!object3D) continue;
+      if (!object3D || !visibleInWorld(object3D)) continue;
 
-      // Follower repositions the panel every frame; refresh before inverting.
+      const document = panel.hasComponent(PanelDocument)
+        ? (panel.getValue(PanelDocument, 'document') as
+            | PanelDocumentLike
+            | undefined)
+        : undefined;
+      const root = document?.rootElement;
+
+      if (document && root) {
+        if (mode === PanelBlockMode.ButtonsOnly) {
+          for (const button of this.panelButtons(document, root)) {
+            if (this.rayHitsComponent(button, FIRE.uiButtonMarginMeters)) {
+              return true;
+            }
+          }
+        } else if (this.rayHitsComponent(root, 0)) {
+          return true;
+        }
+        continue;
+      }
+
+      // No document yet (still loading): the old maxWidth x maxHeight box,
+      // menus only — a scoreboard with nothing on it cannot be clicked.
+      if (mode !== PanelBlockMode.Rect) continue;
       object3D.updateWorldMatrix(true, false);
       this.scratchPanelMatrix.copy(object3D.matrixWorld).invert();
-
-      // Ray into panel-local space, where the panel is the z = 0 plane.
-      const o = this.scratchPosition;
-      const d = this.scratchDirection;
-      const m = this.scratchPanelMatrix.elements;
-      const ox = m[0] * o.x + m[4] * o.y + m[8] * o.z + m[12];
-      const oy = m[1] * o.x + m[5] * o.y + m[9] * o.z + m[13];
-      const oz = m[2] * o.x + m[6] * o.y + m[10] * o.z + m[14];
-      const dx = m[0] * d.x + m[4] * d.y + m[8] * d.z;
-      const dy = m[1] * d.x + m[5] * d.y + m[9] * d.z;
-      const dz = m[2] * d.x + m[6] * d.y + m[10] * d.z;
-
-      if (Math.abs(dz) < 1e-6) continue;
-      const t = -oz / dz;
-      if (t < 0 || t > FIRE.uiBlockMaxDistance) continue;
-
       const halfW = (panel.getValue(PanelUI, 'maxWidth') ?? 0) / 2;
       const halfH = (panel.getValue(PanelUI, 'maxHeight') ?? 0) / 2;
-      const hx = ox + dx * t;
-      const hy = oy + dy * t;
-      if (Math.abs(hx) <= halfW && Math.abs(hy) <= halfH) {
-        return true;
-      }
+      if (this.rayHitsMatrixRect(halfW, halfH)) return true;
     }
     return false;
+  }
+
+  /** Buttons of a panel document, found once per document and cached. */
+  private panelButtons(
+    document: PanelDocumentLike,
+    root: UiComponentLike,
+  ): readonly UiComponentLike[] {
+    const cached = this.buttonCache.get(document);
+    if (cached) return cached;
+    const prefix = FIRE.uiInteractiveIdPrefix;
+    const found: UiComponentLike[] = [];
+    root.traverse((node) => {
+      const idSignal = (node as UiComponentLike).properties?.signal?.id;
+      if (!idSignal) return;
+      const id = idSignal.peek ? idSignal.peek() : idSignal.value;
+      if (typeof id === 'string' && id.startsWith(prefix)) {
+        found.push(node as UiComponentLike);
+      }
+    });
+    // An empty list may just mean the document is not indexed yet; only a
+    // real answer is worth remembering.
+    if (found.length > 0) this.buttonCache.set(document, found);
+    return found;
+  }
+
+  /**
+   * Does this frame's ray (scratchPosition / scratchDirection) cross a uikit
+   * component's visible rectangle, grown by `marginMeters` on every side?
+   * Skips components that are hidden (`display: none`, clipped) or not laid
+   * out yet.
+   */
+  private rayHitsComponent(
+    component: UiComponentLike,
+    marginMeters: number,
+  ): boolean {
+    if (component.isVisible && !component.isVisible.peek()) return false;
+    if (component.size && component.size.peek() == null) return false;
+    component.updateWorldMatrix(true, false);
+    const e = component.matrixWorld.elements;
+    // World size of the unit square: the lengths of the X and Y columns.
+    const sx = Math.hypot(e[0], e[1], e[2]);
+    const sy = Math.hypot(e[4], e[5], e[6]);
+    if (!(sx > 1e-6) || !(sy > 1e-6)) return false;
+    this.scratchPanelMatrix.copy(component.matrixWorld).invert();
+    return this.rayHitsMatrixRect(
+      0.5 + marginMeters / sx,
+      0.5 + marginMeters / sy,
+    );
+  }
+
+  /** The ray against a rect in scratchPanelMatrix's (inverse) local frame. */
+  private rayHitsMatrixRect(halfW: number, halfH: number): boolean {
+    const o = this.scratchPosition;
+    const d = this.scratchDirection;
+    return rayHitsLocalRect(
+      this.scratchPanelMatrix.elements,
+      o.x,
+      o.y,
+      o.z,
+      d.x,
+      d.y,
+      d.z,
+      halfW,
+      halfH,
+      FIRE.uiBlockMaxDistance,
+    );
   }
 
   private fireFrom(side: 'left' | 'right', raySpace: Object3D): void {

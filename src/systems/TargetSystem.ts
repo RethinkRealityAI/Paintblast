@@ -2,6 +2,7 @@ import {
   AssetManager,
   Box3,
   DepthOccludable,
+  DepthSensingSystem,
   Group,
   PhysicsBody,
   PhysicsManipulation,
@@ -324,6 +325,24 @@ export function waveIndexAt(
 }
 
 /**
+ * Round 9: is `elapsedSec` inside the rest beat that opens a wave? Every
+ * wave after the first starts with `breatherSec` of no new spawns, so the
+ * player's arms get a moment between waves. Waves are assumed sorted.
+ */
+export function inWaveBreather(
+  elapsedSec: number,
+  waves: ReadonlyArray<SplotbotWave>,
+  breatherSec: number,
+): boolean {
+  if (!(breatherSec > 0)) return false;
+  for (let i = 1; i < waves.length; i++) {
+    const start = waves[i].startSec;
+    if (elapsedSec >= start && elapsedSec < start + breatherSec) return true;
+  }
+  return false;
+}
+
+/**
  * Weighted pick: index `i` with probability `weights[i] / sum`, from one
  * uniform 0..1 draw. Negative and NaN weights count as 0; an all-zero table
  * picks 0 (Mopsy), so a mistuned wave still spawns something.
@@ -559,6 +578,91 @@ export function hideSpotBehind(
   return len + t;
 }
 
+/**
+ * Round 9: push a floor-plane point straight out from the head until it is
+ * at least `minDist` away. Writes [x, z] into `out`; returns true when it had
+ * to move. A point exactly on the head goes out along `fallbackHeading`
+ * (radians, three's atan2(z, x) convention).
+ */
+export function pushOutToRadius(
+  px: number,
+  pz: number,
+  headX: number,
+  headZ: number,
+  minDist: number,
+  fallbackHeading: number,
+  out: Float32Array,
+): boolean {
+  let dx = px - headX;
+  let dz = pz - headZ;
+  const len = Math.sqrt(dx * dx + dz * dz);
+  if (len >= minDist) {
+    out[0] = px;
+    out[1] = pz;
+    return false;
+  }
+  if (len > 1e-6) {
+    dx /= len;
+    dz /= len;
+  } else {
+    dx = Math.cos(fallbackHeading);
+    dz = Math.sin(fallbackHeading);
+  }
+  out[0] = headX + dx * minDist;
+  out[1] = headZ + dz * minDist;
+  return true;
+}
+
+/**
+ * Round 9: where a popped Duster Duke's two Mopsys split around. Normally
+ * where he died; but a tether haul pops him within the kill radius — right
+ * at the player's face — so inside `minDist` of the head they burst out of
+ * his home (landing) spot instead. Writes [x, z] into `out`; returns true
+ * when it used home.
+ */
+export function splitCentre(
+  dukeX: number,
+  dukeZ: number,
+  homeX: number,
+  homeZ: number,
+  headX: number,
+  headZ: number,
+  minDist: number,
+  out: Float32Array,
+): boolean {
+  const dx = dukeX - headX;
+  const dz = dukeZ - headZ;
+  if (dx * dx + dz * dz >= minDist * minDist) {
+    out[0] = dukeX;
+    out[1] = dukeZ;
+    return false;
+  }
+  out[0] = homeX;
+  out[1] = homeZ;
+  return true;
+}
+
+/**
+ * Round 9: is (x, z) within `minSpacing` of any of the first `count` points
+ * packed [x0, z0, x1, z1, ...] in `points`? Used to keep Peekaboos from
+ * stacking on one hiding spot.
+ */
+export function crowded2D(
+  x: number,
+  z: number,
+  points: ArrayLike<number>,
+  count: number,
+  minSpacing: number,
+): boolean {
+  const limitSq = minSpacing * minSpacing;
+  for (let i = 0; i < count; i++) {
+    const dx = points[i * 2] - x;
+    const dz = points[i * 2 + 1] - z;
+    if (dx * dx + dz * dz < limitSq) return true;
+  }
+  return false;
+}
+
 // ---- Facing and easing -----------------------------------------------------
 
 /**
@@ -694,6 +798,61 @@ const DEFLECT_CAPACITY = 8;
 const MAX_HIDE_CANDIDATES = 12;
 
 /**
+ * Round 9: IWSDK's DepthSensingSystem, made safe to register on any runtime.
+ * Registered by main.ts (behind RENDER.depthOcclusion) so the robots'
+ * DepthOccludable tags actually occlude.
+ *
+ * Why a subclass: the stock system trusts `enabledFeatures`. IWER (the
+ * emulator) grants `depth-sensing` but implements neither
+ * `XRFrame.getDepthInformation` nor the GPU binding call, so the stock
+ * update() threw every frame — and a throw inside a system's update aborts
+ * the whole world update (no round, no robots). This checks the API the
+ * session's depth path will call before handing over, and turns itself off
+ * for good, with one warning, the first time depth is missing or throws.
+ * The occlusion uniforms default to disabled, so a disabled system leaves
+ * the robots plainly visible.
+ */
+export class RobotDepthSensingSystem extends DepthSensingSystem {
+  private depthBroken = false;
+
+  update(): void {
+    if (this.depthBroken) return;
+    const frame = this.xrFrame as unknown as
+      | {
+          session?: { depthUsage?: string; enabledFeatures?: readonly string[] };
+          getDepthInformation?: unknown;
+        }
+      | undefined;
+    const session = frame?.session;
+    if (session?.enabledFeatures?.includes('depth-sensing')) {
+      let callable: boolean;
+      if (session.depthUsage === 'gpu-optimized') {
+        const binding = (
+          this.renderer.xr as unknown as { getBinding?: () => unknown }
+        ).getBinding?.() as { getDepthInformation?: unknown } | null | undefined;
+        callable = typeof binding?.getDepthInformation === 'function';
+      } else {
+        callable = typeof frame?.getDepthInformation === 'function';
+      }
+      if (!callable) {
+        this.disableDepth('this runtime grants depth-sensing but has no depth API');
+        return;
+      }
+    }
+    try {
+      super.update();
+    } catch (err) {
+      this.disableDepth(String(err));
+    }
+  }
+
+  private disableDepth(why: string): void {
+    this.depthBroken = true;
+    console.warn(`[PaintBlast] depth occlusion off: ${why}`);
+  }
+}
+
+/**
  * The Splotbots: a fixed pool of animated robot characters the player shoots
  * (round 8; rounds 1-7 had one generic robot).
  *
@@ -816,6 +975,10 @@ export class TargetSystem extends createSystem({
   private poseScratch!: Float32Array;
   private pairScratch!: Float32Array;
   private hideCandidates!: Float32Array;
+  /** Round 9: [x, z] of every other live Peekaboo, packed. */
+  private peekOccupied!: Float32Array;
+  /** Round 9: per slot, the walk home is a plain release drift (not a Duke). */
+  private slotDriftHome!: Uint8Array;
   private spawnRay!: Raycaster;
   private rayHits!: Intersection[];
 
@@ -892,6 +1055,8 @@ export class TargetSystem extends createSystem({
     this.poseScratch = new Float32Array(3);
     this.pairScratch = new Float32Array(4);
     this.hideCandidates = new Float32Array(MAX_HIDE_CANDIDATES * 4);
+    this.peekOccupied = new Float32Array(size * 2);
+    this.slotDriftHome = new Uint8Array(size);
     this.spawnRay = new Raycaster();
     this.spawnRay.near = 0.05;
     this.spawnRay.far = ROOM.spawnRayMaxDist;
@@ -1088,8 +1253,9 @@ export class TargetSystem extends createSystem({
 
     this.slotTetherHand[slot] = hand;
     this.slots[slot]?.setValue(Target, 'tetheredBy', hand);
-    // A Duke being hauled is no longer walking home.
+    // A Duke being hauled is no longer walking home (nor is a drifting bot).
     this.returnStartedAt[slot] = 0;
+    this.slotDriftHome[slot] = 0;
     this.publishTetheredHands();
     return true;
   }
@@ -1163,7 +1329,13 @@ export class TargetSystem extends createSystem({
       if (arch === Splotbot.Peekaboo) this.restartPeekAtTop(slot, nowSec);
       // A boss let off the line stomps back to his spot rather than idling
       // wherever he was dropped (possibly in the player's lap).
-      if (arch === Splotbot.DusterDuke) this.startWalkHome(slot, base, nowSec);
+      if (arch === Splotbot.DusterDuke) {
+        this.startWalkHome(slot, base, nowSec);
+      } else {
+        // Round 9: everyone else drifts back out to a comfortable distance
+        // instead of hovering 0.8 m from the player's face.
+        this.startReleaseDrift(slot, base, nowSec);
+      }
       return;
     }
 
@@ -1268,8 +1440,8 @@ export class TargetSystem extends createSystem({
         slot,
         archetype: arch,
       });
-      // Inert until DepthSensingSystem is registered (gotcha 20); harmless.
-      entity.addComponent(DepthOccludable);
+      // DepthOccludable is added per art install (installArt), not here:
+      // DepthSensingSystem patches the materials it finds at qualify time.
 
       this.slots.push(entity);
       this.rigs.push(rig);
@@ -1375,6 +1547,29 @@ export class TargetSystem extends createSystem({
     yaw.rotation.y =
       key === ROBOT_ASSET_KEY ? 0 : cfg.yawOffsetDeg * DEG_TO_RAD;
     this.slotArtKey[slot] = key;
+    this.refreshOcclusion(slot);
+  }
+
+  /**
+   * Round 9: real-world depth occlusion for this slot's CURRENT art.
+   *
+   * IWSDK's DepthSensingSystem injects its occlusion shader into the
+   * materials it finds under the entity when DepthOccludable *qualifies* —
+   * so art swapped in later (robot.gltf -> the Meshy GLB at Countdown) would
+   * never be patched. Removing and re-adding the tag re-runs that qualify on
+   * the new per-slot materials. Robots are plain meshes (never instanced),
+   * which the occlusion shader requires (gotcha 20). Inert when
+   * RENDER.depthOcclusion is off, and the uniforms stay disabled on a
+   * session without `depth-sensing`.
+   */
+  private refreshOcclusion(slot: number): void {
+    if (!RENDER.depthOcclusion) return;
+    const entity = this.slots[slot];
+    if (!entity) return;
+    if (entity.hasComponent(DepthOccludable)) {
+      entity.removeComponent(DepthOccludable);
+    }
+    entity.addComponent(DepthOccludable);
   }
 
   // ---- Rounds and the spawn director --------------------------------------
@@ -1434,7 +1629,11 @@ export class TargetSystem extends createSystem({
     }
 
     const waves = SPLOTBOTS.waves;
-    const wave = waves[waveIndexAt(GAME.roundSec - timeLeft, waves)];
+    const elapsed = GAME.roundSec - timeLeft;
+    // Round 9: a short rest beat as each new wave opens (comfort). Robots
+    // already up stay up; only new spawns wait. The boss above is exempt.
+    if (inWaveBreather(elapsed, waves, SPLOTBOTS.waveBreatherSec)) return;
+    const wave = waves[waveIndexAt(elapsed, waves)];
     if (!wave) return;
     const inBoss = boss.enterAtSecLeft > 0 && timeLeft <= boss.enterAtSecLeft;
     let cap = inBoss
@@ -1612,6 +1811,7 @@ export class TargetSystem extends createSystem({
     this.spawnStartedAt[slot] = nowSec;
     this.entranceStartedAt[slot] = 0;
     this.returnStartedAt[slot] = 0;
+    this.slotDriftHome[slot] = 0;
     this.shieldFlashUntil[slot] = 0;
     entity.setValue(Target, 'hp', cfg.hp);
     this.aliveCount++;
@@ -1634,6 +1834,19 @@ export class TargetSystem extends createSystem({
     const halfArc = (Math.min(360, TARGETS.spawnArcDeg) * DEG_TO_RAD) / 2;
     const cand = this.hideCandidates;
     let count = 0;
+
+    // Round 9: where the other live Peekaboos already hide, so two never
+    // stack on one spot (they used to share the same couch-back point).
+    let occupied = 0;
+    for (let other = 0; other < this.slots.length; other++) {
+      if (other === slot) continue;
+      if (this.slotArchetype[other] !== Splotbot.Peekaboo) continue;
+      if (this.slotState[other] !== TargetSlotState.Active) continue;
+      this.peekOccupied[occupied * 2] = this.slotWorldPos[other * 3];
+      this.peekOccupied[occupied * 2 + 1] = this.slotWorldPos[other * 3 + 2];
+      occupied++;
+    }
+    const spacing = peek.minSpacing;
 
     for (const mesh of this.queries.meshes.entities) {
       if (count >= MAX_HIDE_CANDIDATES) break;
@@ -1665,8 +1878,31 @@ export class TargetSystem extends createSystem({
       if (dist < ROOM.spawnMinDist || dist > TARGETS.ringMaxR + 1.5) continue;
 
       // A wall between the player and the spot would make it unreachable.
-      const sx = this.pairScratch[0];
-      const sz = this.pairScratch[1];
+      let sx = this.pairScratch[0];
+      let sz = this.pairScratch[1];
+      if (crowded2D(sx, sz, this.peekOccupied, occupied, spacing)) {
+        // Slide sideways along the furniture (across the line of sight), if
+        // the piece is wide enough to hide a second one; else skip it.
+        const halfSpan = Math.max(box.max.x - box.min.x, box.max.z - box.min.z) / 2;
+        if (halfSpan < spacing) continue;
+        let px = -(sz - head.z);
+        let pz = sx - head.x;
+        const pl = Math.sqrt(px * px + pz * pz) || 1;
+        px /= pl;
+        pz /= pl;
+        let placed = false;
+        for (let k = 0; k < 2 && !placed; k++) {
+          const sign = k === 0 ? 1 : -1;
+          const tx = sx + px * spacing * sign;
+          const tz = sz + pz * spacing * sign;
+          if (!crowded2D(tx, tz, this.peekOccupied, occupied, spacing)) {
+            sx = tx;
+            sz = tz;
+            placed = true;
+          }
+        }
+        if (!placed) continue;
+      }
       this.spawnDirection.set(sx - head.x, 0, sz - head.z).normalize();
       if (this.probePlanes(this.spawnDirection) < dist + 0.1) continue;
 
@@ -1889,6 +2125,9 @@ export class TargetSystem extends createSystem({
     }
 
     if (!tethered) {
+      // Round 9: a released robot drifting back out (the Duke walks home
+      // inside his own branch below, after his drop).
+      if (arch !== Splotbot.DusterDuke) this.walkHome(slot, nowSec);
       const bob = Math.sin(nowSec * bobOmega + phase) * cfg.bobAmplitude;
       let y = this.slotBaseY[slot] + bob;
       switch (arch) {
@@ -2012,6 +2251,34 @@ export class TargetSystem extends createSystem({
     this.slotReturnFrom[base + 1] = this.slotWorldPos[base + 1];
     this.slotReturnFrom[base + 2] = this.slotWorldPos[base + 2];
     this.returnStartedAt[slot] = nowSec;
+    this.slotDriftHome[slot] = 0;
+  }
+
+  /**
+   * Round 9: a released (tap / timeout) non-boss robot inside
+   * ROOM.spawnMinDist eases straight back out to that radius over
+   * SPLOTBOTS.releaseReturnSec, keeping its height. Reuses the Duke's
+   * walk-home lerp with a temporary home; a robot already far enough out
+   * stays put.
+   */
+  private startReleaseDrift(slot: number, base: number, nowSec: number): void {
+    this.player.head.getWorldPosition(this.headScratch);
+    const moved = pushOutToRadius(
+      this.slotWorldPos[base],
+      this.slotWorldPos[base + 2],
+      this.headScratch.x,
+      this.headScratch.z,
+      ROOM.spawnMinDist,
+      this.spawnArcCenter,
+      this.pairScratch,
+    );
+    if (!moved) return;
+    this.slotHome[base] = this.pairScratch[0];
+    this.slotHome[base + 1] = this.slotBaseY[slot];
+    this.slotHome[base + 2] = this.pairScratch[1];
+    this.startWalkHome(slot, base, nowSec);
+    this.slotReturnFrom[base + 1] = this.slotBaseY[slot];
+    this.slotDriftHome[slot] = 1;
   }
 
   /** Lerp a hauled Duke back to his landing spot. */
@@ -2021,12 +2288,16 @@ export class TargetSystem extends createSystem({
     const holder = this.slots[slot].object3D;
     if (!holder) return;
     const base = slot * 3;
-    const u = (nowSec - started) / SPLOTBOTS.boss.returnSec;
+    const drift = this.slotDriftHome[slot] === 1;
+    const u =
+      (nowSec - started) /
+      (drift ? SPLOTBOTS.releaseReturnSec : SPLOTBOTS.boss.returnSec);
     if (u >= 1) {
       holder.position.x = this.slotHome[base];
       holder.position.z = this.slotHome[base + 2];
       this.slotBaseY[slot] = this.slotHome[base + 1];
       this.returnStartedAt[slot] = 0;
+      this.slotDriftHome[slot] = 0;
       return;
     }
     const k = easeInOutSine(u);
@@ -2416,13 +2687,28 @@ export class TargetSystem extends createSystem({
     if (arch === Splotbot.DusterDuke) this.splitBoss(base, nowSec);
   }
 
-  /** Two Mopsys burst out either side of a popped Duke. */
+  /**
+   * Two Mopsys burst out either side of a popped Duke. Round 9: a Duke
+   * hauled in and popped by the tether dies inside the kill radius, so when
+   * he is closer than ROOM.spawnMinDist the pair bursts out of his landing
+   * spot instead of in the player's face. @see splitCentre
+   */
   private splitBoss(base: number, nowSec: number): void {
     if (!this.roundActive) return;
     this.player.head.getWorldPosition(this.headScratch);
-    splitPositions(
+    const atHome = splitCentre(
       this.slotWorldPos[base],
       this.slotWorldPos[base + 2],
+      this.slotHome[base],
+      this.slotHome[base + 2],
+      this.headScratch.x,
+      this.headScratch.z,
+      ROOM.spawnMinDist,
+      this.pairScratch,
+    );
+    splitPositions(
+      this.pairScratch[0],
+      this.pairScratch[1],
       this.headScratch.x,
       this.headScratch.z,
       SPLOTBOTS.boss.splitSpread,
@@ -2431,7 +2717,7 @@ export class TargetSystem extends createSystem({
     // Up off the floor where a seated player can see them over the coffee table.
     const y = Math.max(
       TARGETS.heightMin,
-      this.slotWorldPos[base + 1] +
+      (atHome ? this.slotHome[base + 1] : this.slotWorldPos[base + 1]) +
         archetypeConfig(Splotbot.Mopsy).heightMeters * 0.5,
     );
     for (let k = 0; k < 2; k++) {
@@ -2466,7 +2752,11 @@ function patchRobotMaterial(
   const strength = f(RENDER.robotRimStrength);
   const power = f(RENDER.robotRimPower);
   const env = f(RENDER.robotEnvBoost);
-  const cacheTag = `pb-splotbot:${rimGlsl}:${strength}:${power}:${env}`;
+  // ':occ' when DepthSensingSystem will also patch these materials (round 9):
+  // three keys programs on this tag, not on what onBeforeCompile does, so an
+  // occluded and an unoccluded robot material must never share one.
+  const occ = RENDER.depthOcclusion ? ':occ' : '';
+  const cacheTag = `pb-splotbot:${rimGlsl}:${strength}:${power}:${env}${occ}`;
   standard.onBeforeCompile = (shader) => {
     shader.uniforms.pbFlash = flash;
     shader.fragmentShader = shader.fragmentShader

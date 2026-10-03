@@ -27,7 +27,6 @@ import {
   Follower,
   FollowBehavior,
   XRAnchor,
-  DepthOccludable,
   IBLTexture,
   NoToneMapping,
   NeutralToneMapping,
@@ -72,7 +71,12 @@ import {
   WEB_SHOOTER_ASSET_KEY,
 } from './systems/WebShooterSystem';
 import { Gauntlet, GauntletSystem } from './systems/GauntletSystem';
-import { Target, TargetSystem, ROBOT_ASSET_KEY } from './systems/TargetSystem';
+import {
+  Target,
+  TargetSystem,
+  RobotDepthSensingSystem,
+  ROBOT_ASSET_KEY,
+} from './systems/TargetSystem';
 import { GameStateSystem } from './systems/GameStateSystem';
 import { HudSystem } from './systems/HudSystem';
 import { FeedbackSystem } from './systems/FeedbackSystem';
@@ -994,9 +998,9 @@ function seedSplatterField(world: World) {
   const entity = world.createTransformEntity();
   entity.addComponent(SplatterField, {});
   entity.addComponent(XRAnchor);
-  // Whole instanced splat mesh under this entity gets depth-occluded by
-  // real-world geometry when running on a device with depth-sensing.
-  entity.addComponent(DepthOccludable);
+  // No DepthOccludable (round 9): IWSDK's occlusion shader ignores
+  // instanceMatrix, so every instanced splat would test depth at the field's
+  // origin (CLAUDE.md gotcha 20). Only the robots are occluded.
 }
 
 /**
@@ -1230,7 +1234,17 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
       anchors: true,
       planeDetection: true,
       meshDetection: true,
-      depthSensing: true,
+      // Round 9: OPTIONAL, with the usage/format preferences the WebXR spec
+      // wants alongside the feature (the bare `true` sent none, so browsers
+      // could drop it). A device without depth simply starts without it, and
+      // DepthSensingSystem stays a no-op. Off entirely with the config flag.
+      depthSensing: RENDER.depthOcclusion
+        ? {
+            required: false,
+            usage: RENDER.depthUsage,
+            format: RENDER.depthFormat,
+          }
+        : false,
       layers: true,
     },
   },
@@ -1291,6 +1305,14 @@ World.create(document.getElementById('scene-container') as HTMLDivElement, {
   //
   // Every one of these is above IWSDK's InputSystem (priority -4), which is
   // what WebShooterSystem depends on for same-frame hand joint transforms.
+  // Round 9: depth occlusion for the robots. Registered BEFORE TargetSystem
+  // (whose init builds the pool and installs the first art): the system
+  // patches a DepthOccludable entity's materials on its query's qualify, so it
+  // must be listening first. World.create never registers it (gotcha 20).
+  if (RENDER.depthOcclusion) {
+    world.registerSystem(RobotDepthSensingSystem, { priority: 50 });
+  }
+
   world
     .registerSystem(WorldCollisionSystem, { priority: 5 })
     .registerSystem(FloorGuardSystem, { priority: 6 })

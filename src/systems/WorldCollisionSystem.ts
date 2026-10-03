@@ -112,6 +112,42 @@ export function formatColliderLog(
   return `[PaintBlast] room colliders: ${planeCount} planes, ${meshCount} meshes (labels: ${seen})`;
 }
 
+/**
+ * Round 9: is this detected plane a ceiling? Horizontal, and either labelled
+ * `ceiling` by the runtime or at least `minHeight` metres up — above any
+ * standing head, so it can never be a floor or a table top. Ceilings tunnel
+ * just like the 1 mm walls did (no CCD, gotcha 6), so they get the same
+ * thickened box; floors stay thin (FloorGuard's slab backs them).
+ *
+ * Pure and exported so the rule is unit-tested without a headset.
+ */
+export function isCeilingPlane(
+  orientation: string | undefined,
+  label: string | undefined,
+  worldY: number,
+  minHeight: number,
+): boolean {
+  if (orientation !== 'horizontal') return false;
+  if (label === 'ceiling') return true;
+  return worldY >= minHeight;
+}
+
+/**
+ * Which plane colliders get the thickened {@link ROOM.wallThicknessMeters}
+ * box: every wall-type (vertical) plane, and ceilings. @see isCeilingPlane
+ */
+export function shouldThickenPlane(
+  orientation: string | undefined,
+  label: string | undefined,
+  worldY: number,
+  minHeight: number,
+): boolean {
+  return (
+    orientation === 'vertical' ||
+    isCeilingPlane(orientation, label, worldY, minHeight)
+  );
+}
+
 const STATIC_BODY_DEFAULTS = {
   state: PhysicsState.Static,
 } as const;
@@ -169,9 +205,10 @@ interface BoxGeometryParams {
  * ### The rules, in short
  *
  * - Every XRPlane becomes a static collider. Vertical ones (walls, doors,
- *   windows) get a thickened box; horizontal ones (floors, ceilings) keep
- *   `Auto`, since FloorGuardSystem already backstops the floor and a thickened
- *   floor would lift every splat off the carpet.
+ *   windows) and, since round 9, ceilings get a thickened box; other
+ *   horizontal ones (floors, table tops) keep `Auto`, since FloorGuardSystem
+ *   already backstops the floor and a thickened floor would lift every splat
+ *   off the carpet.
  * - An unbounded XRMesh — the global mesh — becomes a static TriMesh.
  * - A bounded XRMesh becomes a static collider if its label is in
  *   {@link COLLIDABLE_MESH_LABELS}, via `Auto`, which resolves to a convex hull
@@ -262,8 +299,8 @@ export class WorldCollisionSystem extends createSystem({
   }
 
   /**
-   * Give a detected plane a static collider — a thickened box if it is a wall,
-   * `Auto` otherwise.
+   * Give a detected plane a static collider — a thickened box if it is a wall
+   * or (round 9) a ceiling, `Auto` otherwise.
    *
    * The plane's local Y **is** its normal: WebXR defines a plane's polygon in
    * the X-Z plane of its own space, and IWSDK's `BoxGeometry(width, 0.001,
@@ -280,11 +317,22 @@ export class WorldCollisionSystem extends createSystem({
     entity.addComponent(PhysicsBody, STATIC_BODY_DEFAULTS);
 
     const plane = entity.getValue(XRPlane, '_plane') as
-      | { orientation?: string }
+      | { orientation?: string; semanticLabel?: string }
       | undefined;
     const params = planeBoxParams(entity);
+    // SceneUnderstandingSystem positions the plane mesh before it adds
+    // XRPlane, so the pose is already real at qualify time.
+    const worldY = entity.object3D?.position.y ?? 0;
 
-    if (plane?.orientation === 'vertical' && params) {
+    if (
+      params &&
+      shouldThickenPlane(
+        plane?.orientation,
+        plane?.semanticLabel,
+        worldY,
+        ROOM.ceilingMinHeightMeters,
+      )
+    ) {
       entity.addComponent(PhysicsShape, {
         ...STATIC_SHAPE_DEFAULTS,
         shape: PhysicsShapeType.Box,
